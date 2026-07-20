@@ -5,7 +5,7 @@ import { useAppConfigStore } from "@/stores/useAppConfigStore";
 
 import { Button, Input, Select, Table } from "ant-design-vue";
 import { computed, onMounted } from "vue";
-import { RouterView } from "vue-router";
+import { RouterView, useRoute } from "vue-router";
 import AppBottomNav from "./components/AppBottomNav.vue";
 import AppConfigProvider from "./components/AppConfigProvider.vue";
 import AppHeader from "./components/AppHeader.vue";
@@ -17,6 +17,7 @@ import { useAppStateStore } from "./stores/useAppStateStore";
 import { useLayoutContainerStore } from "./stores/useLayoutContainerStore";
 import { closeAppLoading, setLoadingTitle } from "./tools/dom";
 
+const route = useRoute();
 const { hasBgImage, initAppTheme, useSidebarLayout } = useAppConfigStore();
 const { containerState } = useLayoutContainerStore();
 const { state: appState } = useAppStateStore();
@@ -50,7 +51,7 @@ onMounted(async () => {
       <main class="main-content" :class="{ 'app-layout-sidebar-only': useSidebarLayout }">
         <AppHeader v-if="!useSidebarLayout" :style="designModeNavStyle" />
         <Breadcrumbs />
-        <RouterView :key="$route.fullPath" />
+        <RouterView :key="route.fullPath" />
       </main>
     </div>
 

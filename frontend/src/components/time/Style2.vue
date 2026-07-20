@@ -11,7 +11,7 @@ defineProps<{
 const time = ref("");
 const st = ref(0);
 
-let timer: NodeJS.Timer | null = null;
+let timer: NodeJS.Timeout | null = null;
 
 onMounted(() => {
   timer = setInterval(() => {

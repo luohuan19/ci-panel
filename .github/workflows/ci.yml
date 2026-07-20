@@ -44,35 +44,8 @@ jobs:
       - name: Build daemon
         run: npm run build --prefix daemon
 
-      # `npm run build --prefix frontend` is `run-p type-check build-only`.
-      # type-check currently fails (see the type-check job), so build the
-      # bundle only and let the dedicated job report type errors.
+      # This is `run-p type-check build-only`, so vue-tsc runs here too.
+      # panel and daemon have no type-check script; their type errors surface
+      # through their webpack builds above.
       - name: Build frontend
-        run: npm run build-only --prefix frontend
-
-  type-check:
-    name: Frontend type-check (non-blocking)
-    runs-on: ubuntu-latest
-    # Known-failing: 8 errors, 6 of them in files inherited from MCSManager
-    # (@types/node vs DOM lib Timeout/number conflicts) and 2 in CiJobs.vue.
-    # Kept visible rather than deleted; flip this to false once they are fixed.
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            common/package-lock.json
-            frontend/package-lock.json
-
-      # Same single-command install as the build job; see the comment there.
-      - name: Install dependencies
-        run: npm install
-
-      - name: Type-check frontend
-        run: npm run type-check --prefix frontend
+        run: npm run build --prefix frontend

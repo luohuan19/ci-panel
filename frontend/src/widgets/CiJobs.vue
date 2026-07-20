@@ -96,7 +96,7 @@ const columns = [
             <span style="color: #8a91a3">{{ new Date(record.created_at).toLocaleString() }}</span>
           </template>
           <template v-else-if="column.key === 'status'">
-            <a-tag :color="statusColor(record)">{{ statusText(record) }}</a-tag>
+            <a-tag :color="statusColor(record as CiRun)">{{ statusText(record as CiRun) }}</a-tag>
           </template>
           <template v-else-if="column.key === 'link'">
             <a :href="record.html_url" target="_blank" rel="noopener">GitHub ↗</a>

@@ -92,7 +92,7 @@ export function useInstanceMoreDetail(info: InstanceMoreDetail): InstanceMoreDet
 }
 
 export function useInstanceInfo(params: Params) {
-  let task: NodeJS.Timer | undefined;
+  let task: NodeJS.Timeout | undefined;
   const { daemonId, instanceId, instanceInfo, autoRefresh } = params;
 
   const { execute, state, isLoading, isReady } = getInstanceInfo();
