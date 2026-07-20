@@ -1,22 +1,42 @@
 name: Feature Request
-description: A new feature for MCSManager
+description: Propose a new feature for ci-panel
 title: "[Feature] "
-labels: "Feature Request"
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
-      value: Please make sure that no duplicated issues has already been delivered.
+      value: Please check the existing issues first to avoid duplicates.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of ci-panel would this land in?
+      options:
+        - Panel (web backend / API)
+        - Daemon (node agent)
+        - Frontend (web UI)
+        - Runner provisioning / registration
+        - Not sure
+    validations:
+      required: true
   - type: textarea
     id: description
     attributes:
       label: Description
-      description: Please describe in detail the new functionality you would like to add.
+      description: Describe the functionality you would like to add.
     validations:
       required: true
   - type: textarea
     id: reason
     attributes:
-      label: Reason
-      description: Please describe why you want to add the feature into MCSManager.
+      label: Problem it solves
+      description: What are you unable to do today? Describe the concrete situation that motivates this, not just the proposed solution.
     validations:
       required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workaround you are using now, or other approaches you weighed.
+    validations:
+      required: false

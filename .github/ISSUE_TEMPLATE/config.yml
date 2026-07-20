@@ -1,11 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: English | Discord Channel
-    url: https://discord.gg/BNpYMVX7Cd
-    about: The official Discord channel of MCSManager!
-  - name: 中文用户 | QQ Group
-    url: http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=6ryJRaHMaAM9aSeSdRWn6qm9gQ3lI8vu&authKey=BMZ5gA9Rqw%2B5714yAW1ZxiWnFbkk2KRKgBF%2BMiIaOw0VVsSR7tsP10cFwhmDdlgU&noverify=0&group_code=198646856
-    about: The official QQ Group of MCSManager!
-  - name: 中文用户 | Telegram Group
-    url: https://t.me/MCSManager_dev
-    about: The official Telegram Group of MCSManager!
+  - name: Upstream MCSManager
+    url: https://github.com/MCSManager/MCSManager/issues
+    about: ci-panel is a fork of MCSManager. If the problem also occurs in upstream MCSManager and is unrelated to CI runner management, report it there instead.

@@ -131,3 +131,6 @@ src/public/1.png
 
 # 内部运维脚本（含内网配置，不公开）
 tools/
+
+# Local-only issue tracking (see .claude/rules/problem-handling.md)
+KNOWN_ISSUES.md

@@ -1,48 +1,64 @@
 name: Bug Report
-description: Create a report to help us improve
-title: "[Bug Report] "
-labels: "Bug Report"
+description: Report a problem in ci-panel
+title: "[Bug] "
+labels: ["bug"]
 body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of ci-panel is affected?
+      options:
+        - Panel (web backend / API)
+        - Daemon (node agent)
+        - Frontend (web UI)
+        - Runner provisioning / registration
+        - Not sure
+    validations:
+      required: true
   - type: input
-    id: Platform
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`. ci-panel is not versioned by release, so the commit is the identifier.
+      placeholder: e.g. 53fb1ea
+    validations:
+      required: true
+  - type: input
+    id: platform
     attributes:
       label: Platform
-      description: Please enter the platform on which you encountered the bug.
-      placeholder: e.g. Windows 11, Ubuntu 14.04
+      description: OS and architecture of the affected host.
+      placeholder: e.g. Ubuntu 22.04 aarch64
     validations:
       required: true
   - type: input
-    id: panel-version
+    id: node-version
     attributes:
-      label: Panel Version
-      description: MCSManager Panel Version
-      placeholder: e.g. 10.1.0
-    validations:
-      required: true
-  - type: input
-    id: daemon-version
-    attributes:
-      label: Daemon Version (Optional)
-      description: MCSManager Daemon Version
-      placeholder: e.g. 4.3.0
-    validations:
-      required: false
-  - type: input
-    id: recurrence-probability
-    attributes:
-      label: Recurrence Probability
-      description: Recurrence Probability
-      placeholder: 1%~100%
+      label: Node version
+      description: Output of `node --version`.
+      placeholder: e.g. v20.11.0
     validations:
       required: true
   - type: textarea
     id: bug-description
     attributes:
-      label: Bug Description
-      description: Please describe the problem you met in as much detail as possible. Besides, please describe how to trigger this problem again.
+      label: What happened
+      description: Describe the actual behaviour, the expected behaviour, and the exact steps to reproduce it.
       placeholder: |
-        1. Click a button named ...
+        Actual: ...
+        Expected: ...
+
+        Steps to reproduce:
+        1. ...
         2. ...
-        3. ...
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from the panel, daemon, or browser console. Redact tokens, internal hostnames, and IPs before pasting — this repository is public.
+      render: shell
+    validations:
+      required: false
