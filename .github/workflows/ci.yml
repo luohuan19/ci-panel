@@ -24,18 +24,19 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             common/package-lock.json
             panel/package-lock.json
             daemon/package-lock.json
             frontend/package-lock.json
 
-      # The four packages are NOT an npm workspace — each installs separately.
-      - name: Install dependencies (daemon, panel, frontend)
-        run: npm run install-dependents
-
-      # common/ must be built first; the other three consume its emitted types.
-      - name: Build common
-        run: npm run preview-build
+      # The four packages are NOT an npm workspace. Installing at the root is
+      # what covers everything: it pulls the root dependencies (panel imports
+      # async-mutex, which is declared only here) and its `install` lifecycle
+      # script then runs install-dependents plus preview-build, which installs
+      # daemon/panel/frontend and builds common.
+      - name: Install dependencies
+        run: npm install
 
       - name: Build panel
         run: npm run build --prefix panel
@@ -65,14 +66,13 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             common/package-lock.json
             frontend/package-lock.json
 
-      - name: Install dependencies (daemon, panel, frontend)
-        run: npm run install-dependents
-
-      - name: Build common
-        run: npm run preview-build
+      # Same single-command install as the build job; see the comment there.
+      - name: Install dependencies
+        run: npm install
 
       - name: Type-check frontend
         run: npm run type-check --prefix frontend
