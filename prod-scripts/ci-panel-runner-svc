@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# CI Panel 扩展：给指定 runner 目录装/卸 systemd 服务的「特权小助手」。
+#
+# 为什么要它：daemon 以非 root 的 ci-runner 身份跑，用 `sudo -n`(非交互免密)调用本脚本。
+# sudoers 只放行这一个脚本(见文件尾部安装说明)，把 root 权限收到极小面：
+#   - 本脚本 root 所有、ci-runner 不可写 —— 否则等于把 root 送出去；
+#   - 只往 /etc/systemd/system 写「自己生成的」unit，绝不执行 runner 目录里(ci-runner 可写)的脚本，
+#     避免"改写 svc.sh/模板 → 被 root 执行"的提权；
+#   - unit 用 User=<目录属主> 运行 runsvc.sh，runner 本身仍以普通用户身份跑，不涉 root；
+#   - 目录必须在白名单根下且含 .runner，服务名严格校验。
+#
+# 用法：ci-panel-runner-svc install|uninstall|status <runner 目录绝对路径>
+set -euo pipefail
+
+ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；按需改
+
+action="${1:-}"
+dir_in="${2:-}"
+
+die() {
+  echo "ci-panel-runner-svc: $*" >&2
+  exit 1
+}
+
+[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status <runner 目录>"
+
+# 规范化并校验目录
+dir="$(readlink -f -- "$dir_in")" || die "无法解析目录: $dir_in"
+case "$dir/" in
+  "$ALLOWED_ROOT"/*) : ;;
+  *) die "目录必须在 $ALLOWED_ROOT 下: $dir" ;;
+esac
+[ -d "$dir" ] || die "目录不存在: $dir"
+[ -f "$dir/.runner" ] || die "不是 runner 目录(缺 .runner): $dir"
+[ -f "$dir/runsvc.sh" ] || die "缺 runsvc.sh(安装包不完整): $dir"
+
+# 以目录属主身份运行 runner(通常是 ci-runner)
+run_user="$(stat -c %U "$dir")"
+[ -n "$run_user" ] || die "取不到目录属主"
+
+# 计算服务名：优先用已有 .service 文件，否则从 .runner 派生
+if [ -f "$dir/.service" ] && [ -s "$dir/.service" ]; then
+  svc="$(tr -d '[:space:]' < "$dir/.service")"
+else
+  url="$(sed -n 's/.*"gitHubUrl": *"\([^"]*\)".*/\1/p' "$dir/.runner" | head -1)"
+  name="$(sed -n 's/.*"agentName": *"\([^"]*\)".*/\1/p' "$dir/.runner" | head -1)"
+  owner_repo="$(printf '%s' "$url" | sed -E 's#^https?://[^/]+/##; s#/#-#g')"
+  [ -n "$owner_repo" ] && [ -n "$name" ] || die "无法从 .runner 派生服务名"
+  svc="actions.runner.${owner_repo}.${name}.service"
+fi
+
+# 严格校验服务名(与 daemon 侧 controlService 的正则一致)，防注入
+printf '%s' "$svc" | grep -Eq '^actions\.runner\.[A-Za-z0-9._@-]+\.service$' \
+  || die "非法的服务名: $svc"
+
+unit="/etc/systemd/system/$svc"
+
+case "$action" in
+  install)
+    # 用本脚本完全掌控的模板生成 unit，只插入已校验的 dir/user/svc
+    cat > "$unit" <<EOF
+[Unit]
+Description=GitHub Actions Runner ($svc)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$dir/runsvc.sh
+User=$run_user
+WorkingDirectory=$dir
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$unit"
+    # 写 .service 标记文件(daemon 扫描据此认单元名)，归属 runner 属主
+    printf '%s\n' "$svc" > "$dir/.service"
+    chown "$run_user":"$run_user" "$dir/.service" 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl enable --now "$svc"
+    echo "installed $svc"
+    ;;
+  uninstall)
+    systemctl disable --now "$svc" 2>/dev/null || true
+    rm -f "$unit"
+    systemctl daemon-reload
+    rm -f "$dir/.service"
+    echo "uninstalled $svc"
+    ;;
+  status)
+    systemctl is-active "$svc" 2>/dev/null || true
+    ;;
+  *)
+    die "未知操作: $action(应为 install|uninstall|status)"
+    ;;
+esac

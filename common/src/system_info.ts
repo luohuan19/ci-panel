@@ -16,11 +16,25 @@ interface ISystemInfo {
   hostname: string;
   platform: string;
   release: string;
+  distro: string;
   uptime: number;
   cwd: string;
   processCpu: number;
   processMem: number;
   loadavg: number[];
+}
+
+// 读取 Linux 发行版名（Node 的 os 模块拿不到，需读 /etc/os-release 的 PRETTY_NAME）。
+// 发行版是静态信息，启动时读一次即可。读不到时回退到 os.type()（如 Windows/Mac）。
+function readDistro(): string {
+  try {
+    const text = fs.readFileSync("/etc/os-release", { encoding: "utf-8" });
+    const m = text.match(/^PRETTY_NAME="?(.+?)"?$/m);
+    if (m && m[1]) return m[1];
+  } catch {
+    // 非 Linux 或无该文件，忽略
+  }
+  return os.type();
 }
 
 // System details are updated every time
@@ -29,6 +43,7 @@ const info: ISystemInfo = {
   hostname: os.hostname(),
   platform: os.platform(),
   release: os.release(),
+  distro: readDistro(),
   uptime: os.uptime(),
   cwd: process.cwd(),
   loadavg: os.loadavg(),

@@ -70,6 +70,7 @@ router.get("/", permission({ level: ROLE.ADMIN, token: false }), async (ctx) => 
       loadavg: selfInfo.loadavg,
       platform: selfInfo.platform,
       release: selfInfo.release,
+      distro: selfInfo.distro,
       uptime: os.uptime(),
       cpu: selfInfo.cpuUsage
     },

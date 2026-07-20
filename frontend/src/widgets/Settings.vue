@@ -18,13 +18,11 @@ import {
   BankOutlined,
   BookOutlined,
   BugOutlined,
-  EditOutlined,
   GithubOutlined,
   LockOutlined,
   MessageOutlined,
   MoneyCollectOutlined,
   PicLeftOutlined,
-  PlusOutlined,
   ProjectOutlined,
   QuestionCircleOutlined
 } from "@ant-design/icons-vue";
@@ -377,22 +375,6 @@ const submitSso = async () => {
 
 const leftMenusPanelRef = ref<InstanceType<typeof LeftMenusPanel>>();
 
-const toTemplate = {
-  path: "/market/editor",
-  new: () =>
-    router.push({
-      path: toTemplate.path,
-      query: {
-        newTemplate: "true"
-      }
-    }),
-  edit: () =>
-    router.push({
-      path: toTemplate.path,
-      query: {}
-    })
-};
-
 onMounted(async () => {
   const res = await execute();
   const cfg = await getSettingsConfig();
@@ -478,27 +460,6 @@ onUnmounted(() => {
                       style="max-width: 320px"
                       :placeholder="t('TXT_CODE_4ea93630')"
                     />
-                  </a-form-item>
-
-                  <a-form-item>
-                    <a-typography-title :level="5">{{ t("TXT_CODE_6265ae47") }}</a-typography-title>
-                    <a-typography-paragraph type="secondary">
-                      {{ t("TXT_CODE_24c4768a") }}
-                    </a-typography-paragraph>
-                    <a-input
-                      v-model:value="formData.presetPackAddr"
-                      :placeholder="t('TXT_CODE_4ea93630')"
-                      style="max-width: 320px"
-                    />
-
-                    <a-button class="mx-8" type="primary" @click="toTemplate.edit">
-                      {{ t("TXT_CODE_ad207008") }}
-                      <EditOutlined />
-                    </a-button>
-                    <a-button @click="toTemplate.new">
-                      {{ t("TXT_CODE_53499d7") }}
-                      <PlusOutlined />
-                    </a-button>
                   </a-form-item>
 
                   <a-form-item>

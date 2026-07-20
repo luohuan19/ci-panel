@@ -16,9 +16,8 @@ import InstanceShortcut from "@/widgets/instance/Shortcut.vue";
 import Terminal from "@/widgets/instance/Terminal.vue";
 import InstanceChart from "@/widgets/InstanceChart.vue";
 import InstanceList from "@/widgets/InstanceList.vue";
+import RunnerExplorer from "@/widgets/RunnerExplorer.vue";
 import LoginCard from "@/widgets/LoginCard.vue";
-import MarketEditor from "@/widgets/market/editor.vue";
-import Market from "@/widgets/market/index.vue";
 import NodeItem from "@/widgets/node/NodeItem.vue";
 import NodeList from "@/widgets/NodeList.vue";
 import NodeOverview from "@/widgets/NodeOverview.vue";
@@ -33,11 +32,8 @@ import PluginCard from "@/widgets/others/PluginCard.vue";
 import TextCard from "@/widgets/others/TextCard.vue";
 import Page404 from "@/widgets/Page404.vue";
 import DataOverview from "@/widgets/PanelOverview.vue";
-import QuickStart from "@/widgets/QuickStart.vue";
 import RequestChart from "@/widgets/RequestChart.vue";
 import Settings from "@/widgets/Settings.vue";
-import McPreset from "@/widgets/setupApp/McPreset.vue";
-import QuickStartFlow from "@/widgets/setupApp/QuickStartFlow.vue";
 import ShelvesCard from "@/widgets/ShelvesCard.vue";
 import StatusBlock from "@/widgets/StatusBlock.vue";
 import TitleCard from "@/widgets/TitleCard.vue";
@@ -58,11 +54,11 @@ export const LAYOUT_CARD_TYPES: { [key: string]: any } = {
   EmptyCard,
   DataOverview,
   StatusBlock,
-  QuickStart,
   NodeOverview,
   RequestChart,
   InstanceChart,
   InstanceList,
+  RunnerExplorer,
   NodeList,
   NodeItem,
   Settings,
@@ -76,8 +72,6 @@ export const LAYOUT_CARD_TYPES: { [key: string]: any } = {
   InstanceModManager,
   UserAccessSettings,
   ImageBox,
-  QuickStartFlow,
-  McPreset,
   IframeCard,
   TextCard,
   LinkCard,
@@ -93,9 +87,7 @@ export const LAYOUT_CARD_TYPES: { [key: string]: any } = {
   PluginCard,
   MusicCard,
   ShelvesCard,
-  OperationLogCard,
-  Market,
-  MarketEditor
+  OperationLogCard
 };
 
 export interface NewCardItem extends LayoutCard {
@@ -448,17 +440,6 @@ export function getLayoutCardPool() {
     {
       id: getRandomId(),
       permission: ROLE.ADMIN,
-      type: "QuickStart",
-      title: t("TXT_CODE_e01539f1"),
-      meta: {},
-      width: 4,
-      description: t("TXT_CODE_d628e631"),
-      height: LayoutCardHeight.MEDIUM,
-      category: NEW_CARD_TYPE.INSTANCE
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.ADMIN,
       meta: {},
       type: "NodeItem",
       title: t("TXT_CODE_def287e0"),
@@ -528,28 +509,6 @@ export function getLayoutCardPool() {
       description: t("TXT_CODE_163e2d0a"),
       height: LayoutCardHeight.MEDIUM,
       category: NEW_CARD_TYPE.COMMON
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.ADMIN,
-      meta: {},
-      type: "Market",
-      title: t("TXT_CODE_27594db8"),
-      width: 12,
-      description: t("TXT_CODE_9b45858c"),
-      height: LayoutCardHeight.BIG,
-      category: NEW_CARD_TYPE.OTHER
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.ADMIN,
-      meta: {},
-      type: "MarketEditor",
-      title: t("TXT_CODE_54275b9c"),
-      width: 12,
-      description: t("TXT_CODE_94f55150"),
-      height: LayoutCardHeight.BIG,
-      category: NEW_CARD_TYPE.OTHER
     }
   ];
   return LAYOUT_CARD_POOL;

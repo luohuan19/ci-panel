@@ -125,3 +125,9 @@ src/public/1.png
 */.idea/*
 
 .turbo
+
+# 本地运行日志 / PID
+.run/
+
+# 内部运维脚本（含内网配置，不公开）
+tools/

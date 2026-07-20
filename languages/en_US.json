@@ -2792,7 +2792,7 @@
   "TXT_CODE_e1c60611": "JSON format only",
   "TXT_CODE_e1c637bb": "After completing the configuration, the Java command will be replaced with <mcsm_java>.",
   "TXT_CODE_e1ddd156": "Reported map name to query services.",
-  "TXT_CODE_e21473bc": "Instances",
+  "TXT_CODE_e21473bc": "Runners",
   "TXT_CODE_e260a220": "Version: ",
   "TXT_CODE_e26d53d5": "Do not create too many new tags, which may cause confusion of elements on the interface and degrade panel performance.",
   "TXT_CODE_e2976753": "This ID is the unique identifier for MCSManager, used to distinguish different panels. All online services provided by MCSManager will use this ID to differentiate users.",
@@ -3448,5 +3448,6 @@
   "TXT_CODE_6542489a": "Example: /dev/sda:10MB",
   "TXT_CODE_9d2e6d5e": "Device Write Rate Limit (BPS)",
   "TXT_CODE_2b2ff3ff": "Limit the write rate of specific block devices for the container. Format: /dev/sda:5MB. Separate multiple devices with commas.",
-  "TXT_CODE_f0dc9eca": "Example: /dev/sda:5MB"
+  "TXT_CODE_f0dc9eca": "Example: /dev/sda:5MB",
+  "TXT_CODE_ungrouped": "Ungrouped"
 }

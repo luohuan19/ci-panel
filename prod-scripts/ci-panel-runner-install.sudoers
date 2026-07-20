@@ -1,0 +1,8 @@
+# CI Panel：允许 daemon(ci-runner) 免密调用装/卸 runner systemd 服务的专用小助手。
+# 装到 /etc/sudoers.d/ci-panel-runner-install（务必 root 所有、0440、用 visudo -c 校验）。
+#
+# 安全要点：只放行 /usr/local/sbin/ci-panel-runner-svc 这一个 root 所有、ci-runner 不可写的脚本，
+# 不放行 cp/tee/svc.sh 等——那些会让 ci-runner 借 NOPASSWD 变相拿到任意 root。
+ci-runner ALL=(root) NOPASSWD: /usr/local/sbin/ci-panel-runner-svc
+
+# 说明：runner 的启停(start/stop/restart actions.runner.*.service)已由既有白名单放行，这里只补"装/卸"。

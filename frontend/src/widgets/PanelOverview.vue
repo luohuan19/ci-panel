@@ -158,9 +158,8 @@ const overviewList = computed(() => {
     {
       type: "text",
       title: t("TXT_CODE_b4d8588"),
-      value: `${
-        system.version.length > 16 ? system.version.slice(0, 16) + "..." : system.version
-      } ${system.release}`,
+      // 去掉没用的 os.version()（"#1 SMP Wed ..." 编译信息），显示发行版名 + 内核版本
+      value: `${system.distro || system.type} · 内核 ${system.release}`,
       icon: CodeOutlined
     },
     {

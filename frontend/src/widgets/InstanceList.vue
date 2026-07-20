@@ -43,6 +43,7 @@ import { computeNodeName } from "../tools/nodes";
 import type { NodeStatus } from "../types/index";
 import InstanceLine from "./instance/InstanceLine.vue";
 import Shortcut from "./instance/Shortcut.vue";
+import CreateInstanceOptions from "./CreateInstanceOptions.vue";
 
 defineProps<{
   card: LayoutCard;
@@ -84,6 +85,23 @@ const instancesMoreInfo = computed(() => {
   }
   return newInstances || [];
 });
+
+// 卡片按仓库标签（tag[0]）分组：同仓 runner 归到一张分组下，便于区分管理。
+// 无标签的实例（如手动创建的）归入“未分组”。
+const groupedInstances = computed(() => {
+  const groups = new Map<string, InstanceMoreDetail[]>();
+  for (const item of instancesMoreInfo.value) {
+    const key = item.config?.tag?.[0] || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+  return Array.from(groups.entries()).map(([tag, items]) => ({ tag, items }));
+});
+
+// 只有一个“未分组”时不显示分组标题，保持与原来一致的观感
+const showGroupHeaders = computed(
+  () => groupedInstances.value.length > 1 || (groupedInstances.value[0]?.tag ?? "") !== ""
+);
 
 const initNodes = async () => {
   await getNodes();
@@ -280,24 +298,6 @@ const handleChangeNode = async (item: NodeStatus) => {
   } catch (err: any) {
     console.error(err.message);
   }
-};
-
-const toCreateAppPage = () => {
-  router.push({
-    path: "/market",
-    query: {
-      daemonId: currentRemoteNode.value?.uuid
-    }
-  });
-};
-
-const toMarketPage = () => {
-  router.push({
-    path: "/market",
-    query: {
-      daemonId: currentRemoteNode.value?.uuid
-    }
-  });
 };
 
 const toNodesPage = () => {
@@ -535,6 +535,9 @@ onMounted(async () => {
   <div style="min-height: 100%" class="container">
     <a-row :gutter="[24, 24]" style="min-height: 100%">
       <a-col :span="24">
+        <CreateInstanceOptions :card="card" @created="initInstancesData(true)" />
+      </a-col>
+      <a-col :span="24">
         <BetweenMenus>
           <template v-if="!isPhone" #left>
             <a-typography-title class="mb-0" :level="4">
@@ -585,13 +588,6 @@ onMounted(async () => {
                 <DownOutlined />
               </a-button>
             </a-dropdown>
-            <a-button
-              type="primary"
-              :disabled="!currentRemoteNode?.available"
-              @click="toCreateAppPage"
-            >
-              {{ t("TXT_CODE_53408064") }}
-            </a-button>
           </template>
           <template #center>
             <div class="search-input">
@@ -713,29 +709,39 @@ onMounted(async () => {
       </a-col>
 
       <a-col v-else-if="!isGlobalDaemonMode && instancesMoreInfo?.length > 0" :span="24">
-        <a-row :gutter="[16, 16]">
-          <fade-up-animation>
-            <a-col
-              v-for="item in instancesMoreInfo"
-              :key="item.instanceUuid"
-              :span="24"
-              :xl="6"
-              :lg="8"
-              :sm="12"
-            >
-              <Shortcut
-                class="instance-card"
-                :class="{ selected: multipleMode && findInstance(item) }"
-                style="height: 100%"
-                :card="card"
-                :target-instance-info="item"
-                :target-daemon-id="currentRemoteNode?.uuid"
-                @click="handleSelectInstance(item)"
-                @refresh-list="initInstancesData()"
-              />
-            </a-col>
-          </fade-up-animation>
-        </a-row>
+        <div
+          v-for="group in groupedInstances"
+          :key="group.tag || '__ungrouped__'"
+          class="repo-group"
+        >
+          <div v-if="showGroupHeaders" class="repo-group-header">
+            <span class="repo-group-title">{{ group.tag || t("TXT_CODE_ungrouped") }}</span>
+            <span class="repo-group-count">{{ group.items.length }}</span>
+          </div>
+          <a-row :gutter="[16, 16]">
+            <fade-up-animation>
+              <a-col
+                v-for="item in group.items"
+                :key="item.instanceUuid"
+                :span="24"
+                :xl="6"
+                :lg="8"
+                :sm="12"
+              >
+                <Shortcut
+                  class="instance-card"
+                  :class="{ selected: multipleMode && findInstance(item) }"
+                  style="height: 100%"
+                  :card="card"
+                  :target-instance-info="item"
+                  :target-daemon-id="currentRemoteNode?.uuid"
+                  @click="handleSelectInstance(item)"
+                  @refresh-list="initInstancesData()"
+                />
+              </a-col>
+            </fade-up-animation>
+          </a-row>
+        </div>
       </a-col>
 
       <a-col v-else-if="isGlobalDaemonMode" :span="24">
@@ -796,11 +802,6 @@ onMounted(async () => {
         <div>
           <Empty :description="t('TXT_CODE_5415f009')" />
         </div>
-        <div class="mt-20">
-          <a-button type="primary" @click="toMarketPage">
-            {{ t("TXT_CODE_871cb8bc") }}
-          </a-button>
-        </div>
       </a-col>
     </a-row>
   </div>
@@ -849,6 +850,40 @@ onMounted(async () => {
     background-color: var(--color-green-1) !important;
     border-color: var(--color-green-3);
     color: var(--color-green-7);
+  }
+}
+
+.repo-group {
+  margin-bottom: 20px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  .repo-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--color-gray-4);
+
+    .repo-group-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-gray-10);
+    }
+
+    .repo-group-count {
+      min-width: 20px;
+      padding: 0 6px;
+      font-size: 12px;
+      line-height: 18px;
+      text-align: center;
+      color: var(--color-green-7);
+      background-color: var(--color-green-1);
+      border-radius: 9px;
+    }
   }
 }
 </style>

@@ -65,7 +65,7 @@ function getDefaultFrontendLayoutConfig(): IPageLayoutConfig[] {
       page: "__settings__",
       items: [],
       theme: {
-        pageTitle: "MCSManager Panel",
+        pageTitle: "CI Panel",
         logoImage: "",
         backgroundImage: "",
         sidebarPosition: "right"
@@ -166,56 +166,14 @@ function getDefaultFrontendLayoutConfig(): IPageLayoutConfig[] {
       ]
     },
     {
-      page: "/market",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "Market",
-          title: t("TXT_CODE_88249aee"),
-          width: 12,
-          height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
-      page: "/market/editor",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "MarketEditor",
-          title: t("TXT_CODE_54275b9c"),
-          width: 12,
-          height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
       page: "/instances",
       items: [
         {
           id: getRandomId(),
           meta: {},
-          type: "InstanceList",
+          // 这个 fork 只用来管 GitHub Actions runner，原生的「应用实例」列表没有意义：
+          // 它只看得见面板自己建的实例，而机器上绝大多数 runner 是 systemd 托管的。
+          type: "RunnerExplorer",
           title: t("TXT_CODE_e21473bc"),
           width: 12,
           height: LayoutCardHeight.AUTO,
@@ -488,40 +446,6 @@ function getDefaultFrontendLayoutConfig(): IPageLayoutConfig[] {
           width: 12,
           height: LayoutCardHeight.AUTO,
           disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
-      page: "/quickstart",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "QuickStartFlow",
-          title: t("TXT_CODE_9b99b72e"),
-          width: 8,
-          height: LayoutCardHeight.AUTO
-        }
-      ]
-    },
-    {
-      page: "/quickstart/minecraft",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "McPreset",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.AUTO
         },
         {
           id: getRandomId(),

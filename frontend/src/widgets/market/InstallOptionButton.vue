@@ -1,27 +1,31 @@
 <script setup lang="ts">
 import type { Component } from "vue";
 
-defineProps<{
+const props = defineProps<{
   option: {
     label: string;
     icon: Component;
     description: string;
     action: (e: Event) => void;
+    disabled?: boolean;
   };
 }>();
 
-const handleClick = (e: Event, action: (e: Event) => void) => {
-  action(e);
+const handleClick = (e: Event) => {
+  if (props.option.disabled) return;
+  props.option.action(e);
 };
 </script>
 
 <template>
   <div
     class="install-option-button"
+    :class="{ disabled: option.disabled }"
     role="button"
-    tabindex="0"
-    @click="(e) => handleClick(e, option.action)"
-    @keydown.enter.space.prevent="(e) => handleClick(e, option.action)"
+    :tabindex="option.disabled ? -1 : 0"
+    :aria-disabled="option.disabled || undefined"
+    @click="handleClick"
+    @keydown.enter.space.prevent="handleClick"
   >
     <div class="button-inner">
       <div class="button-icon">
@@ -52,7 +56,31 @@ const handleClick = (e: Event, action: (e: Event) => void) => {
     background 0.25s ease,
     border-color 0.25s ease;
 
-  &:hover {
+  // 禁用态：保持显示但灰置、不可点、无 hover 动效
+  &.disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    filter: grayscale(0.6);
+
+    &:hover {
+      transform: none;
+      border-color: var(--color-gray-5);
+      background: var(--color-gray-3);
+      box-shadow: none;
+    }
+    &:hover .button-inner {
+      background: var(--color-gray-2);
+    }
+    &:hover .button-icon {
+      color: var(--color-blue-6);
+      background: rgba(22, 119, 255, 0.1);
+    }
+    &:active {
+      transform: none;
+    }
+  }
+
+  &:not(.disabled):hover {
     transform: scale(1.03);
     border-color: transparent;
     background: linear-gradient(

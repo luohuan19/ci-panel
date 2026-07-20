@@ -6,6 +6,7 @@ import "./service/user_service";
 import "./service/user_statistics";
 import "./service/visual_data";
 
+import ciRouter from "./routers/ci_router";
 import serviceRouter from "./routers/daemon_router";
 import environmentRouter from "./routers/environment_router";
 import filemanager_router from "./routers/filemananger_router";
@@ -18,6 +19,8 @@ import loginRouter from "./routers/login_router";
 import businessUserRouter from "./routers/manage_user_router";
 import modManagerRouter from "./routers/mod_manager_router";
 import overviewRouter from "./routers/overview_router";
+import repoRouter from "./routers/repo_router";
+import runnerRouter from "./routers/runner_router";
 import scheduleRouter from "./routers/schedule_router";
 import settingsRouter from "./routers/settings_router";
 import ssoRouter from "./routers/sso_router";
@@ -41,6 +44,9 @@ export function mountRouters(app: Koa<Koa.DefaultState, Koa.DefaultContext>) {
   apiRouter.use(exchangeRouter.routes()).use(exchangeRouter.allowedMethods());
   apiRouter.use(javaManagerRouter.routes()).use(javaManagerRouter.allowedMethods());
   apiRouter.use(modManagerRouter.routes()).use(modManagerRouter.allowedMethods());
+  apiRouter.use(ciRouter.routes()).use(ciRouter.allowedMethods()); // CI Job 看板（自研补充）
+  apiRouter.use(runnerRouter.routes()).use(runnerRouter.allowedMethods()); // 一键添加 runner（自研补充）
+  apiRouter.use(repoRouter.routes()).use(repoRouter.allowedMethods()); // 仓库注册表（自研补充）
 
   app.use(apiRouter.routes()).use(apiRouter.allowedMethods());
 }

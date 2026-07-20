@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import CardPanel from "@/components/CardPanel.vue";
-import { openInstanceTagsEditor, useDeleteInstanceDialog } from "@/components/fc/index";
+import { useDeleteInstanceDialog } from "@/components/fc/index";
 import { useAppRouters } from "@/hooks/useAppRouters";
 import { useLayoutCardTools } from "@/hooks/useCardTools";
 import { useInstanceInfo, verifyEULA } from "@/hooks/useInstance";
@@ -28,11 +28,9 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   RedoOutlined,
-  TagsOutlined,
   UserOutlined
 } from "@ant-design/icons-vue";
 import { message, Modal } from "ant-design-vue";
-import _ from "lodash";
 import prettyBytes, { type Options as PrettyOptions } from "pretty-bytes";
 import { computed, ref } from "vue";
 
@@ -229,19 +227,6 @@ const instanceOperations = computed(() =>
     },
     {
       area: true
-    },
-    {
-      title: t("TXT_CODE_78e88c3f"),
-      icon: TagsOutlined,
-      click: async (event: MouseEvent) => {
-        event.stopPropagation();
-        if (instanceId && daemonId) {
-          const tags = instanceInfo.value?.config.tag || [];
-          const newTags = await openInstanceTagsEditor(instanceId, daemonId, tags);
-          if (!_.isEqual(newTags, tags)) refreshList();
-        }
-      },
-      disabled: containerState.isDesignMode
     },
     {
       title: t("TXT_CODE_524e3036"),

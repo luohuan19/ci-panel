@@ -191,6 +191,8 @@ routerApp.on("instance/update", (ctx, data) => {
   const instanceUuid = data.instanceUuid;
   const config = data.config;
   try {
+    // 标签（仓库分组）在创建时确定后锁死：更新时忽略 tag，禁止改动/新增
+    if (config && typeof config === "object") delete config.tag;
     InstanceSubsystem.getInstance(instanceUuid)?.parameters(config);
     protocol.msg(ctx, "instance/update", { instanceUuid });
   } catch (err: any) {

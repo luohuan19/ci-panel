@@ -2,6 +2,7 @@ import { $t as t } from "@/lang/i18n";
 import { useAppStateStore } from "@/stores/useAppStateStore";
 import { useLayoutContainerStore } from "@/stores/useLayoutContainerStore";
 import type { LoginUserInfo } from "@/types/user";
+import CiJobs from "@/widgets/CiJobs.vue";
 import InstallPage from "@/views/Install.vue";
 import LayoutContainer from "@/views/LayoutContainer.vue";
 import LoginPage from "@/views/Login.vue";
@@ -68,25 +69,6 @@ const originRouterConfig: RouterConfig[] = [
       permission: ROLE.GUEST,
       mainMenu: false
     }
-  },
-  {
-    path: "/quickstart",
-    name: t("TXT_CODE_2799a1dd"),
-    component: LayoutContainer,
-    meta: {
-      permission: ROLE.ADMIN,
-      mainMenu: false
-    },
-    children: [
-      {
-        path: "/quickstart/minecraft",
-        name: t("TXT_CODE_88249aee"),
-        component: LayoutContainer,
-        meta: {
-          permission: ROLE.ADMIN
-        }
-      }
-    ]
   },
   {
     path: "/",
@@ -170,25 +152,6 @@ const originRouterConfig: RouterConfig[] = [
     ]
   },
   {
-    path: "/market",
-    name: t("TXT_CODE_27594db8"),
-    component: LayoutContainer,
-    meta: {
-      mainMenu: true,
-      permission: ROLE.ADMIN
-    },
-    children: [
-      {
-        path: "editor",
-        name: t("TXT_CODE_54275b9c"),
-        component: LayoutContainer,
-        meta: {
-          permission: ROLE.ADMIN
-        }
-      }
-    ]
-  },
-  {
     path: "/overview",
     name: t("TXT_CODE_84fbe277"),
     component: LayoutContainer,
@@ -246,6 +209,31 @@ const originRouterConfig: RouterConfig[] = [
         ]
       }
     ]
+  },
+
+  {
+    // CI Job 看板（自研补充）：独立页面，不走卡片布局系统
+    path: "/ci",
+    name: "CI 看板",
+    component: CiJobs,
+    meta: {
+      permission: ROLE.ADMIN,
+      mainMenu: true
+    }
+  },
+
+  {
+    // Runner 详情页（自研补充）：独立页面，实时日志 + 基本信息 + 功能组。
+    // 懒加载：它内嵌 FileManager，会经 useFileManager→useInstance 触及 useInstance↔types/const 的
+    // 循环依赖；若在 router 顶层静态导入会把这条链拉进启动期求值，打乱顺序导致
+    // 「Cannot access 'TYPE_UNIVERSAL' before initialization」。改成访问时才加载即可规避。
+    path: "/instances/runner",
+    name: "Runner 详情",
+    component: () => import("@/widgets/RunnerDetail.vue"),
+    meta: {
+      permission: ROLE.ADMIN,
+      mainMenu: false
+    }
   },
 
   {

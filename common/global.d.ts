@@ -215,6 +215,7 @@ declare global {
       loadavg: number[];
       platform: string;
       release: string;
+      distro: string;
       uptime: number;
       cpu: number;
     };
