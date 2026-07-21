@@ -15,6 +15,9 @@ import {
 } from "../service/runner_provision";
 import {
   controlService,
+  deleteRunner,
+  listDirs,
+  makeDir,
   registerRunners,
   scanManagedRunners,
   scanOneRunner,
@@ -23,14 +26,13 @@ import {
   type SystemdAction
 } from "../service/runner_scan";
 import { readRunnerDiag } from "../service/runner_logs";
-import { getNpuStatus } from "../service/npu_monitor";
 
 // 扫描磁盘上真实存在的 runner：读 .runner 拿仓库归属，读 .service 查 systemd 状态。
 // 只读，不建实例——跟 runner/collect 的区别就在这里。
-routerApp.on("runner/scan", (ctx, data) => {
+routerApp.on("runner/scan", async (ctx, data) => {
   try {
     const roots = Array.isArray(data?.roots) ? data.roots.map((v: any) => String(v)) : undefined;
-    protocol.msg(ctx, "runner/scan", scanRunners(roots));
+    protocol.msg(ctx, "runner/scan", await scanRunners(roots));
   } catch (err: any) {
     protocol.error(ctx, "runner/scan", { err: err?.message || String(err) });
   }
@@ -38,10 +40,9 @@ routerApp.on("runner/scan", (ctx, data) => {
 
 // 只列出已纳管（有 .cipanel）的 runner，供日常展示。membership 以 marker 为准，
 // 不像 runner/scan 那样把磁盘上所有 .runner 都算进来。
-routerApp.on("runner/managed_list", (ctx, data) => {
+routerApp.on("runner/managed_list", async (ctx) => {
   try {
-    const roots = Array.isArray(data?.roots) ? data.roots.map((v: any) => String(v)) : undefined;
-    protocol.msg(ctx, "runner/managed_list", scanManagedRunners(roots));
+    protocol.msg(ctx, "runner/managed_list", await scanManagedRunners());
   } catch (err: any) {
     protocol.error(ctx, "runner/managed_list", { err: err?.message || String(err) });
   }
@@ -55,6 +56,20 @@ routerApp.on("runner/register", (ctx, data) => {
     protocol.msg(ctx, "runner/register", { results: registerRunners(items, source) });
   } catch (err: any) {
     protocol.error(ctx, "runner/register", { err: err?.message || String(err) });
+  }
+});
+
+// 彻底删除 runner：停+卸 systemd、GitHub 注销、清面板侧、删目录
+routerApp.on("runner/delete", async (ctx, data) => {
+  try {
+    const result = await deleteRunner(String(data?.dir || ""), {
+      removeToken: data?.removeToken ? String(data.removeToken) : undefined,
+      proxy: data?.proxy ? String(data.proxy) : undefined,
+      force: Boolean(data?.force)
+    });
+    protocol.msg(ctx, "runner/delete", result);
+  } catch (err: any) {
+    protocol.error(ctx, "runner/delete", { err: err?.message || String(err) });
   }
 });
 
@@ -82,31 +97,39 @@ routerApp.on("runner/diag_logs", (ctx, data) => {
   }
 });
 
-// 本节点的 NPU(昇腾)占用率。只读后台采样的缓存，不会阻塞请求；
-// 首次请求会拉起采样，没人看时自动停（详见 npu_monitor）。
-routerApp.on("npu/status", (ctx) => {
+// 基目录选择器：列出某路径下的子目录（限扫描根内）
+routerApp.on("runner/list_dirs", (ctx, data) => {
   try {
-    protocol.msg(ctx, "npu/status", getNpuStatus());
+    protocol.msg(ctx, "runner/list_dirs", listDirs(data?.path ? String(data.path) : undefined));
   } catch (err: any) {
-    protocol.error(ctx, "npu/status", { err: err?.message || String(err) });
+    protocol.error(ctx, "runner/list_dirs", { err: err?.message || String(err) });
+  }
+});
+
+// 基目录选择器：新建目录（限扫描根内）
+routerApp.on("runner/mkdir", (ctx, data) => {
+  try {
+    protocol.msg(ctx, "runner/mkdir", makeDir(String(data?.path || ""), String(data?.name || "")));
+  } catch (err: any) {
+    protocol.error(ctx, "runner/mkdir", { err: err?.message || String(err) });
   }
 });
 
 // 探单个 runner 的实时状态（详情页基本信息 + 定时刷新用）
-routerApp.on("runner/state", (ctx, data) => {
+routerApp.on("runner/state", async (ctx, data) => {
   try {
-    protocol.msg(ctx, "runner/state", { runner: scanOneRunner(String(data?.dir || "")) });
+    protocol.msg(ctx, "runner/state", { runner: await scanOneRunner(String(data?.dir || "")) });
   } catch (err: any) {
     protocol.error(ctx, "runner/state", { err: err?.message || String(err) });
   }
 });
 
 // 启停 systemd 托管的 runner。需要 sudoers 免密白名单
-routerApp.on("runner/service_control", (ctx, data) => {
+routerApp.on("runner/service_control", async (ctx, data) => {
   try {
     const service = String(data?.service || "");
     const action = String(data?.action || "") as SystemdAction;
-    protocol.msg(ctx, "runner/service_control", controlService(service, action));
+    protocol.msg(ctx, "runner/service_control", await controlService(service, action));
   } catch (err: any) {
     protocol.error(ctx, "runner/service_control", { err: err?.message || String(err) });
   }

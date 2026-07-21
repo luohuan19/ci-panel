@@ -260,6 +260,40 @@ export function installSystemdService(dir: string): void {
   }
 }
 
+// 卸载 runner 的 systemd 服务（停 + 删单元）。走特权助手；幂等——没装服务也不报错。
+export function uninstallSystemdService(dir: string): { ok: boolean; error?: string } {
+  try {
+    const out = execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, "uninstall", dir], {
+      encoding: "utf8",
+      timeout: 60000
+    });
+    logger.info(`[runner] systemd 卸载: ${String(out).trim()}`);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: String(err?.stderr || err?.message || err) };
+  }
+}
+
+// 从 GitHub 注销 runner：config.sh remove --token <删除token>。以 ci-runner 身份跑，走代理。
+// 需要先停掉 runner（否则 GitHub 会拒绝移除在线 runner）——由调用方保证卸载 systemd 在前。
+export async function removeGithubRegistration(
+  dir: string,
+  token: string,
+  proxy?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const configSh = path.join(dir, "config.sh");
+  if (!fs.existsSync(configSh)) return { ok: false, error: "config.sh 不存在，无法注销" };
+  const pxy = resolveProxy(proxy);
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  if (pxy) {
+    childEnv.HTTP_PROXY = childEnv.HTTPS_PROXY = childEnv.ALL_PROXY = pxy;
+    childEnv.NO_PROXY = "localhost,127.0.0.1,::1";
+  }
+  const r = await run(configSh, ["remove", "--token", token], { cwd: dir, env: childEnv });
+  if (r.code !== 0) return { ok: false, error: r.output.slice(-300) };
+  return { ok: true };
+}
+
 // 确保某 runner 目录有一个面板实例作为「管理句柄」：文件管理/配置/详情页要复用 MCSManager
 // 的实例能力（那些接口都按 instanceUuid 授权、根在实例 cwd 上），所以纳管的 runner 也得有个实例。
 // 已有就返回其 uuid，不重复建。句柄实例本身能跑 run.sh，但对 systemd 托管的 runner 前端不暴露它的
@@ -310,6 +344,16 @@ export interface ProvisionBatchParams {
   baseDir: string; // 基目录，每个 runner 目录 = baseDir/<name>
   groups: RunnerGroup[];
   packagePath?: string; // 可选，指定 tar.gz 安装包（导入模式）
+  concurrency?: number; // 同时创建几个（1..10，默认 3）；代理脆时别调太高
+}
+
+// 并发度：限制在 1..10。默认 3——既加速又不至于把代理/磁盘打爆（并行注册挤同一个脆代理易触发重试风暴）
+const DEFAULT_CONCURRENCY = 3;
+const MAX_CONCURRENCY = 10;
+function clampConcurrency(n?: number): number {
+  const v = Math.floor(Number(n) || 0);
+  if (v < 1) return DEFAULT_CONCURRENCY;
+  return Math.min(v, MAX_CONCURRENCY);
 }
 
 export interface BatchItemResult {
@@ -408,6 +452,7 @@ interface BatchState {
   repoUrl: string;
   proxy: string;
   packagePath?: string;
+  concurrency: number; // 同时创建几个
   done: boolean;
   startedAt: number;
 }
@@ -418,7 +463,12 @@ let batchSeq = 0;
 async function runBatchItems(id: string, token: string, indices: number[]) {
   const st = batches.get(id)!;
   st.done = false;
-  for (const i of indices) {
+
+  // 限并发工作池：起 K 个 worker，各自从共享游标领任务，领空即退出。
+  // 每个 item 独立更新自己的 status/step，进度上报不受并发影响。
+  const conc = Math.min(clampConcurrency(st.concurrency), indices.length || 1);
+
+  async function runOne(i: number) {
     const s = st.specs[i];
     const item = st.items[i];
     item.status = "running";
@@ -450,8 +500,19 @@ async function runBatchItems(id: string, token: string, indices: number[]) {
       item.log = err?.fullLog || err?.message || String(err);
     }
   }
+
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const at = cursor++;
+      if (at >= indices.length) return;
+      await runOne(indices[at]);
+    }
+  }
+  await Promise.all(Array.from({ length: conc }, () => worker()));
+
   st.done = true;
-  logger.info(`[runner-provision] 批量任务 ${id} 本轮结束`);
+  logger.info(`[runner-provision] 批量任务 ${id} 本轮结束（并发 ${conc}）`);
 }
 
 // 启动后台批量，立刻返回 batchId + 初始清单
@@ -465,16 +526,20 @@ export function startRunnerBatch(
     status: "pending",
     step: ""
   }));
+  const concurrency = clampConcurrency(p.concurrency);
   batches.set(id, {
     items,
     specs,
     repoUrl,
     proxy,
     packagePath: p.packagePath,
+    concurrency,
     done: false,
     startedAt: Date.now()
   });
-  logger.info(`[runner-provision] 批量任务 ${id} 启动，共 ${specs.length} 个 runner`);
+  logger.info(
+    `[runner-provision] 批量任务 ${id} 启动，共 ${specs.length} 个 runner（并发 ${concurrency}）`
+  );
   // 后台跑，不阻塞
   runBatchItems(
     id,

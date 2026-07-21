@@ -13,6 +13,7 @@ import { message, Modal } from "ant-design-vue";
 import {
   CloudServerOutlined,
   DatabaseOutlined,
+  DeleteOutlined,
   ExclamationCircleOutlined,
   ReloadOutlined,
   RightOutlined,
@@ -25,7 +26,12 @@ import ImportRunnerDialog from "./ImportRunnerDialog.vue";
 import { useOverviewInfo } from "@/hooks/useOverviewInfo";
 import type { LayoutCard } from "@/types/index";
 import { repoList, type RepoRunner, type RepoSummary } from "@/services/apis/repo";
-import { controlRunnerService, npuStatusAll } from "@/services/apis/runner";
+import {
+  controlRunnerService,
+  deleteRunnerBatch,
+  type DeleteRunnerResult
+} from "@/services/apis/runner";
+import DeleteResultView from "./DeleteResultView.vue";
 import { remoteNodeList } from "@/services/apis";
 
 defineProps<{
@@ -43,8 +49,6 @@ const { execute: control } = controlRunnerService();
 // remoteNodeList 只给 available/ip/port/remarks/uuid，没有系统指标，所以两边按 uuid 合并。
 const { state: AllDaemonData } = useOverviewInfo();
 
-// 各节点 NPU 占用率（npu-smi）。daemon 侧后台采样 + 缓存，这里只是读快照
-const { execute: fetchNpu, state: npuData } = npuStatusAll();
 
 const daemonId = computed(() => (route.query.node as string) || "");
 const repoSlug = computed(() => (route.query.repo as string) || "");
@@ -83,8 +87,6 @@ const nodeCards = computed(() =>
     return {
       node,
       sys,
-      // 该节点的 NPU 快照；没有 npu-smi 的节点为 undefined / available=false
-      npu: npuData.value?.[node.uuid],
       repoCount: repos.size,
       total: runners.length,
       running,
@@ -96,12 +98,6 @@ const nodeCards = computed(() =>
     };
   })
 );
-
-// NPU 显存 MB → GB 文本
-function fmtGB(mb?: number) {
-  if (!mb || mb <= 0) return "0G";
-  return `${(mb / 1024).toFixed(mb < 10240 ? 1 : 0)}G`;
-}
 
 // 节点已运行时长（秒 → 天/小时/分钟）
 function fmtUptime(sec?: number) {
@@ -145,8 +141,7 @@ const currentNodeName = computed(
 
 async function load(silent = false) {
   try {
-    // NPU 单独 catch：没有 npu-smi 的节点属正常情况，不该让整个列表报错
-    await Promise.all([fetchNodes(), fetchRepos(), fetchNpu().catch(() => undefined)]);
+    await Promise.all([fetchNodes(), fetchRepos()]);
   } catch (err: any) {
     if (!silent) message.error("加载失败：" + (err?.message || err));
   }
@@ -222,6 +217,52 @@ function openImport() {
 // 进 runner 详情页（实时日志 + 基本信息 + 文件管理/配置）
 function goDetail(r: RepoRunner) {
   router.push({ path: "/instances/runner", query: { daemonId: r.daemonId, dir: r.dir } });
+}
+
+// ---- 批量删除本仓库（当前节点）的全部 runner ----
+const batchOpen = ref(false);
+const batchToken = ref(""); // 手输 GitHub 删除 token，留空则用仓库 PAT 自动取
+const batchDeleting = ref(false);
+const batchBusyCount = computed(() => runnersOfRepo.value.filter((r) => r.busy).length);
+function openBatchDelete() {
+  if (!runnersOfRepo.value.length) return;
+  batchToken.value = "";
+  batchOpen.value = true;
+}
+async function doBatchDelete() {
+  const list = runnersOfRepo.value;
+  if (!list.length) return;
+  batchDeleting.value = true;
+  try {
+    const { execute, state } = deleteRunnerBatch();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: {
+        repo: repoSlug.value,
+        dirs: list.map((r) => r.dir),
+        force: batchBusyCount.value > 0, // 正在跑 job 的也一并删（用户已在弹窗确认）
+        removeToken: batchToken.value.trim()
+      }
+    });
+    const results = state.value?.results || [];
+    batchOpen.value = false;
+    // 逐个 runner 的分步结果都摆出来，让用户看到每个删到哪一步、哪步失败、如何手动补做
+    batchResults.value = results;
+    batchResultOpen.value = true;
+  } catch (err: any) {
+    message.error("批量删除失败：" + (err?.message || err));
+  } finally {
+    batchDeleting.value = false;
+  }
+}
+// 批量删除结果分步展示
+const batchResultOpen = ref(false);
+const batchResults = ref<Array<DeleteRunnerResult & { error?: string }>>([]);
+const batchOkCount = computed(() => batchResults.value.filter((r) => r.ok).length);
+async function closeBatchResult() {
+  batchResultOpen.value = false;
+  await load();
+  router.push({ path: route.path, query: { node: daemonId.value } });
 }
 
 const goRoot = () => router.push({ path: route.path });
@@ -353,51 +394,6 @@ const goRepo = (slug: string) =>
                 :mem-data="c.sys.memChartData ?? []"
               />
             </template>
-
-            <!-- NPU(昇腾)占用率：数据来自 npu-smi，没这命令的节点不显示本区 -->
-            <template v-if="c.npu?.available && c.npu.chips.length">
-              <a-divider style="margin: 12px 0" />
-              <div
-                style="
-                  display: flex;
-                  justify-content: space-between;
-                  font-size: 12px;
-                  margin-bottom: 6px;
-                "
-              >
-                <span style="opacity: 0.65">
-                  NPU {{ c.npu.chips.length }} 颗 · 满载 {{ c.npu.busyChips }}
-                </span>
-                <span style="opacity: 0.65">
-                  HBM {{ fmtGB(c.npu.hbmUsed) }} / {{ fmtGB(c.npu.hbmTotal) }}
-                </span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px">
-                <a-progress
-                  :percent="c.npu.avgUtil"
-                  :stroke-color="c.npu.avgUtil >= 80 ? '#ff4d4f' : '#1677ff'"
-                  size="small"
-                  style="flex: 1; margin: 0"
-                />
-              </div>
-              <!-- 每颗芯片一根小条：一眼看出哪几颗在闲着 -->
-              <div style="display: flex; gap: 2px; margin-top: 6px">
-                <a-tooltip
-                  v-for="chip in c.npu.chips"
-                  :key="chip.phyId"
-                  :title="`NPU${chip.npuId}-芯片${chip.chipId} (phy ${chip.phyId})：占用 ${chip.util}% · ${chip.temp}℃ · HBM ${fmtGB(chip.hbmUsed)}/${fmtGB(chip.hbmTotal)}`"
-                >
-                  <div
-                    style="flex: 1; height: 14px; border-radius: 2px; background: #f0f0f0"
-                    :style="{
-                      background: `linear-gradient(to top, ${
-                        chip.util >= 80 ? '#ff4d4f' : '#1677ff'
-                      } ${chip.util}%, #f0f0f0 ${chip.util}%)`
-                    }"
-                  />
-                </a-tooltip>
-              </div>
-            </template>
           </a-card>
         </a-col>
         <a-col v-if="!nodeCards.length && !isLoading" :span="24">
@@ -447,6 +443,16 @@ const goRepo = (slug: string) =>
 
       <!-- L3：该仓库的 runner -->
       <a-col v-else :span="24">
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 12px">
+          <a-button
+            danger
+            :disabled="!runnersOfRepo.length"
+            :loading="batchDeleting"
+            @click="openBatchDelete"
+          >
+            <DeleteOutlined /> 批量删除本仓库 runner（{{ runnersOfRepo.length }}）
+          </a-button>
+        </div>
         <a-table
           :data-source="runnersOfRepo"
           row-key="dir"
@@ -543,5 +549,53 @@ const goRepo = (slug: string) =>
 
     <!-- 导入既有 runner：扫描节点磁盘 → 勾选 → 写 .cipanel 纳管 -->
     <ImportRunnerDialog ref="importDialog" @imported="load()" />
+
+    <!-- 批量删除本仓库 runner 确认弹窗 -->
+    <a-modal
+      v-model:open="batchOpen"
+      :title="`删除 ${repoSlug} 的全部 runner？`"
+      :width="560"
+      ok-text="确认删除"
+      :ok-button-props="{ danger: true, loading: batchDeleting }"
+      cancel-text="取消"
+      @ok="doBatchDelete"
+    >
+      <a-alert
+        type="error"
+        show-icon
+        style="margin-bottom: 12px"
+        :message="`将彻底删除本节点上该仓库的 ${runnersOfRepo.length} 个 runner，此操作不可逆`"
+      />
+      <a-alert
+        v-if="batchBusyCount > 0"
+        type="warning"
+        show-icon
+        style="margin-bottom: 12px"
+        :message="`其中 ${batchBusyCount} 个正在跑 job，删除会当场中断这些 CI 任务！`"
+      />
+      <p style="margin-bottom: 8px">每个 runner 都会：停卸 systemd 服务 · 从 GitHub 注销 · 删除目录。</p>
+      <a-form layout="vertical">
+        <a-form-item label="GitHub 删除 token（可选，整批共用）">
+          <a-input v-model:value="batchToken" placeholder="留空则用该仓库已配置的 PAT 自动获取" allow-clear />
+          <div style="font-size: 12px; opacity: 0.6; margin-top: 4px">
+            没配 PAT 或面板连不上 GitHub 时，可从 GitHub 仓库 Settings → Actions → Runners 里复制删除
+            token 粘到这里。留空且取不到 token 时，仅本地删除、GitHub 上需手动移除。
+          </div>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 批量删除结果分步展示 -->
+    <a-modal
+      v-model:open="batchResultOpen"
+      :title="`删除结果：成功 ${batchOkCount} / 共 ${batchResults.length}`"
+      :width="640"
+      :mask-closable="false"
+      ok-text="完成"
+      @ok="closeBatchResult"
+      @cancel="closeBatchResult"
+    >
+      <DeleteResultView :results="batchResults" />
+    </a-modal>
   </div>
 </template>

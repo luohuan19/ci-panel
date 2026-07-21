@@ -4,9 +4,10 @@
 // 每个 runner 目录 = 基目录/<name>。无自带按钮，外部通过 ref 调 open() 触发。
 import { ref, reactive, computed } from "vue";
 import { message } from "ant-design-vue";
-import { PlusOutlined, DeleteOutlined } from "@ant-design/icons-vue";
+import { PlusOutlined, DeleteOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { onUnmounted } from "vue";
 import { openNodeSelectDialog } from "@/components/fc/index";
+import SelectDirDialog from "./SelectDirDialog.vue";
 import {
   checkRunnerPackage,
   startRunnerDownload,
@@ -32,17 +33,45 @@ const shared = reactive({
   baseDir: "",
   // 默认预填可用代理：直连 GitHub CDN 常被重置，拉取/注册都需要走代理
   proxy: "http://127.0.0.1:7892",
-  packagePath: ""
+  packagePath: "",
+  // 同时创建几个（1..10）。代理脆时别调太高，并行注册挤同一代理易触发重试风暴。
+  // 存字符串是为了绑 a-input（与其它字段同款控件，高度一致），发送时再 Number()
+  concurrency: "3"
 });
+
+// 从 GitHub 给的 `./config.sh --url <仓库> --token <token>` 命令里解析并回填仓库地址与 token，
+// 省得手动分别复制两个字段。粘贴即解析。
+const cmdPaste = ref("");
+function parseCmd() {
+  const s = cmdPaste.value || "";
+  const url = s.match(/--url\s+(\S+)/);
+  const token = s.match(/--token\s+(\S+)/);
+  if (url) shared.repoUrl = url[1];
+  if (token) shared.token = token[1];
+}
+
+// number 输入用的是 a-input（原生 max 不拦输入），失焦时把值钳制到范围内；空/非法回落到 min
+function clampStr(v: string, min: number, max: number): string {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return String(min);
+  return String(Math.min(max, Math.max(min, n)));
+}
+
+// 基目录选择器：打开服务器端目录浏览/新建弹窗，选定后回填 baseDir
+const dirDialog = ref<InstanceType<typeof SelectDirDialog>>();
+function openDirPicker() {
+  if (!daemonId.value) return message.error("请先选择节点");
+  dirDialog.value?.openDialog(daemonId.value, shared.baseDir.trim() || undefined);
+}
 
 interface Group {
   baseName: string;
   labels: string;
-  count: number;
+  count: string; // 绑 a-input（同款控件保证高度一致）；用到时 Number(g.count)
 }
-const groups = ref<Group[]>([{ baseName: "", labels: "linux,arm64", count: 1 }]);
+const groups = ref<Group[]>([{ baseName: "", labels: "linux,arm64", count: "1" }]);
 
-const addGroup = () => groups.value.push({ baseName: "", labels: "linux,arm64", count: 1 });
+const addGroup = () => groups.value.push({ baseName: "", labels: "linux,arm64", count: "1" });
 const removeGroup = (i: number) => groups.value.length > 1 && groups.value.splice(i, 1);
 
 // 预览：将创建的全部 runner 名
@@ -364,7 +393,8 @@ const submit = async () => {
           baseName: g.baseName.trim(),
           labels: g.labels.trim(),
           count: Number(g.count) || 0
-        }))
+        })),
+        concurrency: Number(shared.concurrency) || 3
       }
     });
     const started: any = state.value || {};
@@ -541,6 +571,17 @@ const statusColor = (s: string) =>
     <a-form v-else layout="vertical" style="margin-top: 8px">
       <a-row :gutter="16">
         <a-col :span="24">
+          <a-form-item label="从 config.sh 命令解析（可选，粘贴即自动填仓库和 token）">
+            <a-input
+              v-model:value="cmdPaste"
+              placeholder="./config.sh --url https://github.com/owner/repo --token AXXXX..."
+              allow-clear
+              @input="parseCmd"
+              @change="parseCmd"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col :span="24">
           <a-form-item label="仓库地址" required>
             <a-input v-model:value="shared.repoUrl" placeholder="https://github.com/owner/repo" />
           </a-form-item>
@@ -553,14 +594,34 @@ const statusColor = (s: string) =>
             />
           </a-form-item>
         </a-col>
-        <a-col :span="14">
+        <a-col :span="24">
           <a-form-item label="基目录（每个 runner = 基目录/<name>）" required>
-            <a-input v-model:value="shared.baseDir" placeholder="/data/ci-runner/ci-runners" />
+            <a-input-group compact>
+              <a-input
+                v-model:value="shared.baseDir"
+                style="width: calc(100% - 80px)"
+                placeholder="/data/ci-runner/ci-runners"
+              />
+              <a-button style="width: 80px" @click="openDirPicker">
+                <FolderOpenOutlined /> 浏览
+              </a-button>
+            </a-input-group>
           </a-form-item>
         </a-col>
-        <a-col :span="10">
+        <a-col :span="18">
           <a-form-item label="代理（可选，连 GitHub 用）">
             <a-input v-model:value="shared.proxy" placeholder="http://127.0.0.1:7890" />
+          </a-form-item>
+        </a-col>
+        <a-col :span="6">
+          <a-form-item label="并发数（同时创建几个）">
+            <a-input
+              v-model:value="shared.concurrency"
+              type="number"
+              min="1"
+              max="10"
+              @blur="shared.concurrency = clampStr(shared.concurrency, 1, 10)"
+            />
           </a-form-item>
         </a-col>
         <a-col v-if="mode === 'import'" :span="24">
@@ -632,7 +693,13 @@ const statusColor = (s: string) =>
           <a-input v-model:value="g.labels" placeholder="linux,arm64,npu" />
         </a-form-item>
         <a-form-item label="数量" style="width: 90px; margin: 0">
-          <a-input-number v-model:value="g.count" :min="1" :max="99" style="width: 100%" />
+          <a-input
+            v-model:value="g.count"
+            type="number"
+            min="1"
+            max="99"
+            @blur="g.count = clampStr(g.count, 1, 99)"
+          />
         </a-form-item>
         <a-button
           danger
@@ -661,12 +728,27 @@ const statusColor = (s: string) =>
       type="warning"
       show-icon
       style="margin-top: 12px"
-      message="注册 token 一次性有效（约 1 小时），整批共用一个。数量多时耗时较长，请耐心等待；创建后实例为停止态，需在列表手动启动。"
+      message="注册 token 一次性有效（约 1 小时），整批共用一个。数量多时耗时较长，请耐心等待；创建后会装成 systemd 服务并自动启动。"
     />
+
+    <!-- 基目录选择器 -->
+    <SelectDirDialog ref="dirDialog" @select="(p: string) => (shared.baseDir = p)" />
   </a-modal>
 </template>
 
 <style lang="scss" scoped>
+// 隐藏原生 number 输入的上下箭头：它不跟随暗色主题（暗色下是白的、也丑）。
+// 去掉后就是个干净的数字文本框，和旁边 a-input 同高，直接敲数字即可。
+:deep(input[type="number"]) {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+:deep(input[type="number"]::-webkit-outer-spin-button),
+:deep(input[type="number"]::-webkit-inner-spin-button) {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .batch-progress {
   margin-top: 8px;
 
