@@ -11,18 +11,32 @@ import { globalConfiguration } from "../entity/config";
 import { $t } from "../i18n";
 import { DockerManager } from "../service/docker_service";
 import logger from "../service/log";
+import { getManagedRunnerCounts } from "../service/runner_scan";
 import VisualDataSubsystem from "../service/system_visual_data";
 import { getVersion } from "../service/version";
 
 // Get the basic information of the daemon system
 routerApp.on("info/overview", async (ctx) => {
   const daemonVersion = getVersion();
+
+  // 「实例状态」在本 fork 里就是 runner 的运行状态：systemd 是唯一启动路径，面板实例只是
+  // 文件管理/配置的句柄、从不启动，按实例状态统计会恒为 0。所以改按 systemd 的真实状态统计。
   let total = 0;
   let running = 0;
-  InstanceSubsystem.getInstances().forEach((v) => {
-    total++;
-    if (v.status() == Instance.STATUS_RUNNING) running++;
-  });
+  try {
+    const counts = await getManagedRunnerCounts();
+    total = counts.total;
+    running = counts.running;
+  } catch (error: any) {
+    // 扫描失败（扫描根配置错、权限等）时退回原口径，别让这个字段整个坏掉
+    logger.warn(`Failed to count managed runners, falling back to instances: ${error?.message}`);
+    total = 0;
+    running = 0;
+    InstanceSubsystem.getInstances().forEach((v) => {
+      total++;
+      if (v.status() == Instance.STATUS_RUNNING) running++;
+    });
+  }
 
   let dockerPlatforms: string[] | undefined;
   try {

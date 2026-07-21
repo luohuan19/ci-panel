@@ -8,9 +8,14 @@
 // 托管方式只认 systemd：面板实例一律只是「句柄」（不带启动命令、不跑 runner），
 // 所以 managedBy 只会是 systemd 或 none。日常展示只列带 .cipanel 的（scanManagedRunners），
 // 全盘发现（scanRunners）只给「导入」用。
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
+import { promisify } from "util";
 import fs from "fs-extra";
 import path from "path";
+
+// 异步版 execFile：扫描热路径(每 10s 一次)用它，避免同步调用卡住 daemon 单线程事件循环——
+// systemctl 走 dbus、机器一忙偶发能卡几秒，同步跑就会丢 WebSocket 心跳→面板判定掉线→刷新卡。
+const execFileAsync = promisify(execFile);
 import InstanceSubsystem from "./system_instance";
 import logger from "./log";
 import {
@@ -20,7 +25,11 @@ import {
   writeMarker,
   type RunnerSource
 } from "./runner_marker";
-import { ensureHandleInstance } from "./runner_provision";
+import {
+  ensureHandleInstance,
+  removeGithubRegistration,
+  uninstallSystemdService
+} from "./runner_provision";
 
 const SYSTEMCTL = "/usr/bin/systemctl";
 
@@ -101,21 +110,22 @@ function collectRunnerDirs(dir: string, depth: number, out: string[], errors: Sc
   }
 }
 
-// 一次 systemctl show 查完所有单元，省得 30 个 runner 调 30 次
-function querySystemd(services: string[]): Map<string, SystemdState> {
+// 一次 systemctl show 查完所有单元，省得 30 个 runner 调 30 次。异步执行，不阻塞事件循环。
+async function querySystemd(services: string[]): Promise<Map<string, SystemdState>> {
   const result = new Map<string, SystemdState>();
   if (services.length === 0) return result;
   let out = "";
   try {
-    out = execFileSync(
+    const r = await execFileAsync(
       SYSTEMCTL,
       [
         "show",
         ...services,
         "--property=Id,LoadState,ActiveState,SubState,UnitFileState,ExecMainStartTimestamp"
       ],
-      { encoding: "utf8", timeout: 15000 }
+      { encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 }
     );
+    out = String(r.stdout);
   } catch (err: any) {
     logger.error(`[runner-scan] systemctl show 失败: ${err.message}`);
     return result;
@@ -144,30 +154,41 @@ function querySystemd(services: string[]): Map<string, SystemdState> {
 // runner 空闲时只有 Runner.Listener 一个进程；接到 job 后会 fork 出 Runner.Worker 子进程。
 // 停一个 busy 的 runner 会当场中断 CI 任务，所以必须在 UI 上标出来、拦一道。
 // 关联方式：Worker 的父进程就是 Listener，而 Listener 的 cmdline 里带着 runner 目录的绝对路径。
-function busyRunnerDirs(): Set<string> {
+// 异步 + 分批并发读 /proc：机器上可能有几千个进程，同步逐个读会卡住事件循环几十毫秒、
+// 负载高时更久。分批(每批 256)既不阻塞、也不会一次打开几千个 fd。
+async function busyRunnerDirs(): Promise<Set<string>> {
   const busy = new Set<string>();
   let pids: string[] = [];
   try {
-    pids = fs.readdirSync("/proc").filter((n) => /^\d+$/.test(n));
+    pids = (await fs.promises.readdir("/proc")).filter((n) => /^\d+$/.test(n));
   } catch {
     return busy;
   }
-  for (const pid of pids) {
-    try {
-      if (fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim() !== "Runner.Worker") continue;
-      // /proc/<pid>/stat 的 comm 字段可能含空格和括号，从最后一个 ')' 之后再切字段
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-      const fields = stat
-        .slice(stat.lastIndexOf(")") + 1)
-        .trim()
-        .split(/\s+/);
-      const ppid = fields[1];
-      const cmdline = fs.readFileSync(`/proc/${ppid}/cmdline`, "utf8").replace(/\0/g, " ");
-      const m = cmdline.match(/^(\S+)\/bin\/Runner\.Listener/);
-      if (m) busy.add(path.normalize(m[1]));
-    } catch {
-      /* 进程可能刚好退出了，跳过 */
-    }
+  const CHUNK = 256;
+  for (let i = 0; i < pids.length; i += CHUNK) {
+    await Promise.all(
+      pids.slice(i, i + CHUNK).map(async (pid) => {
+        try {
+          const comm = await fs.promises.readFile(`/proc/${pid}/comm`, "utf8");
+          if (comm.trim() !== "Runner.Worker") return;
+          // /proc/<pid>/stat 的 comm 字段可能含空格和括号，从最后一个 ')' 之后再切字段
+          const stat = await fs.promises.readFile(`/proc/${pid}/stat`, "utf8");
+          const fields = stat
+            .slice(stat.lastIndexOf(")") + 1)
+            .trim()
+            .split(/\s+/);
+          const ppid = fields[1];
+          const cmdline = (await fs.promises.readFile(`/proc/${ppid}/cmdline`, "utf8")).replace(
+            /\0/g,
+            " "
+          );
+          const m = cmdline.match(/^(\S+)\/bin\/Runner\.Listener/);
+          if (m) busy.add(path.normalize(m[1]));
+        } catch {
+          /* 进程可能刚好退出了，跳过 */
+        }
+      })
+    );
   }
   return busy;
 }
@@ -212,7 +233,7 @@ function collectFromRoots(roots?: string[]): {
 
 // 从一组已知的 runner 目录构建结果：读 .runner / .service / .cipanel，统一查 systemd 与 busy。
 // scanRunners（全盘发现）与 scanManagedRunners（只看已纳管）都复用它，区别只在传进来的 dirs。
-function buildRunners(dirs: string[]): ScannedRunner[] {
+async function buildRunners(dirs: string[]): Promise<ScannedRunner[]> {
   // 面板实例按工作目录索引，用来判断这个 runner 面板有没有在托管
   const instanceByCwd = new Map<string, { uuid: string; status: number }>();
   for (const inst of InstanceSubsystem.instances.values()) {
@@ -258,8 +279,11 @@ function buildRunners(dirs: string[]): ScannedRunner[] {
     return draft;
   });
 
-  const systemdStates = querySystemd(drafts.map((d) => d.service).filter(Boolean));
-  const busy = busyRunnerDirs();
+  // 两个外部调用并发跑，各自不阻塞事件循环
+  const [systemdStates, busy] = await Promise.all([
+    querySystemd(drafts.map((d) => d.service).filter(Boolean)),
+    busyRunnerDirs()
+  ]);
 
   const runners: ScannedRunner[] = drafts.map((d) => {
     const systemd = d.service ? systemdStates.get(d.service) || null : null;
@@ -296,9 +320,9 @@ function buildRunners(dirs: string[]): ScannedRunner[] {
 
 // 全盘发现：返回 roots 下所有 .runner 目录（无论有没有纳管），每个带 managed 标记。
 // 只给「导入」列表用——让用户看见机器上全部 runner，已纳管的置灰。
-export function scanRunners(roots?: string[]): ScanResult {
+export async function scanRunners(roots?: string[]): Promise<ScanResult> {
   const { scanRoots, dirs, errors } = collectFromRoots(roots);
-  const runners = buildRunners(dirs);
+  const runners = await buildRunners(dirs);
   logger.info(`[runner-scan] 扫描 ${scanRoots.join(", ")}：发现 ${runners.length} 个 runner`);
   return { roots: scanRoots, runners, errors };
 }
@@ -320,24 +344,68 @@ function reconcileHandle(r: ScannedRunner) {
   }
 }
 
-// 只返回带 .cipanel 的目录——面板纳管的那些，供日常展示用。
-// membership 以 marker 为准，不再把「磁盘上存在 .runner」当成纳管。
-export function scanManagedRunners(roots?: string[]): ScanResult {
-  const { scanRoots, dirs, errors } = collectFromRoots(roots);
-  const managedDirs = dirs.filter((d) => hasMarker(d));
-  const runners = buildRunners(managedDirs);
-  runners.forEach(reconcileHandle); // 顺手补齐缺失的句柄实例
-  logger.info(
-    `[runner-scan] 已纳管扫描 ${scanRoots.join(", ")}：${runners.length}/${dirs.length} 个已纳管`
-  );
-  return { roots: scanRoots, runners, errors };
+// 发现全部「被管理的 runner」目录：遍历面板的句柄实例——每个被管理 runner 纳管时都建了一个
+// 句柄实例，其 cwd 就是 runner 目录（实例配置持久化、重启不丢）。所以直接从实例 cwd 拿到全部
+// 被管理 runner，不再遍历 CIP_SCAN_ROOTS——runner 放在任意位置都能被列出，不受扫描根限制。
+// 仍以 .cipanel 过滤，排除 global 等非 runner 实例（它们目录里没有 .cipanel）。
+function managedRunnerDirs(): string[] {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const inst of InstanceSubsystem.instances.values()) {
+    const cwd = inst?.config?.cwd;
+    if (!cwd) continue;
+    const norm = path.normalize(cwd);
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    if (hasMarker(norm)) dirs.push(norm);
+  }
+  return dirs;
+}
+
+// 列出已纳管的 runner，供日常展示用。
+export async function scanManagedRunners(): Promise<ScanResult> {
+  const runners = await buildRunners(managedRunnerDirs());
+  runners.forEach(reconcileHandle); // 幂等：顺手修早期句柄实例遗留的启动命令
+  logger.info(`[runner-scan] 已纳管（经句柄实例发现）：${runners.length} 个`);
+  return { roots: [], runners, errors: [] };
+}
+
+// 已纳管 runner 的运行计数，供 info/overview 上报「实例状态」。
+//
+// systemd 是唯一启动路径，句柄实例从不启动，所以按「面板启动了几个实例」统计恒为 0、毫无意义；
+// 这里改成按 systemd 的真实状态统计，节点页看到的才是 runner 的实际运行情况。
+//
+// info/overview 会被面板高频轮询，故加 TTL 缓存，避免每次都走目录遍历 + systemctl。
+// 刻意不做 reconcile（不像 scanManagedRunners 那样补建句柄实例）——这是只读的热路径，不该有副作用。
+export interface ManagedRunnerCounts {
+  total: number;
+  running: number;
+  busy: number;
+}
+
+const COUNTS_TTL_MS = 5000;
+let countsCache: { at: number; value: ManagedRunnerCounts } | null = null;
+
+export async function getManagedRunnerCounts(): Promise<ManagedRunnerCounts> {
+  const now = Date.now();
+  if (countsCache && now - countsCache.at < COUNTS_TTL_MS) return countsCache.value;
+
+  const runners = await buildRunners(managedRunnerDirs());
+  const value: ManagedRunnerCounts = { total: 0, running: 0, busy: 0 };
+  for (const r of runners) {
+    value.total++;
+    if (r.systemd?.loaded && r.systemd.activeState === "active") value.running++;
+    if (r.busy) value.busy++;
+  }
+  countsCache = { at: now, value };
+  return value;
 }
 
 // 探单个 runner 目录的实时状态（详情页拿基本信息 + 定时刷新用）。免全盘遍历。
-export function scanOneRunner(dirRaw: string): ScannedRunner | null {
+export async function scanOneRunner(dirRaw: string): Promise<ScannedRunner | null> {
   const dir = path.normalize(String(dirRaw || ""));
   if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
-  const runner = buildRunners([dir])[0] || null;
+  const runner = (await buildRunners([dir]))[0] || null;
   if (runner) reconcileHandle(runner); // 详情页直接进来时也补齐，保证文件管理可用
   return runner;
 }
@@ -425,12 +493,189 @@ export function unregisterRunner(dirRaw: string): UnregisterResult {
   return { dir, ok: true, hadInstance: Boolean(instanceUuid), removedInstance };
 }
 
+// ---- 基目录选择器：浏览 / 新建目录（供前端创建 runner 时挑基目录）----
+// 严格限制在扫描根(CIP_SCAN_ROOTS)之下，绝不让前端浏览/创建到整个文件系统。
+
+const scanRoots = () => DEFAULT_ROOTS.map((r) => path.normalize(r));
+
+function assertUnderRoots(target: string) {
+  if (!path.isAbsolute(target)) throw new Error("路径必须是绝对路径");
+  const roots = scanRoots();
+  if (!roots.some((r) => target === r || target.startsWith(r + path.sep)))
+    throw new Error(`只允许在扫描根下操作：${roots.join(", ")}`);
+}
+
+export interface DirListing {
+  path: string;
+  parent: string; // 空 = 已在扫描根，不能再往上
+  roots: string[];
+  dirs: string[]; // 子目录名（不含隐藏目录）
+}
+
+export function listDirs(pathRaw?: string): DirListing {
+  const roots = scanRoots();
+  const target = pathRaw ? path.normalize(String(pathRaw)) : roots[0] || "/";
+  assertUnderRoots(target);
+  if (!fs.existsSync(target) || !fs.statSync(target).isDirectory())
+    throw new Error(`目录不存在: ${target}`);
+  const dirs: string[] = [];
+  for (const name of fs.readdirSync(target)) {
+    if (name.startsWith(".")) continue; // 隐藏目录不列
+    try {
+      if (fs.statSync(path.join(target, name)).isDirectory()) dirs.push(name);
+    } catch {
+      /* 权限/竞态，跳过 */
+    }
+  }
+  dirs.sort((a, b) => a.localeCompare(b));
+  const parent = roots.some((r) => target === r) ? "" : path.dirname(target);
+  return { path: target, parent, roots, dirs };
+}
+
+export function makeDir(pathRaw: string, name: string): { path: string } {
+  const base = path.normalize(String(pathRaw || ""));
+  const folder = String(name || "").trim();
+  if (!folder || /[/\\]/.test(folder) || folder === "." || folder === "..")
+    throw new Error("目录名不能为空、且不能含 / \\ 或 . ..");
+  assertUnderRoots(base);
+  if (!fs.existsSync(base)) throw new Error(`父目录不存在: ${base}`);
+  const full = path.join(base, folder);
+  fs.ensureDirSync(full);
+  logger.info(`[runner] 新建目录 ${full}`);
+  return { path: full };
+}
+
+// ---- 彻底删除一个 runner：停+卸 systemd、从 GitHub 注销、清面板侧、删目录 ----
+
+export type DeleteStepStatus = "ok" | "failed" | "skipped";
+export interface DeleteStep {
+  key: "systemd" | "github" | "panel" | "dir";
+  label: string;
+  status: DeleteStepStatus;
+  detail?: string; // 失败 / 跳过的原因
+  hint?: string; // 失败时可手动执行的命令 / 做法，供用户接着做
+}
+export interface DeleteResult {
+  dir: string;
+  ok: boolean; // 目录是否删掉（核心结果）
+  steps: DeleteStep[]; // 每一步的执行结果，供前端展示"卡在哪一步"
+  warnings: string[]; // 由非 ok 步骤派生，兼容旧用法
+}
+
+// 删除是不可逆的破坏性操作。分步 best-effort：单步失败记 warning 但继续，尽量把 runner 清干净。
+export async function deleteRunner(
+  dirRaw: string,
+  opts: { removeToken?: string; proxy?: string; force?: boolean } = {}
+): Promise<DeleteResult> {
+  const dir = path.normalize(String(dirRaw || ""));
+  // 严格校验：绝对路径、非根、必须在扫描根下、且看起来确实是 runner 目录——绝不误删别处
+  if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
+  const roots = (process.env.CIP_SCAN_ROOTS || "/data/ci-runner")
+    .split(",")
+    .map((r) => path.normalize(r.trim()))
+    .filter(Boolean);
+  if (!roots.some((root) => dir === root || dir.startsWith(root + path.sep)))
+    throw new Error(`拒绝删除扫描根之外的目录: ${dir}`);
+  if (!fs.existsSync(path.join(dir, ".runner")) && !fs.existsSync(path.join(dir, ".cipanel")))
+    throw new Error("不是 runner 目录（无 .runner / .cipanel），拒绝删除");
+
+  const steps: DeleteStep[] = [];
+
+  // busy 拦截：正在跑 job 的删除会当场中断 CI，必须显式 force
+  const busy = await busyRunnerDirs();
+  if (busy.has(dir) && !opts.force)
+    throw new Error("该 runner 正在跑 job，删除会中断 CI；确认后加 force 重试");
+
+  // 1) 停 + 卸 systemd
+  const uninstall = uninstallSystemdService(dir);
+  steps.push(
+    uninstall.ok
+      ? { key: "systemd", label: "停止并卸载 systemd 服务", status: "ok" }
+      : {
+          key: "systemd",
+          label: "停止并卸载 systemd 服务",
+          status: "failed",
+          detail: uninstall.error,
+          hint: `sudo /usr/local/sbin/ci-panel-runner-svc uninstall ${dir}`
+        }
+  );
+
+  // 2) 从 GitHub 注销（需删除 token；停服务后才做）
+  if (opts.removeToken) {
+    const r = await removeGithubRegistration(dir, opts.removeToken, opts.proxy);
+    steps.push(
+      r.ok
+        ? { key: "github", label: "从 GitHub 注销", status: "ok" }
+        : {
+            key: "github",
+            label: "从 GitHub 注销",
+            status: "failed",
+            detail: r.error,
+            hint: `在 runner 目录执行：cd ${dir} && ./config.sh remove --token <删除token>；或到 GitHub 仓库 Settings → Actions → Runners 手动移除`
+          }
+    );
+  } else {
+    steps.push({
+      key: "github",
+      label: "从 GitHub 注销",
+      status: "skipped",
+      detail: "未取得删除 token（该仓库可能没配 PAT）",
+      hint: "到 GitHub 仓库 Settings → Actions → Runners 手动移除该 runner"
+    });
+  }
+
+  // 3) 清面板侧：句柄实例 + marker（本地操作，基本不会失败）
+  let instanceRemoved = false;
+  try {
+    for (const inst of InstanceSubsystem.instances.values()) {
+      if (inst?.config?.cwd && path.normalize(inst.config.cwd) === dir) {
+        InstanceSubsystem.removeInstance(inst.instanceUuid, false); // 目录我们自己删，这里不删文件
+        instanceRemoved = true;
+        break;
+      }
+    }
+    removeMarker(dir);
+    steps.push({ key: "panel", label: "清理面板句柄实例与纳管标记", status: "ok" });
+  } catch (err: any) {
+    steps.push({
+      key: "panel",
+      label: "清理面板句柄实例与纳管标记",
+      status: "failed",
+      detail: err?.message || String(err)
+    });
+  }
+
+  // 4) 删目录
+  let dirRemoved = false;
+  try {
+    await fs.remove(dir);
+    dirRemoved = true;
+    steps.push({ key: "dir", label: "删除 runner 目录", status: "ok" });
+  } catch (err: any) {
+    steps.push({
+      key: "dir",
+      label: "删除 runner 目录",
+      status: "failed",
+      detail: err?.message || String(err),
+      hint: `rm -rf ${dir}`
+    });
+  }
+
+  const warnings = steps
+    .filter((s) => s.status !== "ok")
+    .map((s) => `${s.label}：${s.detail || s.status}`);
+  logger.info(
+    `[runner-delete] ${dir}（systemd=${uninstall.ok} 实例=${instanceRemoved} 目录=${dirRemoved}）`
+  );
+  return { dir, ok: dirRemoved, steps, warnings };
+}
+
 // ---- systemd 控制。需要 sudoers 免密白名单（仅 actions.runner.*.service 的 start/stop/restart）----
 
 const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const;
 export type SystemdAction = (typeof ALLOWED_ACTIONS)[number];
 
-export function controlService(service: string, action: SystemdAction) {
+export async function controlService(service: string, action: SystemdAction) {
   if (!ALLOWED_ACTIONS.includes(action)) throw new Error(`不支持的操作: ${action}`);
   // 白名单前缀必须和 sudoers 规则一致，否则 sudo 会要密码然后挂住
   if (!/^actions\.runner\.[A-Za-z0-9._@-]+\.service$/.test(service))
@@ -447,5 +692,5 @@ export function controlService(service: string, action: SystemdAction) {
     throw new Error(`${action} ${service} 失败: ${stderr || err.message}`);
   }
   logger.info(`[runner-scan] systemctl ${action} ${service} 成功`);
-  return querySystemd([service]).get(service) || null;
+  return (await querySystemd([service])).get(service) || null;
 }

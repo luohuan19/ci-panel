@@ -32,7 +32,8 @@ case "$dir/" in
 esac
 [ -d "$dir" ] || die "目录不存在: $dir"
 [ -f "$dir/.runner" ] || die "不是 runner 目录(缺 .runner): $dir"
-[ -f "$dir/runsvc.sh" ] || die "缺 runsvc.sh(安装包不完整): $dir"
+# runsvc.sh 随安装包放在 bin/ 下，官方 svc.sh install 会把它拷到顶层。这里同样从 bin/ 取源。
+[ -f "$dir/bin/runsvc.sh" ] || die "缺 bin/runsvc.sh(安装包不完整): $dir"
 
 # 以目录属主身份运行 runner(通常是 ci-runner)
 run_user="$(stat -c %U "$dir")"
@@ -57,6 +58,12 @@ unit="/etc/systemd/system/$svc"
 
 case "$action" in
   install)
+    # 把 bin/runsvc.sh 拷到顶层（官方 svc.sh 也是这么做的）；unit 的 ExecStart 指向它。
+    # 以 runner 属主身份运行，所以拷完把属主/权限设对。
+    cp -f "$dir/bin/runsvc.sh" "$dir/runsvc.sh" || die "拷贝 runsvc.sh 失败"
+    chown "$run_user":"$run_user" "$dir/runsvc.sh" 2>/dev/null || true
+    chmod 755 "$dir/runsvc.sh" || true
+
     # 用本脚本完全掌控的模板生成 unit，只插入已校验的 dir/user/svc
     cat > "$unit" <<EOF
 [Unit]

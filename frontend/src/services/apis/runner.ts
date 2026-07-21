@@ -116,6 +116,7 @@ interface RunnerBatchData {
   baseDir: string;
   groups: RunnerBatchGroup[];
   packagePath?: string;
+  concurrency?: number; // 同时创建几个（1..10，默认 3）
 }
 
 export const startRunnerBatch = useDefineApi<
@@ -247,6 +248,28 @@ export const unregisterRunner = useDefineApi<
   method: "POST"
 });
 
+// ---- 基目录选择器：浏览 / 新建目录（限扫描根内）----
+export interface DirListing {
+  path: string;
+  parent: string; // 空 = 已在扫描根，不能再往上
+  roots: string[];
+  dirs: string[];
+}
+export const listRunnerDirs = useDefineApi<
+  { params: { daemonId: string }; data: { path?: string } },
+  DirListing
+>({
+  url: "/api/runner/list_dirs",
+  method: "POST"
+});
+export const makeRunnerDir = useDefineApi<
+  { params: { daemonId: string }; data: { path: string; name: string } },
+  { path: string }
+>({
+  url: "/api/runner/mkdir",
+  method: "POST"
+});
+
 // 探单个 runner 的实时状态（详情页基本信息 + 定时刷新）。返回 daemon 的 ScannedRunner 结构
 export const runnerState = useDefineApi<
   { params: { daemonId: string }; data: { dir: string } },
@@ -256,35 +279,42 @@ export const runnerState = useDefineApi<
   method: "POST"
 });
 
-// ---- NPU(昇腾)占用率 ----
-export interface NpuChip {
-  npuId: number;
-  chipId: number;
-  phyId: number;
-  name: string;
-  health: string;
-  power: number; // W
-  temp: number; // ℃
-  util: number; // AICore(%) 占用率
-  hbmUsed: number; // MB
-  hbmTotal: number; // MB
+// 彻底删除一个 runner：停+卸 systemd、GitHub 注销、清面板侧、删目录。不可逆。
+export type DeleteStepStatus = "ok" | "failed" | "skipped";
+export interface DeleteStep {
+  key: "systemd" | "github" | "panel" | "dir";
+  label: string;
+  status: DeleteStepStatus;
+  detail?: string; // 失败/跳过原因
+  hint?: string; // 失败时可手动执行的命令
 }
-
-export interface NpuStatus {
-  available: boolean; // 该节点有没有 npu-smi
-  chips: NpuChip[];
-  avgUtil: number;
-  busyChips: number;
-  hbmUsed: number; // MB
-  hbmTotal: number; // MB
-  chart: number[];
-  sampledAt: number;
-  error?: string;
+export interface DeleteRunnerResult {
+  dir: string;
+  ok: boolean;
+  steps: DeleteStep[];
+  warnings: string[];
 }
+export const deleteRunner = useDefineApi<
+  {
+    params: { daemonId: string };
+    // removeToken：手输的 GitHub 删除 token（可选，留空则用仓库 PAT 自动获取）
+    data: { dir: string; repo?: string; force?: boolean; removeToken?: string };
+  },
+  DeleteRunnerResult
+>({
+  url: "/api/runner/delete",
+  method: "POST"
+});
 
-// 所有节点的 NPU 状态：{ daemonId: NpuStatus }
-export const npuStatusAll = useDefineApi<undefined, Record<string, NpuStatus>>({
-  url: "/api/runner/npu_status",
+// 批量删除一个仓库（在某节点上）的全部 runner。整批共用一个 GitHub 删除 token。
+export const deleteRunnerBatch = useDefineApi<
+  {
+    params: { daemonId: string };
+    data: { repo: string; dirs: string[]; force?: boolean; removeToken?: string };
+  },
+  { results: Array<DeleteRunnerResult & { error?: string }> }
+>({
+  url: "/api/runner/delete_batch",
   method: "POST"
 });
 

@@ -11,15 +11,19 @@ import {
   FolderOpenOutlined,
   SettingOutlined,
   ExclamationCircleOutlined,
-  WarningOutlined
+  WarningOutlined,
+  DeleteOutlined
 } from "@ant-design/icons-vue";
 import RunnerLogView from "./RunnerLogView.vue";
 import FileManager from "./instance/FileManager.vue";
+import DeleteResultView from "./DeleteResultView.vue";
 import {
   runnerState,
   controlRunnerService,
   registerRunners,
-  type ScannedRunner
+  deleteRunner,
+  type ScannedRunner,
+  type DeleteRunnerResult
 } from "@/services/apis/runner";
 
 const route = useRoute();
@@ -152,6 +156,52 @@ async function saveGroup() {
   }
 }
 
+// ---- 彻底删除 runner（不可逆）----
+const deleting = ref(false);
+const deleteOpen = ref(false);
+const manualToken = ref(""); // 手输的 GitHub 删除 token，留空则用仓库 PAT 自动获取
+function confirmDelete() {
+  if (!runner.value) return;
+  manualToken.value = "";
+  deleteOpen.value = true;
+}
+// 删除结果分步展示
+const resultOpen = ref(false);
+const deleteResults = ref<DeleteRunnerResult[]>([]);
+async function doDelete() {
+  const r = runner.value;
+  if (!r) return;
+  deleting.value = true;
+  try {
+    const { execute, state } = deleteRunner();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: { dir: r.dir, repo: r.repo, force: Boolean(r.busy), removeToken: manualToken.value.trim() }
+    });
+    const res = state.value;
+    if (!res) throw new Error("删除无响应");
+    deleteOpen.value = false;
+    // 有任何失败/跳过的步骤就展开分步结果，让用户看到卡在哪、如何手动补做；全干净则直接提示
+    const hasIssue = !res.ok || (res.steps || []).some((s) => s.status !== "ok");
+    if (hasIssue) {
+      deleteResults.value = [res];
+      resultOpen.value = true;
+    } else {
+      message.success("已彻底删除");
+      goBack();
+    }
+  } catch (err: any) {
+    message.error("删除失败：" + (err?.message || err));
+  } finally {
+    deleting.value = false;
+  }
+}
+// 关闭结果弹窗后回列表（目录删没删都回，列表会反映真实状态）
+function closeResult() {
+  resultOpen.value = false;
+  goBack();
+}
+
 // 5 秒刷新基本信息（日志自己有跟随，不在这里管）
 let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => {
@@ -260,6 +310,9 @@ function goBack() {
           <a-space direction="vertical" style="width: 100%">
             <a-button block @click="openFileManager"><FolderOpenOutlined /> 文件管理</a-button>
             <a-button block @click="openConfig"><SettingOutlined /> Runner 配置</a-button>
+            <a-button block danger :loading="deleting" @click="confirmDelete">
+              <DeleteOutlined /> 彻底删除
+            </a-button>
           </a-space>
         </a-card>
       </a-col>
@@ -276,6 +329,54 @@ function goBack() {
     >
       <FileManager v-if="fileOpen && fileCard" :card="fileCard" />
     </a-drawer>
+
+    <!-- 彻底删除确认弹窗 -->
+    <a-modal
+      v-model:open="deleteOpen"
+      :title="`彻底删除 ${runner?.agentName || ''}？`"
+      :width="560"
+      ok-text="确认删除"
+      :ok-button-props="{ danger: true, loading: deleting }"
+      cancel-text="取消"
+      @ok="doDelete"
+    >
+      <a-alert
+        v-if="runner?.busy"
+        type="error"
+        show-icon
+        style="margin-bottom: 12px"
+        message="该 runner 正在跑 job，删除会当场中断这个 CI 任务！"
+      />
+      <p style="margin-bottom: 8px">此操作<strong>不可逆</strong>，将会：</p>
+      <ul style="padding-left: 18px; margin: 0 0 12px">
+        <li>停止并卸载 systemd 服务</li>
+        <li>从 GitHub 注销该 runner</li>
+        <li>删除面板句柄实例与纳管标记</li>
+        <li>删除整个目录：<span style="word-break: break-all">{{ runner?.dir }}</span></li>
+      </ul>
+      <a-form layout="vertical">
+        <a-form-item label="GitHub 删除 token（可选）">
+          <a-input v-model:value="manualToken" placeholder="留空则用该仓库已配置的 PAT 自动获取" allow-clear />
+          <div style="font-size: 12px; opacity: 0.6; margin-top: 4px">
+            没配 PAT 或面板连不上 GitHub 时，去 GitHub 仓库 Settings → Actions → Runners → 选中该 runner →
+            Remove，复制命令里的 token 粘到这里。留空且取不到 token 时，仅本地删除、GitHub 上需你手动移除。
+          </div>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 删除结果分步展示 -->
+    <a-modal
+      v-model:open="resultOpen"
+      title="删除结果"
+      :width="600"
+      :mask-closable="false"
+      ok-text="返回列表"
+      @ok="closeResult"
+      @cancel="closeResult"
+    >
+      <DeleteResultView :results="deleteResults" />
+    </a-modal>
 
     <!-- Runner 配置抽屉 -->
     <a-drawer v-model:open="configOpen" title="Runner 配置" placement="right" :width="480">

@@ -7,9 +7,10 @@
 // 只写标记、不建实例（导入的多由 systemd 托管，再建实例会变成 both 危险态）。
 import { ref, computed } from "vue";
 import { message } from "ant-design-vue";
-import { WarningOutlined } from "@ant-design/icons-vue";
+import { WarningOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import { scanRunners, registerRunners, type ScannedRunner } from "@/services/apis/runner";
+import SelectDirDialog from "./SelectDirDialog.vue";
 
 const emit = defineEmits<{ (e: "imported"): void }>();
 
@@ -20,6 +21,14 @@ const scanning = ref(false);
 const submitting = ref(false);
 const runners = ref<ScannedRunner[]>([]);
 const selectedKeys = ref<string[]>([]);
+// 要扫描的目录：留空则用 daemon 侧默认扫描根(CIP_SCAN_ROOTS)。填了就扫指定目录，
+// 这样能搜任意位置的未纳管 runner，不用改 env。
+const scanPath = ref("");
+const dirDialog = ref<InstanceType<typeof SelectDirDialog>>();
+function openDirPicker() {
+  if (!daemonId.value) return message.error("请先选择节点");
+  dirDialog.value?.openDialog(daemonId.value, scanPath.value.trim() || undefined);
+}
 
 // 可纳管的行 = 还没纳管、且目录完好（有 .runner）
 const selectable = computed(() => runners.value.filter((r) => !r.managed && r.exists));
@@ -32,7 +41,11 @@ async function doScan() {
   selectedKeys.value = [];
   try {
     const { execute, state } = scanRunners();
-    await execute({ params: { daemonId: daemonId.value }, data: {} });
+    const dir = scanPath.value.trim();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: dir ? { roots: [dir] } : {}
+    });
     runners.value = (state.value?.runners as ScannedRunner[]) || [];
     const errs = state.value?.errors || [];
     if (errs.length) {
@@ -127,6 +140,19 @@ defineExpose({ openDialog });
       <a-button size="small" :disabled="!selectedKeys.length" @click="clearAll">清空</a-button>
     </a-space>
 
+    <!-- 扫描目录：留空用默认扫描根，填了就扫指定目录（可搜任意位置的未纳管 runner）-->
+    <a-input-group compact style="margin-bottom: 12px; display: flex">
+      <a-input
+        v-model:value="scanPath"
+        style="flex: 1"
+        placeholder="扫描目录（留空 = 默认扫描根 CIP_SCAN_ROOTS）"
+        allow-clear
+        @press-enter="doScan"
+      />
+      <a-button style="width: 80px" @click="openDirPicker"><FolderOpenOutlined /> 浏览</a-button>
+      <a-button type="primary" style="width: 80px" :loading="scanning" @click="doScan">扫描</a-button>
+    </a-input-group>
+
     <a-alert
       type="info"
       show-icon
@@ -202,5 +228,8 @@ defineExpose({ openDialog });
         </a-button>
       </a-space>
     </div>
+
+    <!-- 扫描目录选择器 -->
+    <SelectDirDialog ref="dirDialog" @select="(p: string) => (scanPath = p)" />
   </a-modal>
 </template>
