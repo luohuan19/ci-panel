@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration for ci-panel.
+# Reviews are aligned with the project standards in .cursor/rules/ and .claude/rules/.
+language: "en-US"
+early_access: false
+
+reviews:
+  # "chill" keeps comments focused on real issues instead of nitpicks.
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "master"
+  path_instructions:
+    - path: "**/*.{ts,vue}"
+      instructions: >-
+        Enforce the project standards: modern TypeScript (prefer const,
+        async/await, optional chaining; avoid `any` — use `unknown` plus a
+        narrowing check). Apply DRY — shared types belong in common/ and must
+        not be redeclared per package. Flag suppressed type/lint errors
+        (@ts-ignore, eslint-disable) that hide a real defect.
+    - path: "{panel,daemon}/**/*.ts"
+      instructions: >-
+        Backend boundary rules: validate all frontend-supplied arguments at the
+        panel/daemon boundary. Use the project logger, never console.*. No shell
+        interpolation of user input — use argument arrays with shell:false.
+        Guard file paths against directory traversal (resolve + prefix check).
+        User-facing text goes through i18n ($t / TXT_CODE_ keys), code and
+        comments in English.
+    - path: "frontend/**/*.vue"
+      instructions: >-
+        Vue 3 <script setup lang="ts"> conventions. User-facing text via t()
+        with TXT_CODE_ keys where the surrounding widget uses i18n. Clean up
+        resources (timers, listeners) on unmount.
+    - path: "**/*.{md,json}"
+      instructions: >-
+        This is a PUBLIC repository. Flag any committed secrets, tokens,
+        internal IPs, hostnames, or private repo names.
+
+chat:
+  auto_reply: true
