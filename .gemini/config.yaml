@@ -1,0 +1,24 @@
+# Gemini Code Assist configuration for ci-panel.
+# Docs: https://developers.google.com/gemini-code-assist/docs/customize-gemini-behavior-github
+# The review style guide lives in .gemini/styleguide.md.
+have_fun: false
+
+code_review:
+  disable: false
+  # Only surface MEDIUM+ issues to keep review noise low.
+  comment_severity_threshold: MEDIUM
+  # No cap on the number of review comments.
+  max_review_comments: -1
+  pull_request_opened:
+    help: false
+    summary: true
+    code_review: true
+
+# Paths Gemini should not review (build output, deps, vendored code).
+ignore_patterns:
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "frontend/dist/**"
+  - "panel/public/**"
+  - "**/*.lock"
+  - "**/package-lock.json"
