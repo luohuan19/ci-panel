@@ -584,8 +584,11 @@ router.post(
         }
       );
       ctx.body = { results };
-    } catch (err) {
-      ctx.body = err;
+    } catch (err: unknown) {
+      // 保持批量接口的 { results } 契约：前端读 results，不能静默返回空对象而误报成功
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(msg);
+      ctx.body = { results: [], error: msg };
     }
   }
 );
