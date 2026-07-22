@@ -11,10 +11,13 @@ import { computed, h, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { message, Modal } from "ant-design-vue";
 import {
+  CheckSquareOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  DownOutlined,
   ExclamationCircleOutlined,
+  PauseCircleOutlined,
   ReloadOutlined,
   RightOutlined,
   WarningOutlined
@@ -28,6 +31,7 @@ import type { LayoutCard } from "@/types/index";
 import { repoList, type RepoRunner, type RepoSummary } from "@/services/apis/repo";
 import {
   controlRunnerService,
+  controlRunnerServiceBatch,
   deleteRunnerBatch,
   type DeleteRunnerResult
 } from "@/services/apis/runner";
@@ -219,18 +223,106 @@ function goDetail(r: RepoRunner) {
   router.push({ path: "/instances/runner", query: { daemonId: r.daemonId, dir: r.dir } });
 }
 
-// ---- 批量删除本仓库（当前节点）的全部 runner ----
+// ---- 批处理多选模式：勾选/全选（支持跨页保留）→ 删除 / 停止 / 重启，均并行 ----
+const batchMode = ref(false);
+const selectedDirs = ref<string[]>([]);
+// 选中的 dir 映射回 RepoRunner，拿 service / busy / agentName
+const selectedRunners = computed(() =>
+  runnersOfRepo.value.filter((r) => selectedDirs.value.includes(r.dir))
+);
+// preserveSelectedRowKeys：翻页/10 秒刷新都不丢已选（跨页保留）
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedDirs.value,
+  preserveSelectedRowKeys: true,
+  onChange: (keys: Array<string | number>) => {
+    selectedDirs.value = keys.map((k) => String(k));
+  }
+}));
+function enterBatchMode() {
+  batchMode.value = true;
+}
+function exitBatchMode() {
+  batchMode.value = false;
+  selectedDirs.value = [];
+}
+// ant 表头全选框只选当前页；这个按钮直接选中本仓库全部（含未翻到的页）
+function selectAllInRepo() {
+  selectedDirs.value = runnersOfRepo.value.map((r) => r.dir);
+}
+function clearSelection() {
+  selectedDirs.value = [];
+}
+
+// ---- 批量停止 / 重启（并行）----
+const batchControlling = ref(false);
+function batchControl(action: "stop" | "restart") {
+  const sel = selectedRunners.value;
+  if (!sel.length) return message.warning("请先勾选 runner");
+  const withSvc = sel.filter((r) => r.service);
+  const skipped = sel.length - withSvc.length;
+  if (!withSvc.length) return message.warning("选中的 runner 都没有 systemd 服务，面板无法启停");
+  const busyCount = withSvc.filter((r) => r.busy).length;
+  const label = action === "stop" ? "停止" : "重启";
+  const lines = [`将${label}选中的 ${withSvc.length} 个 runner。`];
+  if (busyCount > 0) lines.push(`其中 ${busyCount} 个正在跑 job，${label}会当场中断这些 CI 任务！`);
+  if (skipped > 0) lines.push(`另有 ${skipped} 个没有 systemd 服务，将被跳过。`);
+  Modal.confirm({
+    title: `批量${label} ${withSvc.length} 个 runner`,
+    icon: () => h(ExclamationCircleOutlined),
+    content: lines.join(" "),
+    okText: `确认${label}`,
+    okType: "danger",
+    cancelText: "取消",
+    onOk: () => doBatchControl(action, withSvc, label)
+  });
+}
+async function doBatchControl(
+  action: "stop" | "restart",
+  withSvc: RepoRunner[],
+  label: string
+) {
+  batchControlling.value = true;
+  try {
+    const { execute, state } = controlRunnerServiceBatch();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: {
+        items: withSvc.map((r) => ({ dir: r.dir, service: r.service as string })),
+        action
+      }
+    });
+    const results = state.value?.results || [];
+    const ok = results.filter((r) => r.ok).length;
+    const fail = results.length - ok;
+    if (fail === 0) {
+      message.success(`${label}完成：成功 ${ok} 个`);
+    } else {
+      const failNames = results
+        .filter((r) => !r.ok)
+        .map((r) => withSvc.find((x) => x.dir === r.dir)?.agentName || r.dir);
+      message.warning(`${label}完成：成功 ${ok} 个，失败 ${fail} 个（${failNames.join("、")}）`);
+    }
+    await load(true);
+    clearSelection();
+  } catch (err: any) {
+    message.error(`批量${label}失败：` + (err?.message || err));
+  } finally {
+    batchControlling.value = false;
+  }
+}
+
+// ---- 批量删除选中的 runner（并行；共用一个 GitHub 删除 token）----
 const batchOpen = ref(false);
 const batchToken = ref(""); // 手输 GitHub 删除 token，留空则用仓库 PAT 自动取
 const batchDeleting = ref(false);
-const batchBusyCount = computed(() => runnersOfRepo.value.filter((r) => r.busy).length);
+const batchBusyCount = computed(() => selectedRunners.value.filter((r) => r.busy).length);
 function openBatchDelete() {
-  if (!runnersOfRepo.value.length) return;
+  if (!selectedDirs.value.length) return message.warning("请先勾选 runner");
   batchToken.value = "";
   batchOpen.value = true;
 }
 async function doBatchDelete() {
-  const list = runnersOfRepo.value;
+  const list = selectedRunners.value;
   if (!list.length) return;
   batchDeleting.value = true;
   try {
@@ -246,6 +338,7 @@ async function doBatchDelete() {
     });
     const results = state.value?.results || [];
     batchOpen.value = false;
+    clearSelection();
     // 逐个 runner 的分步结果都摆出来，让用户看到每个删到哪一步、哪步失败、如何手动补做
     batchResults.value = results;
     batchResultOpen.value = true;
@@ -261,8 +354,8 @@ const batchResults = ref<Array<DeleteRunnerResult & { error?: string }>>([]);
 const batchOkCount = computed(() => batchResults.value.filter((r) => r.ok).length);
 async function closeBatchResult() {
   batchResultOpen.value = false;
+  // 选择性删除后仓库里可能还有 runner，留在 L3 刷新即可，不再跳回节点层
   await load();
-  router.push({ path: route.path, query: { node: daemonId.value } });
 }
 
 const goRoot = () => router.push({ path: route.path });
@@ -443,21 +536,63 @@ const goRepo = (slug: string) =>
 
       <!-- L3：该仓库的 runner -->
       <a-col v-else :span="24">
-        <div style="display: flex; justify-content: flex-end; margin-bottom: 12px">
-          <a-button
-            danger
-            :disabled="!runnersOfRepo.length"
-            :loading="batchDeleting"
-            @click="openBatchDelete"
-          >
-            <DeleteOutlined /> 批量删除本仓库 runner（{{ runnersOfRepo.length }}）
+        <div
+          style="
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+          "
+        >
+          <!-- 非批处理模式：仅一个入口按钮 -->
+          <a-button v-if="!batchMode" :disabled="!runnersOfRepo.length" @click="enterBatchMode">
+            <CheckSquareOutlined /> 批处理
           </a-button>
+
+          <!-- 批处理模式：选择工具 + 批处理菜单 + 退出 -->
+          <template v-else>
+            <a-typography-text type="secondary" style="margin-right: 4px">
+              已选 {{ selectedDirs.length }} 个
+            </a-typography-text>
+            <a-button @click="selectAllInRepo"> 全选全部（{{ runnersOfRepo.length }}）</a-button>
+            <a-button :disabled="!selectedDirs.length" @click="clearSelection"> 清空 </a-button>
+            <a-dropdown :disabled="!selectedDirs.length">
+              <template #overlay>
+                <a-menu>
+                  <a-menu-item key="stop" @click="batchControl('stop')">
+                    <PauseCircleOutlined /> 停止
+                  </a-menu-item>
+                  <a-menu-item key="restart" @click="batchControl('restart')">
+                    <ReloadOutlined /> 重启
+                  </a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item key="delete" danger @click="openBatchDelete">
+                    <DeleteOutlined /> 删除
+                  </a-menu-item>
+                </a-menu>
+              </template>
+              <a-button
+                type="primary"
+                :disabled="!selectedDirs.length"
+                :loading="batchControlling || batchDeleting"
+              >
+                批处理菜单 <DownOutlined />
+              </a-button>
+            </a-dropdown>
+            <a-button @click="exitBatchMode">退出批处理</a-button>
+          </template>
         </div>
         <a-table
           :data-source="runnersOfRepo"
           row-key="dir"
           :loading="isLoading"
-          :pagination="false"
+          :row-selection="batchMode ? rowSelection : undefined"
+          :pagination="{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total: number) => `共 ${total} 个`
+          }"
           size="middle"
           :scroll="{ x: 900 }"
         >
@@ -550,10 +685,10 @@ const goRepo = (slug: string) =>
     <!-- 导入既有 runner：扫描节点磁盘 → 勾选 → 写 .cipanel 纳管 -->
     <ImportRunnerDialog ref="importDialog" @imported="load()" />
 
-    <!-- 批量删除本仓库 runner 确认弹窗 -->
+    <!-- 批量删除选中 runner 确认弹窗 -->
     <a-modal
       v-model:open="batchOpen"
-      :title="`删除 ${repoSlug} 的全部 runner？`"
+      :title="`删除选中的 ${selectedDirs.length} 个 runner？`"
       :width="560"
       ok-text="确认删除"
       :ok-button-props="{ danger: true, loading: batchDeleting }"
@@ -564,7 +699,7 @@ const goRepo = (slug: string) =>
         type="error"
         show-icon
         style="margin-bottom: 12px"
-        :message="`将彻底删除本节点上该仓库的 ${runnersOfRepo.length} 个 runner，此操作不可逆`"
+        :message="`将彻底删除选中的 ${selectedDirs.length} 个 runner，此操作不可逆`"
       />
       <a-alert
         v-if="batchBusyCount > 0"

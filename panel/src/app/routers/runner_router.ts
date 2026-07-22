@@ -27,6 +27,31 @@ function ensureRepoRegistered(repoUrl: string) {
 
 const router = new Router({ prefix: "/runner" });
 
+// 有界并发：对 items 并行跑 worker，最多 limit 个同时在飞，保序返回结果。
+// 批量删除/启停时用，避免一次性对 daemon 和 GitHub 打满请求。
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await worker(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+// 把前端传来的并发数收敛到 [1, 10]，非法值回落到默认 5。
+function clampConcurrency(v: unknown, def = 5): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : def;
+}
+
 // [Top-level Permission]
 // 开始下载最新/指定版本的 runner 安装包
 router.post(
@@ -389,6 +414,7 @@ router.post(
         dirs?: string[];
         force?: boolean;
         removeToken?: string;
+        concurrency?: number;
       };
       const dirs = Array.isArray(body.dirs) ? body.dirs.map((d) => String(d)) : [];
       if (dirs.length === 0) {
@@ -398,19 +424,23 @@ router.post(
       const removeToken = await resolveRemoveToken(String(body.repo || ""), body.removeToken);
       const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
 
-      const results = [];
-      for (const dir of dirs) {
-        try {
-          const r = await new RemoteRequest(remoteService).request(
-            "runner/delete",
-            { dir, removeToken, force: Boolean(body.force) },
-            60000
-          );
-          results.push({ dir, ...r });
-        } catch (err: any) {
-          results.push({ dir, ok: false, error: err?.message || String(err) });
+      // 每个删除互不影响，有界并发跑；removeToken 已在池外解析一次共用，并行安全。
+      const results = await mapWithConcurrency(
+        dirs,
+        clampConcurrency(body.concurrency),
+        async (dir) => {
+          try {
+            const r = await new RemoteRequest(remoteService).request(
+              "runner/delete",
+              { dir, removeToken, force: Boolean(body.force) },
+              60000
+            );
+            return { dir, ...r };
+          } catch (err: any) {
+            return { dir, ok: false, error: err?.message || String(err) };
+          }
         }
-      }
+      );
       ctx.body = { results };
     } catch (err) {
       ctx.body = err;
@@ -503,6 +533,62 @@ router.post(
       ctx.body = result;
     } catch (err) {
       ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
+// 批量启停/重启 systemd 托管的 runner。每个独立、无共享锁，panel 侧有界并发扇出到单个
+// service_control；无 service 的项直接跳过。逐个 catch 汇总结果，互不影响。
+router.post(
+  "/service_control_batch",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const body = (ctx.request.body || {}) as {
+        items?: Array<{ dir?: string; service?: string }>;
+        action?: string;
+        concurrency?: number;
+      };
+      const action = String(body.action || "");
+      if (!["start", "stop", "restart"].includes(action)) {
+        ctx.body = { results: [], error: "invalid action" };
+        return;
+      }
+      const items = (Array.isArray(body.items) ? body.items : []).filter(
+        (it) => it && it.service
+      ); // 无 service 的不发（面板管不了它的启停）
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+
+      const results = await mapWithConcurrency(
+        items,
+        clampConcurrency(body.concurrency),
+        async (it) => {
+          try {
+            const r = await new RemoteRequest(remoteService).request(
+              "runner/service_control",
+              { service: it.service, action },
+              90000
+            );
+            return { dir: it.dir, service: it.service, ok: true, ...r };
+          } catch (err: any) {
+            return {
+              dir: it.dir,
+              service: it.service,
+              ok: false,
+              error: err?.message || String(err)
+            };
+          }
+        }
+      );
+      ctx.body = { results };
+    } catch (err: unknown) {
+      // 保持批量接口的 { results } 契约：前端读 results，不能静默返回空对象而误报成功
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(msg);
+      ctx.body = { results: [], error: msg };
     }
   }
 );
