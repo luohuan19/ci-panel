@@ -5,6 +5,7 @@ import { routerApp } from "../service/router";
 import {
   checkRunnerPackage,
   collectRunners,
+  listRepoGroups,
   getRunnerBatchProgress,
   getRunnerDownloadProgress,
   provisionRunner,
@@ -253,5 +254,15 @@ routerApp.on("runner/collect", (ctx, data) => {
     protocol.msg(ctx, "runner/collect", result);
   } catch (err: any) {
     protocol.error(ctx, "runner/collect", { err: err?.message || String(err) });
+  }
+});
+
+// 只读：列出某仓库在基目录下已有的 label 组，供前端复用标签、锁定命名
+routerApp.on("runner/repo_groups", (ctx, data) => {
+  try {
+    const result = { groups: listRepoGroups(data?.baseDir, data?.repoUrl) };
+    protocol.msg(ctx, "runner/repo_groups", result);
+  } catch (err: any) {
+    protocol.error(ctx, "runner/repo_groups", { err: err?.message || String(err) });
   }
 });

@@ -15,7 +15,8 @@ import path from "path";
 import { v4 } from "uuid";
 
 export const MARKER_FILE = ".cipanel";
-const MARKER_VERSION = 1;
+// v2：新增 labels 字段。v1 老 marker 无 labels，读出为 ""（标签未知），安全降级。
+const MARKER_VERSION = 2;
 
 // source 刻意只记「来源」（创建还是导入）这个不变量，不记 systemd/panel/both 这种
 // 会漂移的实时托管方式——后者每次探测现算，存进静态文件只会过期误导。
@@ -24,8 +25,9 @@ export type RunnerSource = "provision" | "import";
 export interface RunnerMarker {
   v: number;
   id: string; // 面板管理标识（与 GitHub agentName、面板实例 uuid 都无关）
-  group: string; // 所属组，单个导入可空
+  group: string; // 命名前缀（baseName），是同标签组「往后累加」的锚；单个导入可空
   repo: string; // owner/repo
+  labels: string; // 注册时的原始 labels（逗号分隔，原样保留）；v1 老 marker / import 无此值时为 ""
   source: RunnerSource;
   managedSince: number; // 纳管时间（ms 时间戳）
 }
@@ -48,6 +50,7 @@ export function readMarker(dir: string): RunnerMarker | null {
       id: String(j.id),
       group: String(j.group || ""),
       repo: String(j.repo || ""),
+      labels: String(j.labels || ""),
       source: j.source === "import" ? "import" : "provision",
       managedSince: Number(j.managedSince) || 0
     };
@@ -56,24 +59,27 @@ export function readMarker(dir: string): RunnerMarker | null {
   }
 }
 
-// 写 marker，幂等：目录已有 marker 时保留原 id / source / managedSince，只补齐 repo、group。
+// 写 marker，幂等：目录已有 marker 时保留原 id / source / managedSince，只补齐 repo、group、labels。
 // 这样重复纳管既不会换掉管理标识，也不会把「创建」误改成「导入」。
 export function writeMarker(
   dir: string,
-  data: { source: RunnerSource; repo?: string; group?: string; id?: string }
+  data: { source: RunnerSource; repo?: string; group?: string; labels?: string; id?: string }
 ): RunnerMarker {
   const existing = readMarker(dir);
   const marker: RunnerMarker = existing
     ? {
         ...existing,
+        v: MARKER_VERSION, // 顺带把 v1 老 marker 升到当前版本
         repo: data.repo || existing.repo,
-        group: data.group ?? existing.group
+        group: data.group ?? existing.group,
+        labels: data.labels ?? existing.labels
       }
     : {
         v: MARKER_VERSION,
         id: data.id || v4().replace(/-/gim, ""),
         group: data.group || "",
         repo: data.repo || "",
+        labels: data.labels || "",
         source: data.source,
         managedSince: Date.now()
       };

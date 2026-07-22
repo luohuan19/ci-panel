@@ -16,7 +16,10 @@ import {
   runnerBatchProgress,
   retryRunnerBatch,
   collectRunners,
-  type RunnerBatchProgressItem
+  runnerRepoGroups,
+  listRunnerDirs,
+  type RunnerBatchProgressItem,
+  type RepoLabelGroup
 } from "@/services/apis/runner";
 
 const emit = defineEmits<{ (e: "created"): void }>();
@@ -74,14 +77,92 @@ const groups = ref<Group[]>([{ baseName: "", labels: "linux,arm64", count: "1" }
 const addGroup = () => groups.value.push({ baseName: "", labels: "linux,arm64", count: "1" });
 const removeGroup = (i: number) => groups.value.length > 1 && groups.value.splice(i, 1);
 
-// 预览：将创建的全部 runner 名
+// 标签集合归一化，与 daemon 端 labelKey 保持一致：拆分、去空、小写、去重、排序。
+// 用于判断某组标签是否命中该仓库已有的 label 组（顺序/大小写/重复无关）。
+function labelKey(labels: string): string {
+  return (labels || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .sort()
+    .join(",");
+}
+
+// 该仓库在当前基目录下已有的 label 组（来自后端扫描 .cipanel）。用于复用标签与锁定命名。
+const repoGroups = ref<RepoLabelGroup[]>([]);
+const loadingGroups = ref(false);
+
+// 拉取已有 label 组：需已选节点且填了仓库地址与基目录。任一缺失或出错则清空（不打扰用户）。
+async function fetchRepoGroups() {
+  const repoUrl = shared.repoUrl.trim();
+  const baseDir = shared.baseDir.trim();
+  if (!daemonId.value || !/^https?:\/\/.+/.test(repoUrl) || !baseDir) {
+    repoGroups.value = [];
+    return;
+  }
+  loadingGroups.value = true;
+  try {
+    const { execute, state } = runnerRepoGroups();
+    await execute({ params: { daemonId: daemonId.value }, data: { baseDir, repoUrl } });
+    repoGroups.value = state.value?.groups || [];
+  } catch {
+    repoGroups.value = []; // 基目录尚不存在/节点不可达等：视为无已有组
+  } finally {
+    loadingGroups.value = false;
+  }
+}
+
+// 基目录是否已存在：null=未知/未查，true=存在，false=不存在（提交时会自动新建，只做轻提示）。
+const baseDirExists = ref<boolean | null>(null);
+
+// 查基目录是否存在。listDirs 对不存在的路径会报错，据此判定；节点/路径缺失时置 null（不打扰）。
+async function checkBaseDir() {
+  const baseDir = shared.baseDir.trim();
+  if (!daemonId.value || !baseDir) {
+    baseDirExists.value = null;
+    return;
+  }
+  try {
+    const { execute } = listRunnerDirs();
+    await execute({ params: { daemonId: daemonId.value }, data: { path: baseDir } });
+    baseDirExists.value = true;
+  } catch {
+    baseDirExists.value = false; // 目录不存在（或不可达）：提示将自动新建
+  }
+}
+
+// baseDir 变更：同时刷新已有标签组与目录存在性提示。
+function onBaseDirChange() {
+  fetchRepoGroups();
+  checkBaseDir();
+}
+
+// 某组标签命中的既有 label 组（完全相等才算），否则 null → 走新组逻辑。
+function matchOf(g: Group): RepoLabelGroup | null {
+  const key = labelKey(g.labels);
+  if (!key) return null;
+  return repoGroups.value.find((rg) => rg.key === key) || null;
+}
+
+// 点击已有标签组 chip：新增一组、预填其标签，命名交给后端对齐（基础名留空）。
+function reuseGroup(rg: RepoLabelGroup) {
+  groups.value.push({ baseName: rg.prefix, labels: rg.labels, count: "1" });
+}
+
+// 预览：将创建的全部 runner 名。命中既有 label 组的，沿用其前缀并从 maxIndex+1 起累加，
+// 与后端对齐逻辑一致；同前缀在本批内也连续排号，避免预览自相矛盾。
 const allNames = computed(() => {
   const names: string[] = [];
+  const nextIndex = new Map<string, number>(); // prefix → 下一个可用编号
   for (const g of groups.value) {
-    const base = g.baseName.trim();
+    const matched = matchOf(g);
+    const prefix = matched ? matched.prefix : g.baseName.trim();
     const n = Number(g.count) || 0;
-    if (!base || n < 1) continue;
-    for (let i = 1; i <= n; i++) names.push(`${base}-${i}`);
+    if (!prefix || n < 1) continue;
+    let i = nextIndex.get(prefix) ?? (matched ? matched.maxIndex : 0);
+    for (let k = 0; k < n; k++) names.push(`${prefix}-${++i}`);
+    nextIndex.set(prefix, i);
   }
   return names;
 });
@@ -254,8 +335,13 @@ const openDialog = async (m: "direct" | "import" = "direct") => {
     dlSpeed.value = 0;
     dlVersion.value = "";
     downloadedPath.value = "";
+    repoGroups.value = []; // 清掉上次会话的已有组，换节点/仓库后重新拉取
+    baseDirExists.value = null;
     resetBatch();
     open.value = true;
+    // 若已预填仓库地址与基目录，进来即拉一次已有 label 组 + 目录存在性
+    fetchRepoGroups();
+    checkBaseDir();
   } catch {
     // 用户取消
   }
@@ -389,8 +475,9 @@ const submit = async () => {
         proxy: shared.proxy.trim(),
         baseDir: shared.baseDir.trim(),
         packagePath: mode.value === "import" ? shared.packagePath.trim() : downloadedPath.value,
+        // 命中既有组时用其前缀作基础名，既通过后端非空校验，也让命名对齐既有组
         groups: groups.value.map((g) => ({
-          baseName: g.baseName.trim(),
+          baseName: (matchOf(g)?.prefix || g.baseName).trim(),
           labels: g.labels.trim(),
           count: Number(g.count) || 0
         })),
@@ -401,6 +488,13 @@ const submit = async () => {
     const batchId = started.batchId;
     if (!batchId) throw new Error("启动批量任务失败");
     currentBatchId.value = batchId;
+
+    // 有组因标签命中既有组被对齐到既有前缀：告知用户实际命名，不静默改名
+    const aligned: { baseName: string; labels: string; prefix: string }[] = started.aligned || [];
+    if (aligned.length) {
+      const desc = aligned.map((a) => `${a.labels} → 并入 ${a.prefix}`).join("；");
+      message.info(`部分组标签已存在，命名已对齐既有组：${desc}`);
+    }
 
     // 初始清单：全部 pending
     batchItems.value = (started.items || []).map((i: { name: string }) => ({
@@ -583,7 +677,11 @@ const statusColor = (s: string) =>
         </a-col>
         <a-col :span="24">
           <a-form-item label="仓库地址" required>
-            <a-input v-model:value="shared.repoUrl" placeholder="https://github.com/owner/repo" />
+            <a-input
+              v-model:value="shared.repoUrl"
+              placeholder="https://github.com/owner/repo"
+              @blur="fetchRepoGroups"
+            />
           </a-form-item>
         </a-col>
         <a-col :span="24">
@@ -601,11 +699,18 @@ const statusColor = (s: string) =>
                 v-model:value="shared.baseDir"
                 style="width: calc(100% - 80px)"
                 placeholder="/data/ci-runner/ci-runners"
+                @blur="onBaseDirChange"
               />
               <a-button style="width: 80px" @click="openDirPicker">
                 <FolderOpenOutlined /> 浏览
               </a-button>
             </a-input-group>
+            <div
+              v-if="baseDirExists === false && shared.baseDir.trim()"
+              style="font-size: 12px; color: #d48806; margin-top: 4px"
+            >
+              该目录不存在，创建时会自动新建。
+            </div>
           </a-form-item>
         </a-col>
         <a-col :span="18">
@@ -681,35 +786,63 @@ const statusColor = (s: string) =>
 
       <a-divider style="margin: 10px 0 14px">标签组（可多组，每组按数量生成 名-1 名-2 …）</a-divider>
 
-      <div
-        v-for="(g, i) in groups"
-        :key="i"
-        style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 10px"
-      >
-        <a-form-item label="基础名" style="flex: 1; margin: 0">
-          <a-input v-model:value="g.baseName" placeholder="如 cpu / npu" />
-        </a-form-item>
-        <a-form-item label="标签（逗号分隔）" style="flex: 2; margin: 0">
-          <a-input v-model:value="g.labels" placeholder="linux,arm64,npu" />
-        </a-form-item>
-        <a-form-item label="数量" style="width: 90px; margin: 0">
-          <a-input
-            v-model:value="g.count"
-            type="number"
-            min="1"
-            max="99"
-            @blur="g.count = clampStr(g.count, 1, 99)"
-          />
-        </a-form-item>
-        <a-button
-          danger
-          type="text"
-          :disabled="groups.length <= 1"
-          style="margin-bottom: 2px"
-          @click="removeGroup(i)"
+      <!-- 该仓库已有的 label 组：点击即复用标签、并入既有命名 -->
+      <div v-if="repoGroups.length" style="margin-bottom: 12px">
+        <div style="font-size: 12px; color: var(--cip-text-sub, #8a91a3); margin-bottom: 6px">
+          该仓库已有标签组（点击复用，命名将并入既有前缀）：
+        </div>
+        <a-space wrap>
+          <a-tag
+            v-for="rg in repoGroups"
+            :key="rg.key"
+            color="blue"
+            style="cursor: pointer"
+            @click="reuseGroup(rg)"
+          >
+            {{ rg.labels }}（{{ rg.prefix }}，已有 {{ rg.count }}）
+          </a-tag>
+        </a-space>
+      </div>
+
+      <div v-for="(g, i) in groups" :key="i" style="margin-bottom: 10px">
+        <div style="display: flex; gap: 10px; align-items: flex-end">
+          <a-form-item label="基础名" style="flex: 1; margin: 0">
+            <a-input
+              v-model:value="g.baseName"
+              :disabled="!!matchOf(g)"
+              :placeholder="matchOf(g) ? '按既有组自动命名' : '如 cpu / npu'"
+            />
+          </a-form-item>
+          <a-form-item label="标签（逗号分隔）" style="flex: 2; margin: 0">
+            <a-input v-model:value="g.labels" placeholder="linux,arm64,npu" />
+          </a-form-item>
+          <a-form-item label="数量" style="width: 90px; margin: 0">
+            <a-input
+              v-model:value="g.count"
+              type="number"
+              min="1"
+              max="99"
+              @blur="g.count = clampStr(g.count, 1, 99)"
+            />
+          </a-form-item>
+          <a-button
+            danger
+            type="text"
+            :disabled="groups.length <= 1"
+            style="margin-bottom: 2px"
+            @click="removeGroup(i)"
+          >
+            <template #icon><DeleteOutlined /></template>
+          </a-button>
+        </div>
+        <div
+          v-if="matchOf(g)"
+          style="font-size: 12px; color: #17b890; margin-top: 4px"
         >
-          <template #icon><DeleteOutlined /></template>
-        </a-button>
+          该标签组已存在，将并入
+          <b>{{ matchOf(g)!.prefix }}</b>
+          组，命名从 <b>{{ matchOf(g)!.prefix }}-{{ matchOf(g)!.maxIndex + 1 }}</b> 起
+        </div>
       </div>
 
       <a-button type="dashed" block style="margin-bottom: 12px" @click="addGroup">
@@ -732,7 +865,10 @@ const statusColor = (s: string) =>
     />
 
     <!-- 基目录选择器 -->
-    <SelectDirDialog ref="dirDialog" @select="(p: string) => (shared.baseDir = p)" />
+    <SelectDirDialog
+      ref="dirDialog"
+      @select="(p: string) => { shared.baseDir = p; onBaseDirChange(); }"
+    />
   </a-modal>
 </template>
 
