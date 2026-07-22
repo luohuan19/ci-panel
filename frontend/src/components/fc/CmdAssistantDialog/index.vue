@@ -137,7 +137,7 @@ const actions = [
         </a-row>
       </div>
       <div v-if="gameType === QUICKSTART_ACTION_TYPE.Minecraft">
-        <a-tabs v-model:activeKey="appType">
+        <a-tabs v-model:active-key="appType">
           <a-tab-pane
             v-for="typeName in [TYPE_MINECRAFT_JAVA, TYPE_MINECRAFT_BEDROCK]"
             :key="typeName"
@@ -146,13 +146,13 @@ const actions = [
         </a-tabs>
       </div>
       <div v-else-if="gameType === QUICKSTART_ACTION_TYPE.SteamGameServer">
-        <a-tabs v-model:activeKey="appType">
+        <a-tabs v-model:active-key="appType">
           <a-tab-pane :key="TYPE_STEAM_SERVER_UNIVERSAL" :tab="t('TXT_CODE_dd8d27ce')">
           </a-tab-pane>
         </a-tabs>
       </div>
       <div v-else-if="gameType != null">
-        <a-tabs v-model:activeKey="appType">
+        <a-tabs v-model:active-key="appType">
           <a-tab-pane :key="TYPE_UNIVERSAL" :tab="t('TXT_CODE_feab659d')"></a-tab-pane>
         </a-tabs>
       </div>

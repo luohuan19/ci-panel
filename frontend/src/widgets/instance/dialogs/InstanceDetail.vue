@@ -521,7 +521,7 @@ defineExpose({
         layout="vertical"
         autocomplete="off"
       >
-        <a-tabs v-model:activeKey="activeKey">
+        <a-tabs v-model:active-key="activeKey">
           <a-tab-pane
             v-if="isTemplateMode && formData.template"
             :key="TabSettings.Template"
@@ -1513,9 +1513,11 @@ defineExpose({
               </a-col>
               <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
-                  <a-typography-title :level="5">{{
-                    t("TXT_CODE_network_upload_limit")
-                  }}</a-typography-title>
+                  <a-typography-title :level="5">
+                    {{
+                      t("TXT_CODE_network_upload_limit")
+                    }}
+                  </a-typography-title>
                   <a-typography-paragraph>
                     <a-tooltip :title="t('TXT_CODE_network_upload_limit_help')" placement="top">
                       <a-typography-text type="secondary" class="typography-text-ellipsis">
@@ -1533,9 +1535,11 @@ defineExpose({
               </a-col>
               <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
-                  <a-typography-title :level="5">{{
-                    t("TXT_CODE_network_download_limit")
-                  }}</a-typography-title>
+                  <a-typography-title :level="5">
+                    {{
+                      t("TXT_CODE_network_download_limit")
+                    }}
+                  </a-typography-title>
                   <a-typography-paragraph>
                     <a-tooltip :title="t('TXT_CODE_network_download_limit_help')" placement="top">
                       <a-typography-text type="secondary" class="typography-text-ellipsis">
@@ -1554,9 +1558,11 @@ defineExpose({
 
               <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
-                  <a-typography-title :level="5">{{
-                    t("TXT_CODE_59653f38")
-                  }}</a-typography-title>
+                  <a-typography-title :level="5">
+                    {{
+                      t("TXT_CODE_59653f38")
+                    }}
+                  </a-typography-title>
                   <a-typography-paragraph>
                     <a-tooltip
                       :title="
@@ -1585,9 +1591,11 @@ defineExpose({
 
               <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
-                  <a-typography-title :level="5">{{
-                    t("TXT_CODE_9d2e6d5e")
-                  }}</a-typography-title>
+                  <a-typography-title :level="5">
+                    {{
+                      t("TXT_CODE_9d2e6d5e")
+                    }}
+                  </a-typography-title>
                   <a-typography-paragraph>
                     <a-tooltip
                       :title="
@@ -1638,9 +1646,11 @@ defineExpose({
               <template v-if="formData.instance?.config?.docker?.gpuEnabled">
                 <a-col :xs="24" :lg="8" :offset="0">
                   <a-form-item>
-                    <a-typography-title :level="5">{{
-                      t("TXT_CODE_gpu_driver")
-                    }}</a-typography-title>
+                    <a-typography-title :level="5">
+                      {{
+                        t("TXT_CODE_gpu_driver")
+                      }}
+                    </a-typography-title>
                     <a-typography-paragraph>
                       <a-tooltip :title="t('TXT_CODE_gpu_driver_help')" placement="top">
                         <a-typography-text type="secondary" class="typography-text-ellipsis">
@@ -1656,9 +1666,11 @@ defineExpose({
                 </a-col>
                 <a-col :xs="24" :lg="8" :offset="0">
                   <a-form-item>
-                    <a-typography-title :level="5">{{
-                      t("TXT_CODE_gpu_alloc_mode")
-                    }}</a-typography-title>
+                    <a-typography-title :level="5">
+                      {{
+                        t("TXT_CODE_gpu_alloc_mode")
+                      }}
+                    </a-typography-title>
                     <a-typography-paragraph>
                       <a-tooltip :title="t('TXT_CODE_gpu_alloc_mode_help')" placement="top">
                         <a-typography-text type="secondary" class="typography-text-ellipsis">
@@ -1668,20 +1680,26 @@ defineExpose({
                     </a-typography-paragraph>
                     <a-radio-group v-model:value="gpuAllocMode" @change="onGpuAllocModeChange">
                       <a-radio-button value="all">{{ t("TXT_CODE_gpu_alloc_all") }}</a-radio-button>
-                      <a-radio-button value="count">{{
-                        t("TXT_CODE_gpu_alloc_count")
-                      }}</a-radio-button>
-                      <a-radio-button value="deviceIds">{{
-                        t("TXT_CODE_gpu_alloc_device_ids")
-                      }}</a-radio-button>
+                      <a-radio-button value="count">
+                        {{
+                          t("TXT_CODE_gpu_alloc_count")
+                        }}
+                      </a-radio-button>
+                      <a-radio-button value="deviceIds">
+                        {{
+                          t("TXT_CODE_gpu_alloc_device_ids")
+                        }}
+                      </a-radio-button>
                     </a-radio-group>
                   </a-form-item>
                 </a-col>
                 <a-col v-if="gpuAllocMode === 'count'" :xs="24" :lg="8" :offset="0">
                   <a-form-item>
-                    <a-typography-title :level="5">{{
-                      t("TXT_CODE_gpu_count")
-                    }}</a-typography-title>
+                    <a-typography-title :level="5">
+                      {{
+                        t("TXT_CODE_gpu_count")
+                      }}
+                    </a-typography-title>
                     <a-typography-paragraph>
                       <a-tooltip :title="t('TXT_CODE_gpu_count_help')" placement="top">
                         <a-typography-text type="secondary" class="typography-text-ellipsis">
@@ -1701,9 +1719,11 @@ defineExpose({
                 </a-col>
                 <a-col v-if="gpuAllocMode === 'deviceIds'" :xs="24" :lg="16" :offset="0">
                   <a-form-item>
-                    <a-typography-title :level="5">{{
-                      t("TXT_CODE_gpu_device_ids")
-                    }}</a-typography-title>
+                    <a-typography-title :level="5">
+                      {{
+                        t("TXT_CODE_gpu_device_ids")
+                      }}
+                    </a-typography-title>
                     <a-typography-paragraph>
                       <a-tooltip :title="t('TXT_CODE_gpu_device_ids_help')" placement="top">
                         <a-typography-text type="secondary" class="typography-text-ellipsis">

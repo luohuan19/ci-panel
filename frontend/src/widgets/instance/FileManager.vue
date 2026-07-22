@@ -645,7 +645,7 @@ onUnmounted(() => {
               </a-typography-text>
             </div>
             <a-tabs
-              v-model:activeKey="activeTab"
+              v-model:active-key="activeTab"
               type="editable-card"
               @edit="onEditTabs"
               @change="(key) => handleChangeTab(key as string)"

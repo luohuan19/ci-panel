@@ -518,7 +518,7 @@ onMounted(async () => {
               </a-alert>
 
               <a-tabs
-                v-model:activeKey="activeKey"
+                v-model:active-key="activeKey"
                 class="mod-manager-tabs"
                 destroy-inactive-tab-pane
                 @change="handleTabChange"

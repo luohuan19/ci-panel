@@ -579,10 +579,10 @@ onMounted(async () => {
                     isGlobalDaemonMode
                       ? t('TXT_CODE_a60a421a')
                       : computeNodeName(
-                          currentRemoteNode?.ip || '',
-                          currentRemoteNode?.available || true,
-                          currentRemoteNode?.remarks
-                        )
+                        currentRemoteNode?.ip || '',
+                        currentRemoteNode?.available || true,
+                        currentRemoteNode?.remarks
+                      )
                   "
                 />
                 <DownOutlined />
@@ -675,7 +675,7 @@ onMounted(async () => {
           <template v-if="instances && !isGlobalDaemonMode" #right>
             <a-pagination
               v-model:current="operationForm.currentPage"
-              v-model:pageSize="operationForm.pageSize"
+              v-model:page-size="operationForm.pageSize"
               :total="(instances?.maxPage || 0) * operationForm.pageSize"
               show-size-changer
               @change="initInstancesData()"
