@@ -52,6 +52,10 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
+    // 低 inotify 上限的机器（fs.inotify.max_user_watches 太小 → ENOSPC）上，
+    // 设 CHOKIDAR_USEPOLLING=true 让文件监视改用轮询、不占 inotify watch。默认关闭，不影响他人。
+    watch:
+      process.env.CHOKIDAR_USEPOLLING === "true" ? { usePolling: true, interval: 300 } : undefined,
     proxy: {
       "/api": {
         target: "http://localhost:23333",
