@@ -55,7 +55,7 @@ defineExpose({
   </div>
 
   <div v-else class="ml-16 mr-16 mt-8 mb-8">
-    <a-tabs v-model:activeKey="activeKey">
+    <a-tabs v-model:active-key="activeKey">
       <a-tab-pane
         v-for="item in props.menus"
         :key="item.key"

@@ -1,15 +1,29 @@
 import { init, graphic, type ECharts } from "echarts";
 import { onMounted, onUnmounted, ref } from "vue";
 
-export function useSimpleChart(dom: string) {
+// Shared chart lifecycle: init on mount, keep the canvas fitted to its
+// container via a ResizeObserver, and clean up on unmount. Observing the
+// container element (rather than only window "resize") also catches browser
+// zoom and layout-driven size changes, so the chart re-fits without a manual
+// refresh.
+function useChart(dom: string, getDefaultOption: () => any) {
   let chart = ref<ECharts>();
+  let resizeObserver: ResizeObserver | undefined;
 
   onMounted(() => {
-    chart.value = init(document.getElementById(dom));
-    chart.value.setOption(getSimpleChartDefaultOption());
+    const el = document.getElementById(dom);
+    chart.value = init(el);
+    chart.value.setOption(getDefaultOption());
+
+    if (el && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => chart.value?.resize());
+      resizeObserver.observe(el);
+    }
   });
 
   onUnmounted(() => {
+    resizeObserver?.disconnect();
+    resizeObserver = undefined;
     chart.value?.dispose();
     chart.value = undefined;
   });
@@ -20,23 +34,12 @@ export function useSimpleChart(dom: string) {
   };
 }
 
+export function useSimpleChart(dom: string) {
+  return useChart(dom, getSimpleChartDefaultOption);
+}
+
 export function useOverviewChart(dom: string) {
-  let chart = ref<ECharts>();
-
-  onMounted(() => {
-    chart.value = init(document.getElementById(dom));
-    chart.value.setOption(getChartDefaultOption());
-  });
-
-  onUnmounted(() => {
-    chart.value?.dispose();
-    chart.value = undefined;
-  });
-
-  return {
-    instance: chart,
-    setOption: (v: any) => chart.value?.setOption(v)
-  };
+  return useChart(dom, getChartDefaultOption);
 }
 
 function getChartDefaultOption() {

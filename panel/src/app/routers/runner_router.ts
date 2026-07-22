@@ -226,6 +226,28 @@ router.post(
 );
 
 // [Top-level Permission]
+// 只读：列出某仓库在基目录下已有的 label 组（供前端复用标签、锁定命名）
+router.post(
+  "/repo_groups",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/repo_groups",
+        ctx.request.body,
+        30000
+      );
+      ctx.body = result;
+    } catch (err) {
+      ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
 // 扫描节点磁盘上真实存在的 runner（只读，不建实例）
 router.post(
   "/scan",

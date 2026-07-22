@@ -39,6 +39,31 @@ export interface RunnerBatchItemResult {
   error?: string;
 }
 
+// 某组标签命中该 repo 已有 label 组，后端强制沿用既有命名前缀时的提示项
+export interface RunnerBatchAligned {
+  baseName: string; // 用户填的基础名
+  labels: string; // 命中的标签
+  prefix: string; // 实际沿用的既有前缀
+}
+
+// 某仓库在基目录下已有的一个 label 组
+export interface RepoLabelGroup {
+  key: string; // 归一化标签 key（组身份）
+  labels: string; // 展示用原始标签
+  prefix: string; // 命名前缀（累加锚点）
+  count: number; // 现有数量
+  maxIndex: number; // 现有 `${prefix}-N` 的最大 N
+}
+
+// 只读：列出某仓库在基目录下已有的 label 组
+export const runnerRepoGroups = useDefineApi<
+  { params: { daemonId: string }; data: { baseDir: string; repoUrl: string } },
+  { groups: RepoLabelGroup[] }
+>({
+  url: "/api/runner/repo_groups",
+  method: "POST"
+});
+
 export const startRunnerDownload = useDefineApi<
   { params: { daemonId: string }; data: { version?: string; proxy?: string; force?: boolean } },
   { downloadId: string; version: string; url: string; skipped: boolean }
@@ -102,7 +127,7 @@ export const provisionRunnerBatch = useDefineApi<
       packagePath?: string;
     };
   },
-  { results: RunnerBatchItemResult[] }
+  { results: RunnerBatchItemResult[]; aligned: RunnerBatchAligned[] }
 >({
   url: "/api/runner/provision_batch",
   method: "POST"
@@ -121,7 +146,7 @@ interface RunnerBatchData {
 
 export const startRunnerBatch = useDefineApi<
   { params: { daemonId: string }; data: RunnerBatchData },
-  { batchId: string; items: { name: string }[] }
+  { batchId: string; items: { name: string }[]; aligned: RunnerBatchAligned[] }
 >({
   url: "/api/runner/batch_start",
   method: "POST"

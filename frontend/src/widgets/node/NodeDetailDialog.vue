@@ -179,7 +179,7 @@ defineExpose({ openDialog });
 
 <template>
   <a-modal v-model:open="dialog.status" :title="dialog.title" width="800px">
-    <a-tabs v-model:activeKey="activeTabKey">
+    <a-tabs v-model:active-key="activeTabKey">
       <!-- 基本信息标签页 -->
       <a-tab-pane key="basic" :tab="t('TXT_CODE_cc7b54b9')">
         <a-form ref="formRef" :model="dialog.data" layout="vertical">

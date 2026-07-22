@@ -11,7 +11,7 @@ import { spawn, execFileSync } from "child_process";
 import axios from "axios";
 import InstanceSubsystem from "./system_instance";
 import logger from "./log";
-import { writeMarker } from "./runner_marker";
+import { writeMarker, readMarker } from "./runner_marker";
 
 // 实例类型常量，等于 Instance.TYPE_UNIVERSAL。刻意用字面量而不 import Instance 类：
 // instance.ts 处在 instance↔java_manager↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
@@ -128,6 +128,7 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
   if (!name) throw new Error("runner 名称不能为空");
   if (!path.isAbsolute(targetDir) || targetDir === "/")
     throw new Error("目标目录必须是绝对路径且不能为根目录 /");
+  assertBaseDirRepo(path.dirname(targetDir), repoUrl); // 一个基目录只归一个仓库
 
   const step = params.onStep || (() => {});
 
@@ -218,7 +219,8 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
   const marker = writeMarker(targetDir, {
     source: "provision",
     repo: repoSlug(repoUrl),
-    group: (params.group || "").trim()
+    group: (params.group || "").trim(),
+    labels: (params.labels || "").trim()
   });
 
   // 句柄实例：只作文件管理/配置的抓手，不跑 run.sh（systemd 在跑）
@@ -370,12 +372,139 @@ interface BatchSpec {
   group: string; // 基础名，作为 .cipanel marker 的组
 }
 
-// 校验参数并把多组展开成完整 runner 列表（含名字去重与总数上限）
+// 转义正则特殊字符，供按 baseName 前缀匹配用
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 收集「已占用的 runner 名字」，用于采番与防覆盖。两个来源、两种范围：
+//   1. 基目录下的既有子目录名 —— 防目录物理覆盖，按 baseDir 天然隔离，照收。
+//   2. 已看护句柄实例的昵称 —— 让同一 repo 换基目录也不撞名（GitHub runner 名按 repo 唯一）。
+//      关键：只计入 tag 命中「同一 repo」的实例，否则别的 repo 的同名 runner 会污染本 repo
+//      的采番，把编号顶高（例：repo A 有 npu-10，会害 repo B 从 npu-11 起）。
+// 未传 repoUrl 时退化为收集全部昵称（保持无 repo 上下文的调用兼容）。
+// 纯只读；基目录尚不存在时视为无已存在 runner。
+function collectUsedNames(baseDir: string, repoUrl?: string): Set<string> {
+  const used = new Set<string>();
+  try {
+    for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) used.add(entry.name);
+    }
+  } catch {
+    // 基目录首次创建时不存在：忽略
+  }
+  const wanted = repoUrl ? repoSlug(repoUrl) : "";
+  for (const inst of InstanceSubsystem.instances.values()) {
+    const nickname = inst?.config?.nickname;
+    if (!nickname) continue;
+    if (wanted) {
+      const tags = inst.config.tag;
+      if (!Array.isArray(tags) || !tags.includes(wanted)) continue;
+    }
+    used.add(String(nickname));
+  }
+  return used;
+}
+
+// 在已占用名字里找形如 `${base}-<N>` 的最大 N（无则 0）
+function maxIndexFor(base: string, used: Set<string>): number {
+  const re = new RegExp(`^${escapeRegExp(base)}-(\\d+)$`);
+  let max = 0;
+  for (const n of used) {
+    const m = re.exec(n);
+    if (m) {
+      const v = Number(m[1]);
+      if (Number.isInteger(v) && v > max) max = v;
+    }
+  }
+  return max;
+}
+
+// 标签集合归一化：拆分、去空、小写、去重、排序 → 规范 key。
+// "gpu, A100" 与 "a100,GPU" 都 → "a100,gpu"，作为一个 label 组的唯一身份（与顺序/大小写/重复无关）。
+export function labelKey(labels: string): string {
+  return (labels || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .sort()
+    .join(",");
+}
+
+// 一个仓库下、按 label 组聚合的既有 runner 概况。前端据此展示可复用的标签组。
+export interface RepoLabelGroup {
+  key: string; // labelKey，组身份
+  labels: string; // 展示用原始标签（取组内首个 marker 的原样值）
+  prefix: string; // 命名前缀（marker.group），「往后累加」的锚点
+  count: number; // 现有数量
+  maxIndex: number; // 现有 `${prefix}-N` 的最大 N
+}
+
+// 按 repo 聚合出该仓库已有的 label 组（只读）。数据源是「所有 tag 命中该 repo 的句柄实例」，
+// 读各自 cwd 下的 .cipanel —— 因此跨基目录也能发现同一 repo 的既有组，与「采番按 repo」同范围。
+// 无 labels 的 marker（v1 老 runner / import 导入）不计入——它们标签未知，不作为可复用组。
+// baseDir 仍用于 collectUsedNames（把当前基目录的现存目录名纳入采番锚点、防覆盖）。
+export function listRepoGroups(baseDir: string, repoUrl: string): RepoLabelGroup[] {
+  const base = path.normalize((baseDir || "").trim());
+  if (!path.isAbsolute(base) || base === "/")
+    throw new Error("基目录必须是绝对路径且不能为根目录 /");
+  const wanted = repoSlug(repoUrl);
+  const used = collectUsedNames(base, repoUrl);
+  const byKey = new Map<string, RepoLabelGroup>();
+  const seenDirs = new Set<string>();
+  for (const inst of InstanceSubsystem.instances.values()) {
+    const cwd = inst?.config?.cwd;
+    const tags = inst?.config?.tag;
+    if (!cwd || !Array.isArray(tags) || !tags.includes(wanted)) continue;
+    const dir = path.normalize(cwd);
+    if (seenDirs.has(dir)) continue; // 每个目录只算一次
+    seenDirs.add(dir);
+    const m = readMarker(dir);
+    if (!m || m.repo !== wanted || !m.labels) continue;
+    const key = labelKey(m.labels);
+    if (!key) continue;
+    const prefix = m.group || path.basename(dir).replace(/-\d+$/, "");
+    const g =
+      byKey.get(key) ?? { key, labels: m.labels, prefix, count: 0, maxIndex: maxIndexFor(prefix, used) };
+    g.count += 1;
+    byKey.set(key, g);
+  }
+  return [...byKey.values()];
+}
+
+// 护栏：一个基目录只归一个仓库。扫描 baseDir 下的 .cipanel，若发现属于「其他仓库」的
+// runner 就拒绝创建。混放会让采番陷入死结——避让所有磁盘目录则本仓库编号被对方顶高（飙号），
+// 只避让本仓库目录则会物理覆盖对方目录。从源头禁止混放，让「目录 = 仓库」的前提恒成立。
+function assertBaseDirRepo(baseDir: string, repoUrl: string): void {
+  const wanted = repoSlug(repoUrl);
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(baseDir);
+  } catch {
+    return; // 目录尚不存在：无冲突
+  }
+  const conflicts = new Set<string>();
+  for (const name of names) {
+    const m = readMarker(path.join(baseDir, name));
+    if (m && m.repo && m.repo !== wanted) conflicts.add(m.repo);
+  }
+  if (conflicts.size)
+    throw new Error(
+      `基目录 ${baseDir} 已被仓库 [${[...conflicts].join(", ")}] 使用，` +
+        `请为 ${wanted} 换一个独立的基目录（一个目录只归一个仓库）`
+    );
+}
+
+// 校验参数并把多组展开成完整 runner 列表（含名字去重与总数上限）。
+// 若某组标签命中该 repo 已有 label 组，强制对齐到既有命名前缀并从其 maxIndex 之后累加；
+// aligned 汇总被对齐的组，供上层提示「已并入既有组」。
 function expandBatchSpecs(p: ProvisionBatchParams): {
   repoUrl: string;
   token: string;
   proxy: string;
   specs: BatchSpec[];
+  aligned: { baseName: string; labels: string; prefix: string }[];
 } {
   const repoUrl = p.repoUrl;
   const token = p.token;
@@ -387,31 +516,46 @@ function expandBatchSpecs(p: ProvisionBatchParams): {
   if (!path.isAbsolute(baseDir) || baseDir === "/")
     throw new Error("基目录必须是绝对路径且不能为根目录 /");
   if (!Array.isArray(p.groups) || p.groups.length === 0) throw new Error("至少需要一组 runner");
+  assertBaseDirRepo(baseDir, repoUrl); // 一个基目录只归一个仓库
 
   const specs: BatchSpec[] = [];
-  const seen = new Set<string>();
+  const aligned: { baseName: string; labels: string; prefix: string }[] = [];
+  // 已占用名字：磁盘上的既有目录 + 同 repo 已看护实例名 + 本批已分配。采番在此基础上往后连续排。
+  const used = collectUsedNames(baseDir, repoUrl);
+  // 该 repo 下已有的 label 组，用于把相同标签的新组对齐到既有命名前缀。
+  const repoGroups = listRepoGroups(baseDir, repoUrl);
   for (const g of p.groups) {
     const base = (g.baseName || "").trim();
     const labels = (g.labels || "").trim();
     const count = Number(g.count) || 0;
     if (!base) throw new Error("runner 基础名不能为空");
     if (count < 1 || count > 99) throw new Error(`每组数量需在 1..99，收到 ${g.count}`);
-    for (let i = 1; i <= count; i++) {
-      const name = `${base}-${i}`;
-      if (seen.has(name)) throw new Error(`runner 名重复: ${name}`);
-      seen.add(name);
-      specs.push({ name, labels, targetDir: path.join(baseDir, name), group: base });
+    // 标签命中既有组（集合完全相等）→ 强制沿用既有前缀；否则新组用用户填的 base。
+    const existing = labels ? repoGroups.find((rg) => rg.key === labelKey(labels)) : undefined;
+    const prefix = existing ? existing.prefix : base;
+    if (existing && existing.prefix !== base) aligned.push({ baseName: base, labels, prefix });
+    // 接在已占用的最大同名编号之后，保证跨批/跨组/跨基目录连续、不覆盖既有 runner
+    let i = maxIndexFor(prefix, used);
+    for (let k = 0; k < count; k++) {
+      i += 1;
+      const name = `${prefix}-${i}`;
+      const targetDir = path.join(baseDir, name);
+      // used 已含现存目录名，正常采番不会撞；此处兜底并发/归一化差异下的竞态，宁可报错也不覆盖
+      if (used.has(name) || fs.existsSync(targetDir))
+        throw new Error(`runner 目录或名字已存在，拒绝覆盖: ${name}`);
+      used.add(name);
+      specs.push({ name, labels, targetDir, group: prefix });
     }
   }
   if (specs.length > 99) throw new Error(`单批最多 99 个 runner，当前 ${specs.length} 个`);
-  return { repoUrl, token, proxy, specs };
+  return { repoUrl, token, proxy, specs, aligned };
 }
 
 // 同步批量（保留：一次性阻塞返回全部结果）
 export async function provisionRunnerBatch(
   p: ProvisionBatchParams
-): Promise<{ results: BatchItemResult[] }> {
-  const { repoUrl, token, proxy, specs } = expandBatchSpecs(p);
+): Promise<{ results: BatchItemResult[]; aligned: { baseName: string; labels: string; prefix: string }[] }> {
+  const { repoUrl, token, proxy, specs, aligned } = expandBatchSpecs(p);
   logger.info(`[runner-provision] 批量: 共 ${specs.length} 个 runner`);
   const results: BatchItemResult[] = [];
   for (const s of specs) {
@@ -433,7 +577,7 @@ export async function provisionRunnerBatch(
       results.push({ name: s.name, ok: false, error: err?.message || String(err) });
     }
   }
-  return { results };
+  return { results, aligned };
 }
 
 // ---- 异步批量：后台逐个跑，前端轮询进度（每个 runner 有 状态 + 当前步骤）----
@@ -518,8 +662,8 @@ async function runBatchItems(id: string, token: string, indices: number[]) {
 // 启动后台批量，立刻返回 batchId + 初始清单
 export function startRunnerBatch(
   p: ProvisionBatchParams
-): { batchId: string; items: { name: string }[] } {
-  const { repoUrl, token, proxy, specs } = expandBatchSpecs(p);
+): { batchId: string; items: { name: string }[]; aligned: { baseName: string; labels: string; prefix: string }[] } {
+  const { repoUrl, token, proxy, specs, aligned } = expandBatchSpecs(p);
   const id = `b${++batchSeq}`;
   const items: BatchItemState[] = specs.map((s) => ({
     name: s.name,
@@ -546,7 +690,7 @@ export function startRunnerBatch(
     token,
     specs.map((_, i) => i)
   );
-  return { batchId: id, items: items.map((i) => ({ name: i.name })) };
+  return { batchId: id, items: items.map((i) => ({ name: i.name })), aligned };
 }
 
 // 重试某批的失败项：用新传入的 token（旧的可能已过期），可选覆盖代理。--replace 幂等，会收编 GitHub 孤儿。

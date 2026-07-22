@@ -89,7 +89,7 @@ const close = () => {
     </CardPanel>
   </div>
   <a-modal v-model:open="open" :title="null" :closable="false" :destroy-on-close="true">
-    <a-tabs v-model:activeKey="activeKey">
+    <a-tabs v-model:active-key="activeKey">
       <a-tab-pane key="upload" :tab="t('TXT_CODE_e00c858c')">
         <a-progress
           v-if="percentComplete > 0"
