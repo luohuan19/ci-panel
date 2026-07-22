@@ -380,3 +380,19 @@ export const controlRunnerService = useDefineApi<
   url: "/api/runner/service_control",
   method: "POST"
 });
+
+// 批量启停/重启 systemd 托管的 runner（panel 侧并行执行，无 service 的项会被跳过）
+export const controlRunnerServiceBatch = useDefineApi<
+  {
+    params: { daemonId: string };
+    data: {
+      items: Array<{ dir: string; service: string }>;
+      action: "start" | "stop" | "restart";
+      concurrency?: number;
+    };
+  },
+  { results: Array<{ dir: string; service: string; ok: boolean; error?: string }> }
+>({
+  url: "/api/runner/service_control_batch",
+  method: "POST"
+});
