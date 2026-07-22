@@ -70,9 +70,11 @@ export function writeMarker(
     ? {
         ...existing,
         v: MARKER_VERSION, // 顺带把 v1 老 marker 升到当前版本
+        // 用 || 而非 ??：调用方常传空串（如 provisionRunner 的 (params.labels||"").trim()），
+        // 空串同样应回退到既有值，否则重复 provision 会把已存的 group/labels 抹掉，runner 掉出标签组。
         repo: data.repo || existing.repo,
-        group: data.group ?? existing.group,
-        labels: data.labels ?? existing.labels
+        group: data.group || existing.group,
+        labels: data.labels || existing.labels
       }
     : {
         v: MARKER_VERSION,
