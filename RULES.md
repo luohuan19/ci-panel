@@ -16,7 +16,12 @@ description: Core project rules for all AI assistants (Claude, Cursor, etc.)
 ## 2. General Coding Rules
 
 - **Minimal changes**: Prefer small, focused edits. Before adding new logic, check existing `hooks`, `services`, `stores`, `utils` in the relevant subproject and reuse when possible.
-- **Language for code & comments**: All **code and comments must be written in English**.
+- **Language for code & comments**: All **code** — identifiers, types, function and file
+  names — must be written in English. **Comments may be written in Chinese**: this fork's
+  runner code and `prod-scripts/` are commented in Chinese. Match the language of the file
+  you are editing rather than mixing both in one file; files inherited from upstream
+  MCSManager keep their English comments. See
+  `.cursor/rules/core-project-conventions.mdc`, which is authoritative.
 - **User-facing text & i18n**
   - Do **not** hardcode user-facing strings (UI labels, messages, errors, etc.).
   - Always use the project i18n flow (backend logs are the only common exception).
@@ -125,5 +130,6 @@ const errorMsgWithParams = $t("TXT_CODE_INSTANCE_ERROR", {
 - Respect all rules above when proposing or editing code.
 - Use the appropriate i18n helper instead of hardcoding user-visible text.
 - Prefer minimal, focused diffs and reuse existing utilities / services when possible.
-- Keep code and comments in English even if conversation language is different.
+- Keep code identifiers in English even if conversation language is different; comments
+  follow the language of the file being edited (see §2).
 

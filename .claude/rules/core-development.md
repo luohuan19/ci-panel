@@ -180,7 +180,7 @@ Before committing:
 - [ ] Linter and type errors fixed, not suppressed
 - [ ] No hardcoded secrets or absolute paths
 - [ ] External input validated; no shell interpolation
-- [ ] User-facing text goes through i18n; code and comments in English
+- [ ] User-facing text goes through i18n; code identifiers in English (comments follow the file)
 - [ ] Documentation updated
 - [ ] No AI co-author lines in the commit message
 

@@ -31,8 +31,10 @@ reviews:
         panel/daemon boundary. Use the project logger, never console.*. No shell
         interpolation of user input — use argument arrays with shell:false.
         Guard file paths against directory traversal (resolve + prefix check).
-        User-facing text goes through i18n ($t / TXT_CODE_ keys), code and
-        comments in English.
+        User-facing text goes through i18n ($t / TXT_CODE_ keys). Code
+        identifiers must be English; comments may be Chinese — this fork's
+        runner services are commented in Chinese, so match the file being
+        edited and do not flag Chinese comments.
     - path: "frontend/**/*.vue"
       instructions: >-
         Vue 3 <script setup lang="ts"> conventions. User-facing text via t()
