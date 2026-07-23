@@ -14,7 +14,13 @@ The codebase is split into: `web backend (panel/*.*)`, `daemon/node (daemon/*.*)
 # Code requirements
 
 - Prefer **minimal changes**. Before coding, check `hooks/services/stores/utils` in the relevant subproject to avoid duplicate logic.
-- All comments and all code must be written in English. If there are any non-English strings, you must use the i18n convention.
+- All **code** — identifiers, types, function and file names — must be written in English.
+- **Comments may be written in Chinese.** This fork's runner code is commented in Chinese
+  (e.g. `daemon/src/service/runner_scan.ts`, `prod-scripts/`), and that is the convention to
+  follow. Match the language of the file you are editing rather than mixing both in one file;
+  files inherited from upstream MCSManager keep their English comments.
+- User-facing strings are unaffected by the above: they must never be hardcoded in any language —
+  use the i18n convention below.
 - Do **not** hardcode user-facing text (UI copy or error messages). Use the project i18n flow (backend logs excepted).
 - Code must be **high cohesion, low coupling, reusable**.
 

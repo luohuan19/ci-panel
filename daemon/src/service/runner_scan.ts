@@ -27,12 +27,17 @@ import {
 } from "./runner_marker";
 import {
   ensureHandleInstance,
+  errText,
   queryHelperPreflight,
   removeGithubRegistration,
+  RUNNER_SVC_HELPER,
   uninstallSystemdService
 } from "./runner_provision";
 
 const SYSTEMCTL = "/usr/bin/systemctl";
+
+// 单元名的唯一合法形状。与助手脚本的 SERVICE_RE 保持一致。
+const SERVICE_RE = /^actions\.runner\.[A-Za-z0-9._@-]+\.service$/;
 
 // ---- 扫描根 ----
 // 唯一真相源是特权助手的 ALLOWED_ROOT：那是 root 侧真正的边界，daemon 这边声明得再宽也没用，
@@ -60,8 +65,19 @@ export function initRunnerRoots(): void {
     );
     return;
   }
-  const helperRoots = parseRoots(pre.allowedRoot);
-  // 助手只有一个根，CIP_SCAN_ROOTS 却是列表。历史上多写的根从来就装不上服务(助手会拒)，
+  // 助手的 ALLOWED_ROOT 是「一个路径」，不是列表 —— 绝不能按逗号切分：目录名里的逗号
+  // (/srv/ci,prod 是合法路径)会被拆成两个根，其中 /srv/ci 并非助手的真实根，却会让
+  // assertUnderRoots 放行它下面的一切，而 deleteRunner 是直接 fs.remove、不经助手复核的。
+  // 拿不到合法的单个绝对路径就 fail closed：退回原有的回退值，不要半信半疑地放宽。
+  const helperRoot = path.normalize(pre.allowedRoot.trim());
+  if (!path.isAbsolute(helperRoot) || helperRoot === path.sep) {
+    logger.error(
+      `[runner-scan] 助手返回的 ALLOWED_ROOT 非法(${pre.allowedRoot})，继续使用 ${runnerRoots.join(", ")}`
+    );
+    return;
+  }
+  const helperRoots = [helperRoot];
+  // CIP_SCAN_ROOTS 是列表而助手只有一个根。历史上多写的根从来就装不上服务(助手会拒)，
   // 所以这里以助手为准同时也修掉了那个不一致，但要说清楚是哪些根被丢掉了。
   const envRaw = process.env.CIP_SCAN_ROOTS;
   if (envRaw && parseRoots(envRaw).join(",") !== helperRoots.join(",")) {
@@ -262,8 +278,8 @@ function collectFromRoots(roots?: string[]): {
     // 就成了「让 daemon 枚举任意目录下的 .runner 并回读其内容」的通道。只许收窄，不许放宽。
     try {
       assertUnderRoots(root);
-    } catch (err: any) {
-      errors.push({ dir: root, error: err?.message || String(err) });
+    } catch (err: unknown) {
+      errors.push({ dir: root, error: errText(err) });
       continue;
     }
     if (!fs.existsSync(root)) {
@@ -619,8 +635,8 @@ export async function deleteRunner(
   // 各自推各自的会让这条删除路径和其余路径的边界不一致。
   try {
     assertUnderRoots(dir);
-  } catch (err: any) {
-    throw new Error(`拒绝删除扫描根之外的目录: ${dir}（${err?.message || String(err)}）`);
+  } catch (err: unknown) {
+    throw new Error(`拒绝删除扫描根之外的目录: ${dir}（${errText(err)}）`);
   }
   if (!fs.existsSync(path.join(dir, ".runner")) && !fs.existsSync(path.join(dir, ".cipanel")))
     throw new Error("不是 runner 目录（无 .runner / .cipanel），拒绝删除");
@@ -716,27 +732,33 @@ export async function deleteRunner(
   return { dir, ok: dirRemoved, steps, warnings };
 }
 
-// ---- systemd 控制。需要 sudoers 免密白名单（仅 actions.runner.*.service 的 start/stop/restart）----
+// ---- systemd 控制。走特权助手，不直接 sudo systemctl ----
+// 为什么不放行 `sudo systemctl start actions.runner.*.service`：sudoers 的参数通配符会匹配
+// 空白，而 sudo 是把参数拼成一整串比对的，于是加个 actions.runner 前缀就能把任意单元一起带上
+// (systemctl 接受多个单元名)。glob 排不掉空白，sudo < 1.9.10 也没有锚定正则。所以校验放进
+// root 拥有的助手脚本里，sudoers 只放行助手本身。
 
 const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const;
 export type SystemdAction = (typeof ALLOWED_ACTIONS)[number];
 
 export async function controlService(service: string, action: SystemdAction) {
   if (!ALLOWED_ACTIONS.includes(action)) throw new Error(`不支持的操作: ${action}`);
-  // 白名单前缀必须和 sudoers 规则一致，否则 sudo 会要密码然后挂住
-  if (!/^actions\.runner\.[A-Za-z0-9._@-]+\.service$/.test(service))
-    throw new Error(`非法的服务名: ${service}`);
+  // 助手会再校验一次（那次才是有效的边界）；这里挡住明显非法值，省一次 sudo 往返
+  if (!SERVICE_RE.test(service)) throw new Error(`非法的服务名: ${service}`);
   try {
-    execFileSync("sudo", ["-n", SYSTEMCTL, action, service], {
+    execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, action, service], {
       encoding: "utf8",
       timeout: 60000
     });
-  } catch (err: any) {
-    const stderr = String(err.stderr || "");
-    if (stderr.includes("password") || stderr.includes("sudo:"))
-      throw new Error(`sudo 免密未配置，无法 ${action} ${service}。请配置 /etc/sudoers.d/ci-panel-runner`);
-    throw new Error(`${action} ${service} 失败: ${stderr || err.message}`);
+  } catch (err: unknown) {
+    const detail = errText(err);
+    if (/password is required|not allowed to execute|^sudo:/im.test(detail))
+      throw new Error(
+        `sudo 免密未配置，无法 ${action} ${service}。` +
+          `请跑 prod-scripts/install-runner-privileges.sh`
+      );
+    throw new Error(`${action} ${service} 失败: ${detail}`);
   }
-  logger.info(`[runner-scan] systemctl ${action} ${service} 成功`);
+  logger.info(`[runner-scan] ${action} ${service} 成功`);
   return (await querySystemd([service])).get(service) || null;
 }

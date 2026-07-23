@@ -15,14 +15,18 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RUN_USER="${SUDO_USER:-ci-runner}" # daemon 的运行用户 = runner 目录属主 = 单元里的 User=
 ALLOWED_ROOT="/data/ci-runner"     # 写进助手脚本；daemon 启动时会调 preflight 读回去当扫描根
+ROOT_EXPLICIT=0                    # 是否显式传了 --root（--check 时决定拿什么跟助手比对）
 HELPER_DEST="/usr/local/sbin/ci-panel-runner-svc"
 SYSTEMCTL=""
 CHECK_ONLY=0
 
-SUDOERS_SVC="/etc/sudoers.d/ci-panel-runner"          # 启停三条
-SUDOERS_HELPER="/etc/sudoers.d/ci-panel-runner-install" # 助手一条
-# 探针单元：只用来验证 sudo 授权层放行，故意取一个不可能存在的名字（systemctl 会以
-# "Unit not found" 失败，不产生任何副作用）。仍需匹配 sudoers 的 actions.runner.*.service。
+SUDOERS_HELPER="/etc/sudoers.d/ci-panel-runner-install" # 助手一条，这是唯一的规则
+# 旧的启停白名单。它用 `systemctl start actions.runner.*.service` 这种带通配符的规则，而 sudoers
+# 的参数通配符会匹配空白、且 sudo 把参数拼成一整串比对，于是加个 actions.runner 前缀就能把任意
+# 单元一起启动。启停已改走助手校验，所以这个文件必须从机器上删掉，不能只是不再安装。
+SUDOERS_SVC_LEGACY="/etc/sudoers.d/ci-panel-runner"
+# 探针单元：只用来验证授权链路打通，故意取一个不可能存在的名字（systemctl 会以
+# "Unit not found" 失败，不产生任何副作用）。名字仍需通过助手的 SERVICE_RE 校验。
 PROBE_UNIT="actions.runner.cipanel-preflight-probe.service"
 
 if [ -t 1 ]; then
@@ -37,7 +41,7 @@ die()  { echo "${RED}[fail]${RESET} $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --user)       RUN_USER="${2:?--user 需要参数}"; shift 2 ;;
-    --root)       ALLOWED_ROOT="${2:?--root 需要参数}"; shift 2 ;;
+    --root)       ALLOWED_ROOT="${2:?--root 需要参数}"; ROOT_EXPLICIT=1; shift 2 ;;
     --helper)     HELPER_DEST="${2:?--helper 需要参数}"; shift 2 ;;
     --systemctl)  SYSTEMCTL="${2:?--systemctl 需要参数}"; shift 2 ;;
     --check)      CHECK_ONLY=1; shift ;;
@@ -102,27 +106,50 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
   # 落盘前先备份既有文件：一个坏掉的 /etc/sudoers.d 会让整台机器的 sudo 不可用，
   # 所以最后的整体 visudo -c 若失败，必须能原样退回去。
   BACKUP_DIR="$(mktemp -d)"
+  SUDOERS_TOUCHED=() # 只记「本次真的动过的」文件；没动过的绝不能在回滚时被删掉
+  SUDOERS_DONE=0
+
   restore_sudoers() {
     local f base
-    for f in "$SUDOERS_SVC" "$SUDOERS_HELPER"; do
+    # set -u 下空数组要用 ${a[@]+"${a[@]}"} 展开，否则 bash <4.4 会报未绑定变量
+    for f in ${SUDOERS_TOUCHED[@]+"${SUDOERS_TOUCHED[@]}"}; do
       base="$(basename "$f")"
       if [ -f "$BACKUP_DIR/$base" ]; then
         install -m 0440 -o root -g root "$BACKUP_DIR/$base" "$f"
       else
-        rm -f "$f" # 本次新建的，直接删掉
+        rm -f "$f" # 有记录但无备份 = 本次新建的，删掉
       fi
     done
+  }
+
+  # 任何一步失败(die/set -e)都要回滚，而不只是最后那次整体校验失败时。否则第二个
+  # install_sudoers 失败会让第一条规则残留在机器上，处于「装了一半」的状态。
+  cleanup_sudoers() {
+    local rc=$?
+    if [ "$SUDOERS_DONE" -eq 0 ]; then
+      restore_sudoers
+      echo "${YELLOW}[warn]${RESET} sudoers 已回滚到部署前的状态" >&2
+    fi
     rm -rf "$BACKUP_DIR"
+    return $rc
+  }
+  trap cleanup_sudoers EXIT
+
+  # 在改动某个 sudoers 文件「之前」调用：登记它、并备份既有内容。必须先登记再改，
+  # 这样回滚只会碰我们真的动过的文件——早期版本无条件遍历一个固定列表，会把根本没
+  # 走到那一步、原封未动的文件也删掉。
+  mark_touched() {
+    SUDOERS_TOUCHED+=("$1")
+    if [ -f "$1" ]; then cp -p "$1" "$BACKUP_DIR/$(basename "$1")"; fi
   }
 
   install_sudoers() { # src dest
     local src="$1" dest="$2" tmp
     [ -f "$src" ] || die "找不到 sudoers 模板: $src"
-    if [ -f "$dest" ]; then cp -p "$dest" "$BACKUP_DIR/$(basename "$dest")"; fi
+    mark_touched "$dest"
     tmp="$(mktemp)"
     sed -e "s|^ci-runner\([[:space:]]\)|$RUN_USER\1|" \
         -e "s|/usr/local/sbin/ci-panel-runner-svc|$HELPER_DEST|g" \
-        -e "s|/usr/bin/systemctl|$SYSTEMCTL|g" \
         "$src" > "$tmp"
     chmod 0440 "$tmp"
     visudo -cf "$tmp" >/dev/null || { rm -f "$tmp"; die "生成的 sudoers 语法错误: $src"; }
@@ -130,16 +157,19 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
     rm -f "$tmp"
     ok "安装 $dest"
   }
-  install_sudoers "$SRC_DIR/ci-panel-runner.sudoers" "$SUDOERS_SVC"
   install_sudoers "$SRC_DIR/ci-panel-runner-install.sudoers" "$SUDOERS_HELPER"
 
-  # 整体校验：单文件都合法但合起来出问题（重复定义等）也要拦住，且失败必须回滚，
-  # 不能让机器带着坏掉的 /etc/sudoers.d 离开本脚本。
-  if ! visudo -c >/dev/null; then
-    restore_sudoers
-    die "整体 sudoers 校验失败，已回滚到部署前的状态"
+  # 删掉旧的启停白名单：它放行的是带通配符的 systemctl，等于允许启动任意单元(见文件顶部说明)。
+  # 启停现在走助手校验，所以这条规则不再需要，留着就是个洞。
+  if [ -f "$SUDOERS_SVC_LEGACY" ]; then
+    mark_touched "$SUDOERS_SVC_LEGACY"
+    rm -f "$SUDOERS_SVC_LEGACY"
+    ok "移除旧的启停白名单 $SUDOERS_SVC_LEGACY（通配符可放行任意单元，已由助手取代）"
   fi
-  rm -rf "$BACKUP_DIR"
+
+  # 整体校验：单文件都合法但合起来出问题（重复定义等）也要拦住。
+  visudo -c >/dev/null || die "整体 sudoers 校验失败"
+  SUDOERS_DONE=1
 fi
 
 # ---- 3) 端到端验证。这一段才是「部署期保证」的真正含义 ----
@@ -174,8 +204,15 @@ helper_root="$(echo "$pre_out" | sed -n 's/^allowed_root=//p')"
 helper_ver="$(echo "$pre_out" | sed -n 's/^version=//p')"
 ok "免密调用助手成功（version=$helper_ver, allowed_root=$helper_root）"
 
-[ "$helper_root" = "$ALLOWED_ROOT" ] || \
-  die "助手的 ALLOWED_ROOT($helper_root) 与本次部署的根目录($ALLOWED_ROOT) 不一致——重跑本脚本不加 --check"
+# 只在「装过一遍」或「显式传了 --root」时才比对。否则单跑 --check 会拿默认 /data/ci-runner
+# 去和一个用 --root /custom 装出来的助手比，必然失败——那是脚本的错，不是部署的错。
+if [ "$CHECK_ONLY" -eq 0 ] || [ "$ROOT_EXPLICIT" -eq 1 ]; then
+  [ "$helper_root" = "$ALLOWED_ROOT" ] ||
+    die "助手的 ALLOWED_ROOT($helper_root) 与本次部署的根目录($ALLOWED_ROOT) 不一致——重跑本脚本不加 --check"
+else
+  # --check 且没传 --root：以助手为准，后续的根目录检查都用它
+  ALLOWED_ROOT="$helper_root"
+fi
 
 # --check 可能是单独拷出来跑的，此时手边没有仓库源文件，跳过版本比对即可
 src_ver=""
@@ -186,18 +223,28 @@ if [ -n "$src_ver" ] && [ "$src_ver" != "$helper_ver" ]; then
   die "机器上装的助手是旧版(version=$helper_ver)，仓库里是 version=$src_ver——重跑本脚本不加 --check"
 fi
 
-# 3c) 启停三条：start/stop/restart 都有副作用，所以拿一个不存在的探针单元跑 start。
-#     sudo 授权层会放行(匹配 actions.runner.*.service)，systemctl 再以 "Unit not found" 失败。
-#     于是「sudo 拒绝」和「systemctl 没找到单元」可区分，且全程零副作用。
+# 3c) 启停：start/stop/restart 都有副作用，所以拿一个不存在的探针单元跑 start。授权链路会放行
+#     (名字通过助手的 SERVICE_RE)，systemctl 再以 "Unit not found" 失败。于是「被拒」和「单元
+#     不存在」可区分，且全程零副作用。
 if "$SYSTEMCTL" cat "$PROBE_UNIT" >/dev/null 2>&1; then
   die "探针单元居然存在: $PROBE_UNIT——改掉脚本里的 PROBE_UNIT 再试，否则这次探测会真的启动它"
 fi
-probe_out="$(as_user sudo -n "$SYSTEMCTL" start "$PROBE_UNIT" || true)"
+probe_out="$(as_user sudo -n "$HELPER_DEST" start "$PROBE_UNIT" || true)"
 if echo "$probe_out" | grep -Eqi 'password is required|not allowed to execute|^sudo:'; then
-  die "启停未放行，检查 $SUDOERS_SVC：
+  die "启停未放行，检查 $SUDOERS_HELPER：
 $probe_out"
 fi
-ok "启停免密已生效（sudo 放行 $SYSTEMCTL start actions.runner.*.service）"
+if echo "$probe_out" | grep -q '非法的单元名'; then
+  die "助手拒绝了探针单元名，说明装的助手版本不支持 start/stop/restart：
+$probe_out"
+fi
+ok "启停已生效（经助手校验后执行，sudoers 不含任何通配符规则）"
+
+# 3c-2) 旧的启停白名单必须已经不在了：它放行带通配符的 systemctl，等于允许启动任意单元
+if [ -f "$SUDOERS_SVC_LEGACY" ]; then
+  die "$SUDOERS_SVC_LEGACY 仍存在——该规则的通配符可放行任意单元，重跑本脚本(不加 --check)以移除"
+fi
+ok "旧的通配符启停白名单已不存在"
 
 # 3d) 根目录必须由 daemon 用户可写，否则创建 runner 会在解压阶段就失败
 as_user test -w "$ALLOWED_ROOT" || die "$RUN_USER 不可写根目录 $ALLOWED_ROOT"

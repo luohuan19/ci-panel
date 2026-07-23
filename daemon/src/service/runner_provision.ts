@@ -240,6 +240,18 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
 export const RUNNER_SVC_HELPER =
   process.env.CIP_RUNNER_SVC_HELPER || "/usr/local/sbin/ci-panel-runner-svc";
 
+// catch 到的值类型是 unknown，取「可读文本」这件事在本模块和 runner_scan 里重复出现，
+// 统一收在这里narrow一次，避免各处退回 err: any。
+export function errText(err: unknown): string {
+  if (err instanceof Error) {
+    // execFileSync 的错误对象上挂着 stderr，比 message 更有信息量
+    const stderr = (err as Error & { stderr?: unknown }).stderr;
+    const detail = typeof stderr === "string" ? stderr.trim() : "";
+    return detail || err.message;
+  }
+  return String(err);
+}
+
 export interface HelperPreflight {
   version: string;
   allowedRoot: string; // 助手允许操作的根目录 —— root 侧真正的边界
@@ -257,10 +269,9 @@ export function queryHelperPreflight(): HelperPreflight | null {
         timeout: 10000
       })
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     // 免密未配、助手没装、助手是不认识 preflight 的旧版 —— 都归到「拿不到」
-    const detail = String(err?.stderr || err?.message || err).trim();
-    logger.warn(`[runner-provision] 助手 preflight 失败: ${detail}`);
+    logger.warn(`[runner-provision] 助手 preflight 失败: ${errText(err)}`);
     return null;
   }
   if (!/^ok$/m.test(out)) return null;

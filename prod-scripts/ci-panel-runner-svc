@@ -11,11 +11,15 @@
 #
 # 用法：ci-panel-runner-svc install|uninstall|status <runner 目录绝对路径>
 #      ci-panel-runner-svc set-env <runner 目录绝对路径> <base64(每行 KEY=VALUE)>
+#      ci-panel-runner-svc start|stop|restart <systemd 单元名>
 #      ci-panel-runner-svc preflight   （无副作用自检，回显版本与根目录）
 set -euo pipefail
 
 # 改动本脚本的行为时同步 +1，好让部署自检认出机器上装的是旧版本。
-VERSION=1
+VERSION=2
+
+# 单元名的唯一合法形状。与 daemon 侧 controlService 的正则一致。
+SERVICE_RE='^actions\.runner\.[A-Za-z0-9._@-]+\.service$'
 
 ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；由 install-runner-privileges.sh 按需改写
 
@@ -39,7 +43,31 @@ if [ "$action" = "preflight" ]; then
   exit 0
 fi
 
-[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status|set-env <runner 目录> [载荷] | preflight"
+# 启停：第二个参数是「单元名」而不是目录，所以和 preflight 一样必须放在目录校验之前。
+#
+# 为什么启停也要走助手：sudoers 的命令参数通配符会匹配空白，且 sudo 是把参数拼成一整串来比对的，
+# 所以 `systemctl start actions.runner.*.service` 这条规则实际允许
+#   systemctl start actions.runner.x.service 任意其它单元
+# ——一个 actions.runner 前缀就能把任意单元带上车。glob 没法排除空白，而本机 sudo 1.9.8 又不支持
+# 锚定正则(需 1.9.10+)，所以唯一干净的解法是把校验搬进 root 拥有的这个脚本里：参数以 argv 数组
+# 传入(无拼接)，再用 bash 原生 =~ 做整串锚定匹配。
+#
+# 用 [[ =~ ]] 而不是 grep -E：grep 是逐行匹配的，输入里若含换行，^...$ 会匹配到其中某一行而放行；
+# bash 的 =~ 锚定的是整个字符串，不存在这个坑。
+case "$action" in
+  start | stop | restart)
+    svc_in="$dir_in" # 此处第二参数是单元名
+    [ -n "$svc_in" ] || die "用法: $0 $action <单元名>"
+    [[ "$svc_in" =~ $SERVICE_RE ]] || die "非法的单元名: $svc_in"
+    # set -e 会让 systemctl 的失败直接成为本脚本的退出码，daemon 据此报错
+    systemctl "$action" "$svc_in"
+    echo "$action ok: $svc_in"
+    exit 0
+    ;;
+esac
+
+[ -n "$action" ] && [ -n "$dir_in" ] ||
+  die "用法: $0 install|uninstall|status|set-env <runner 目录> [载荷] | start|stop|restart <单元名> | preflight"
 
 # 规范化并校验目录
 dir="$(readlink -f -- "$dir_in")" || die "无法解析目录: $dir_in"
@@ -67,9 +95,9 @@ else
   svc="actions.runner.${owner_repo}.${name}.service"
 fi
 
-# 严格校验服务名(与 daemon 侧 controlService 的正则一致)，防注入
-printf '%s' "$svc" | grep -Eq '^actions\.runner\.[A-Za-z0-9._@-]+\.service$' \
-  || die "非法的服务名: $svc"
+# 严格校验服务名，防注入。用 bash 原生 =~ 而不是 grep：grep 逐行匹配，若 svc 含换行则 ^...$
+# 会匹配到其中一行而放行；=~ 锚定整个字符串。
+[[ "$svc" =~ $SERVICE_RE ]] || die "非法的服务名: $svc"
 
 unit="/etc/systemd/system/$svc"
 
@@ -162,6 +190,6 @@ EOF
     echo "env set for $svc"
     ;;
   *)
-    die "未知操作: $action(应为 install|uninstall|status|set-env|preflight)"
+    die "未知操作: $action(应为 install|uninstall|status|set-env|start|stop|restart|preflight)"
     ;;
 esac
