@@ -27,6 +27,7 @@ import {
   type SystemdAction
 } from "../service/runner_scan";
 import { readRunnerDiag } from "../service/runner_logs";
+import { readRunnerEnv, writeRunnerEnv, type EnvTarget } from "../service/runner_env";
 
 // 扫描磁盘上真实存在的 runner：读 .runner 拿仓库归属，读 .service 查 systemd 状态。
 // 只读，不建实例——跟 runner/collect 的区别就在这里。
@@ -133,6 +134,31 @@ routerApp.on("runner/service_control", async (ctx, data) => {
     protocol.msg(ctx, "runner/service_control", await controlService(service, action));
   } catch (err: any) {
     protocol.error(ctx, "runner/service_control", { err: err?.message || String(err) });
+  }
+});
+
+// 读 runner 两个目标的环境变量（override.conf 与 .env）——均只读、免 sudo
+routerApp.on("runner/env_get", (ctx, data) => {
+  try {
+    protocol.msg(ctx, "runner/env_get", readRunnerEnv(String(data?.dir || "")));
+  } catch (err: any) {
+    protocol.error(ctx, "runner/env_get", { err: err?.message || String(err) });
+  }
+});
+
+// 设置 runner 某目标的环境变量。target=override 写 systemd drop-in（走特权助手 + daemon-reload）；
+// target=dotenv 直接写 <dir>/.env。两者都不重启；生效由面板另走 service_control 的 restart。
+routerApp.on("runner/env_set", async (ctx, data) => {
+  try {
+    const target: EnvTarget = data?.target === "dotenv" ? "dotenv" : "override";
+    const result = await writeRunnerEnv(String(data?.dir || ""), target, {
+      upsert: data?.upsert,
+      remove: data?.remove,
+      replace: Boolean(data?.replace)
+    });
+    protocol.msg(ctx, "runner/env_set", result);
+  } catch (err: any) {
+    protocol.error(ctx, "runner/env_set", { err: err?.message || String(err) });
   }
 });
 

@@ -516,6 +516,99 @@ router.post(
 );
 
 // [Top-level Permission]
+// 读某 runner 当前托管的环境变量（override.conf）
+router.post(
+  "/env_get",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/env_get",
+        ctx.request.body,
+        30000
+      );
+      ctx.body = result;
+    } catch (err) {
+      ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
+// 设置某 runner 的环境变量（写 systemd drop-in + daemon-reload；不重启）
+router.post(
+  "/env_set",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/env_set",
+        ctx.request.body,
+        90000
+      );
+      ctx.body = result;
+    } catch (err) {
+      ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
+// 批量设置多个 runner 的环境变量。panel 侧有界并发扇出到单个 env_set；默认 merge（保留各自
+// 已有变量，只增改 upsert、删除 remove），避免把每台不同的 DEVICE_ID 抹平。逐个 catch 汇总结果。
+router.post(
+  "/env_set_batch",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const body = (ctx.request.body || {}) as {
+        dirs?: string[];
+        target?: "override" | "dotenv";
+        upsert?: Array<{ key: string; value: string }>;
+        remove?: string[];
+        replace?: boolean;
+        concurrency?: number;
+      };
+      const dirs = (Array.isArray(body.dirs) ? body.dirs : []).map((d) => String(d)).filter(Boolean);
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+
+      const results = await mapWithConcurrency(
+        dirs,
+        clampConcurrency(body.concurrency),
+        async (dir) => {
+          try {
+            const r = await new RemoteRequest(remoteService).request(
+              "runner/env_set",
+              { dir, target: body.target, upsert: body.upsert, remove: body.remove, replace: body.replace },
+              90000
+            );
+            // ...r 在前：RunnerEnvResult 自带规范化过的 dir，展开在后会覆盖请求用的 dir，
+            // 前端靠 dir 回连结果（失败项名称、重启目标），键必须保持与请求一致。
+            return { ...r, dir, ok: true };
+          } catch (err: any) {
+            return { dir, ok: false, error: err?.message || String(err) };
+          }
+        }
+      );
+      ctx.body = { results };
+    } catch (err: unknown) {
+      // 保持批量接口的 { results } 契约：前端读 results，不能静默返回空对象而误报成功
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(msg);
+      ctx.body = { results: [], error: msg };
+    }
+  }
+);
+
+// [Top-level Permission]
 // 启停 systemd 托管的 runner
 router.post(
   "/service_control",
