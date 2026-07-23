@@ -11,9 +11,13 @@
 #
 # 用法：ci-panel-runner-svc install|uninstall|status <runner 目录绝对路径>
 #      ci-panel-runner-svc set-env <runner 目录绝对路径> <base64(每行 KEY=VALUE)>
+#      ci-panel-runner-svc preflight   （无副作用自检，回显版本与根目录）
 set -euo pipefail
 
-ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；按需改
+# 改动本脚本的行为时同步 +1，好让部署自检认出机器上装的是旧版本。
+VERSION=1
+
+ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；由 install-runner-privileges.sh 按需改写
 
 action="${1:-}"
 dir_in="${2:-}"
@@ -25,7 +29,17 @@ die() {
 
 arg3="${3:-}"
 
-[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status|set-env <runner 目录> [载荷]"
+# preflight：无副作用自检。部署脚本(和 daemon)据此确认三件事——免密确实生效、装的是最新版
+# 脚本、脚本的 ALLOWED_ROOT 与 daemon 的 CIP_SCAN_ROOTS 一致。不碰 systemd、不碰任何 runner
+# 目录，所以不需要目录参数，必须放在下面的目录校验之前。
+if [ "$action" = "preflight" ]; then
+  echo "ok"
+  echo "version=$VERSION"
+  echo "allowed_root=$ALLOWED_ROOT"
+  exit 0
+fi
+
+[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status|set-env <runner 目录> [载荷] | preflight"
 
 # 规范化并校验目录
 dir="$(readlink -f -- "$dir_in")" || die "无法解析目录: $dir_in"
@@ -148,6 +162,6 @@ EOF
     echo "env set for $svc"
     ;;
   *)
-    die "未知操作: $action(应为 install|uninstall|status|set-env)"
+    die "未知操作: $action(应为 install|uninstall|status|set-env|preflight)"
     ;;
 esac

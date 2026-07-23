@@ -1,0 +1,23 @@
+# CI Panel：允许 daemon(ci-runner) 免密启停 runner 的 systemd 单元。
+# 装到 /etc/sudoers.d/ci-panel-runner（务必 root 所有、0440、用 visudo -c 校验）。
+#
+# 不要手动装：跑 `sudo bash prod-scripts/install-runner-privileges.sh`。它会把下面的用户名和
+# systemctl 路径按实际部署替换掉、visudo 校验后落盘，并端到端验证免密真的生效。
+#
+# 安全要点：
+#   - 只放行 start/stop/restart 三个动作，不放行 enable/disable/mask/daemon-reload
+#     ——装卸单元一律走 ci-panel-runner-svc 助手（见 ci-panel-runner-install.sudoers），
+#     那里对目录和单元名有完整校验；
+#   - 单元名限定 actions.runner.*.service，与 daemon 侧 controlService 的正则
+#     ^actions\.runner\.[A-Za-z0-9._@-]+\.service$ 对齐（daemon/src/service/runner_scan.ts）；
+#   - 用绝对路径 /usr/bin/systemctl，与 daemon 里的 SYSTEMCTL 常量一致。写成裸 systemctl
+#     会让 sudo 按 PATH 解析，等于把提权面交给环境变量。
+#
+# 注意：daemon 调用时用的是 sudo -n(非交互)，所以这里少一条规则不会「提示输入密码」，
+# 而是直接失败并在面板报「sudo 免密未配置」。
+ci-runner ALL=(root) NOPASSWD: /usr/bin/systemctl start actions.runner.*.service, \
+                               /usr/bin/systemctl stop actions.runner.*.service, \
+                               /usr/bin/systemctl restart actions.runner.*.service
+
+# 若 daemon 以其他用户运行，把上面的 ci-runner 换成该用户；扫描根由 CIP_SCAN_ROOTS 控制，
+# 需与 ci-panel-runner-svc 里的 ALLOWED_ROOT 保持一致。

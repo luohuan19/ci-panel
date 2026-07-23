@@ -27,17 +27,53 @@ import {
 } from "./runner_marker";
 import {
   ensureHandleInstance,
+  queryHelperPreflight,
   removeGithubRegistration,
   uninstallSystemdService
 } from "./runner_provision";
 
 const SYSTEMCTL = "/usr/bin/systemctl";
 
-// 默认扫描根（可用环境变量 CIP_SCAN_ROOTS 覆盖，逗号分隔）
-const DEFAULT_ROOTS = (process.env.CIP_SCAN_ROOTS || "/data/ci-runner")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+// ---- 扫描根 ----
+// 唯一真相源是特权助手的 ALLOWED_ROOT：那是 root 侧真正的边界，daemon 这边声明得再宽也没用，
+// 只会把失败推迟到「runner 已经注册到 GitHub」之后（provision 的第 4 步才调助手）。所以启动时
+// 向助手要一次(initRunnerRoots)，拿不到才退回环境变量——开发机没装助手/没配免密属正常。
+const FALLBACK_ROOTS = "/data/ci-runner";
+
+function parseRoots(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => path.normalize(s.trim()))
+    .filter(Boolean);
+}
+
+let runnerRoots: string[] = parseRoots(process.env.CIP_SCAN_ROOTS || FALLBACK_ROOTS);
+
+// daemon 启动时调一次。同步执行：assertUnderRoots 是同步的、且会被 HTTP 请求调用，
+// 必须在开始服务之前就定下来，不能让前几个请求用着回退值。
+export function initRunnerRoots(): void {
+  const pre = queryHelperPreflight();
+  if (!pre) {
+    logger.warn(
+      `[runner-scan] 取不到特权助手的 ALLOWED_ROOT，暂用 ${runnerRoots.join(", ")}。` +
+        `创建 runner 时若被助手拒绝，请跑 prod-scripts/install-runner-privileges.sh`
+    );
+    return;
+  }
+  const helperRoots = parseRoots(pre.allowedRoot);
+  // 助手只有一个根，CIP_SCAN_ROOTS 却是列表。历史上多写的根从来就装不上服务(助手会拒)，
+  // 所以这里以助手为准同时也修掉了那个不一致，但要说清楚是哪些根被丢掉了。
+  const envRaw = process.env.CIP_SCAN_ROOTS;
+  if (envRaw && parseRoots(envRaw).join(",") !== helperRoots.join(",")) {
+    logger.warn(
+      `[runner-scan] CIP_SCAN_ROOTS(${parseRoots(envRaw).join(", ")}) 与助手的 ` +
+        `ALLOWED_ROOT(${helperRoots.join(", ")}) 不一致，以助手为准。` +
+        `要改扫描根请跑 prod-scripts/install-runner-privileges.sh --root <路径>`
+    );
+  }
+  runnerRoots = helperRoots;
+  logger.info(`[runner-scan] 扫描根取自特权助手(v${pre.version}): ${runnerRoots.join(", ")}`);
+}
 
 // 布局是 <root>/<仓库目录>/<runner 目录>，两层足够；再深就是 runner 自己的 bin/_work 了
 const MAX_DEPTH = 2;
@@ -214,12 +250,20 @@ function collectFromRoots(roots?: string[]): {
   dirs: string[];
   errors: ScanResult["errors"];
 } {
-  const scanRoots = (roots?.length ? roots : DEFAULT_ROOTS).map((r) => path.normalize(r.trim()));
+  const scanRoots = (roots?.length ? roots : runnerRoots).map((r) => path.normalize(r.trim()));
   const errors: ScanResult["errors"] = [];
   const dirs: string[] = [];
   for (const root of scanRoots) {
     if (!path.isAbsolute(root) || root === "/") {
       errors.push({ dir: root, error: "扫描根必须是绝对路径且不能是 /" });
+      continue;
+    }
+    // 调用方（最终是前端）可以指定更窄的根，但绝不能指定扫描根之外的——否则这个接口
+    // 就成了「让 daemon 枚举任意目录下的 .runner 并回读其内容」的通道。只许收窄，不许放宽。
+    try {
+      assertUnderRoots(root);
+    } catch (err: any) {
+      errors.push({ dir: root, error: err?.message || String(err) });
       continue;
     }
     if (!fs.existsSync(root)) {
@@ -494,9 +538,10 @@ export function unregisterRunner(dirRaw: string): UnregisterResult {
 }
 
 // ---- 基目录选择器：浏览 / 新建目录（供前端创建 runner 时挑基目录）----
-// 严格限制在扫描根(CIP_SCAN_ROOTS)之下，绝不让前端浏览/创建到整个文件系统。
+// 严格限制在扫描根之下，绝不让前端浏览/创建到整个文件系统。扫描根见文件顶部的 runnerRoots：
+// 正常部署下它等于助手的 ALLOWED_ROOT，所以这里放行的目录助手一定也放行。
 
-const scanRoots = () => DEFAULT_ROOTS.map((r) => path.normalize(r));
+const scanRoots = () => [...runnerRoots];
 
 export function assertUnderRoots(target: string) {
   if (!path.isAbsolute(target)) throw new Error("路径必须是绝对路径");
@@ -570,12 +615,13 @@ export async function deleteRunner(
   const dir = path.normalize(String(dirRaw || ""));
   // 严格校验：绝对路径、非根、必须在扫描根下、且看起来确实是 runner 目录——绝不误删别处
   if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
-  const roots = (process.env.CIP_SCAN_ROOTS || "/data/ci-runner")
-    .split(",")
-    .map((r) => path.normalize(r.trim()))
-    .filter(Boolean);
-  if (!roots.some((root) => dir === root || dir.startsWith(root + path.sep)))
-    throw new Error(`拒绝删除扫描根之外的目录: ${dir}`);
+  // 走共享的 assertUnderRoots，别再从环境变量重推一份：扫描根的真相源是助手的 ALLOWED_ROOT，
+  // 各自推各自的会让这条删除路径和其余路径的边界不一致。
+  try {
+    assertUnderRoots(dir);
+  } catch (err: any) {
+    throw new Error(`拒绝删除扫描根之外的目录: ${dir}（${err?.message || String(err)}）`);
+  }
   if (!fs.existsSync(path.join(dir, ".runner")) && !fs.existsSync(path.join(dir, ".cipanel")))
     throw new Error("不是 runner 目录（无 .runner / .cipanel），拒绝删除");
 

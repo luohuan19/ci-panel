@@ -1,6 +1,9 @@
 # CI Panel：允许 daemon(ci-runner) 免密调用装/卸 runner systemd 服务的专用小助手。
 # 装到 /etc/sudoers.d/ci-panel-runner-install（务必 root 所有、0440、用 visudo -c 校验）。
 #
+# 不要手动装：跑 `sudo bash prod-scripts/install-runner-privileges.sh`。它会把下面的用户名和
+# 助手路径按实际部署替换掉、visudo 校验后落盘，并端到端验证免密真的生效。
+#
 # 安全要点：只放行 /usr/local/sbin/ci-panel-runner-svc 这一个 root 所有、ci-runner 不可写的脚本，
 # 不放行 cp/tee/svc.sh 等——那些会让 ci-runner 借 NOPASSWD 变相拿到任意 root。
 ci-runner ALL=(root) NOPASSWD: /usr/local/sbin/ci-panel-runner-svc
