@@ -237,7 +237,7 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
 }
 
 // 特权小助手路径（root 所有、ci-runner 不可写；见 prod-scripts/ci-panel-runner-svc）。可用环境变量覆盖。
-const RUNNER_SVC_HELPER =
+export const RUNNER_SVC_HELPER =
   process.env.CIP_RUNNER_SVC_HELPER || "/usr/local/sbin/ci-panel-runner-svc";
 
 // 把 runner 装成 systemd 服务并 enable+start。daemon 非 root，走 sudo -n 调用只放行了 helper 的白名单。

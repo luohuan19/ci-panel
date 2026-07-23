@@ -10,6 +10,7 @@
 #   - 目录必须在白名单根下且含 .runner，服务名严格校验。
 #
 # 用法：ci-panel-runner-svc install|uninstall|status <runner 目录绝对路径>
+#      ci-panel-runner-svc set-env <runner 目录绝对路径> <base64(每行 KEY=VALUE)>
 set -euo pipefail
 
 ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；按需改
@@ -22,7 +23,9 @@ die() {
   exit 1
 }
 
-[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status <runner 目录>"
+arg3="${3:-}"
+
+[ -n "$action" ] && [ -n "$dir_in" ] || die "用法: $0 install|uninstall|status|set-env <runner 目录> [载荷]"
 
 # 规范化并校验目录
 dir="$(readlink -f -- "$dir_in")" || die "无法解析目录: $dir_in"
@@ -102,7 +105,49 @@ EOF
   status)
     systemctl is-active "$svc" 2>/dev/null || true
     ;;
+  set-env)
+    # 给 runner 的 systemd 单元写 drop-in 环境变量（复刻手动的 override.conf 做法）。
+    # 载荷 = base64(每行一条 KEY=VALUE)，走 argv 传入：sudo 可审计、无 shell 元字符问题。
+    # 本脚本只把载荷当「数据」渲染进 Environment=，绝不执行它——延续"绝不执行 runner
+    # 目录内容"的提权红线。变量名严格白名单、值转义后用双引号包裹，防注入越权到别的指令。
+    [ -f "$dir/.service" ] && [ -s "$dir/.service" ] || die "该 runner 未装 systemd 服务，无法设置环境变量"
+    dropin_dir="/etc/systemd/system/$svc.d"
+    decoded="$(printf '%s' "$arg3" | base64 -d 2>/dev/null)" || die "env 载荷 base64 解码失败"
+    if [ -z "$decoded" ]; then
+      # 空载荷 = 清空面板托管的所有环境变量：移除本 drop-in
+      rm -f "$dropin_dir/override.conf"
+      rmdir "$dropin_dir" 2>/dev/null || true
+      systemctl daemon-reload
+      echo "env cleared for $svc"
+      exit 0
+    fi
+    tmp="$(mktemp)" || die "mktemp 失败"
+    trap 'rm -f "$tmp"' EXIT
+    printf '[Service]\n' > "$tmp"
+    # 先用空 Environment= 重置，避免历史残留（整份覆盖本就干净，这是双保险）
+    printf 'Environment=\n' >> "$tmp"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -z "$line" ] && continue
+      key="${line%%=*}"
+      val="${line#*=}"
+      printf '%s' "$key" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$' || die "非法环境变量名: $key"
+      # 值按行读取，天然不含换行；转义反斜杠与双引号后放进 Environment="K=V"。
+      # 末尾再把 % 写成 %%：systemd 对 Environment= 做说明符展开，字面 % 不转义会被当成
+      # 未知说明符导致整个 unit 解析失败（如代理密码里 URL 编码的 %40）。读回时 daemon 侧还原。
+      esc_val="$(printf '%s' "$val" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')"
+      printf 'Environment="%s=%s"\n' "$key" "$esc_val" >> "$tmp"
+    done <<EOF
+$decoded
+EOF
+    mkdir -p "$dropin_dir"
+    install -m 0644 -o root -g root "$tmp" "$dropin_dir/override.conf" || die "写 override.conf 失败"
+    rm -f "$tmp"
+    trap - EXIT
+    # 只 daemon-reload 让 systemd 重读单元；重启由面板另走已白名单的 restart（带 busy 拦截）。
+    systemctl daemon-reload
+    echo "env set for $svc"
+    ;;
   *)
-    die "未知操作: $action(应为 install|uninstall|status)"
+    die "未知操作: $action(应为 install|uninstall|status|set-env)"
     ;;
 esac

@@ -5,4 +5,6 @@
 # 不放行 cp/tee/svc.sh 等——那些会让 ci-runner 借 NOPASSWD 变相拿到任意 root。
 ci-runner ALL=(root) NOPASSWD: /usr/local/sbin/ci-panel-runner-svc
 
-# 说明：runner 的启停(start/stop/restart actions.runner.*.service)已由既有白名单放行，这里只补"装/卸"。
+# 说明：runner 的启停(start/stop/restart actions.runner.*.service)已由既有白名单放行；本脚本
+# 覆盖"装/卸/查状态/设环境变量(set-env 写 systemd drop-in)"。sudoers 不限参数，故新增动作无需改这里，
+# 但脚本更新后要重新部署到 /usr/local/sbin。set-env 只写 override.conf + daemon-reload，不重启。

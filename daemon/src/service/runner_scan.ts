@@ -498,7 +498,7 @@ export function unregisterRunner(dirRaw: string): UnregisterResult {
 
 const scanRoots = () => DEFAULT_ROOTS.map((r) => path.normalize(r));
 
-function assertUnderRoots(target: string) {
+export function assertUnderRoots(target: string) {
   if (!path.isAbsolute(target)) throw new Error("路径必须是绝对路径");
   const roots = scanRoots();
   if (!roots.some((r) => target === r || target.startsWith(r + path.sep)))

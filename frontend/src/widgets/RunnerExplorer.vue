@@ -7,7 +7,7 @@
 //
 // 层级用 query 参数（?node=&repo=）而不是 path 参数：这个组件是卡片，寄居在 /instances 页面下，
 // 没有自己的路由段。用 query 仍然保住了刷新、后退和分享链接的能力。
-import { computed, h, onMounted, onUnmounted, ref } from "vue";
+import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { message, Modal } from "ant-design-vue";
 import {
@@ -18,8 +18,10 @@ import {
   DownOutlined,
   ExclamationCircleOutlined,
   PauseCircleOutlined,
+  PlusOutlined,
   ReloadOutlined,
   RightOutlined,
+  SettingOutlined,
   WarningOutlined
 } from "@ant-design/icons-vue";
 import BetweenMenus from "@/components/BetweenMenus.vue";
@@ -33,7 +35,11 @@ import {
   controlRunnerService,
   controlRunnerServiceBatch,
   deleteRunnerBatch,
-  type DeleteRunnerResult
+  getRunnerEnv,
+  setRunnerEnvBatch,
+  type DeleteRunnerResult,
+  type RunnerEnvVar,
+  type EnvTarget
 } from "@/services/apis/runner";
 import DeleteResultView from "./DeleteResultView.vue";
 import { remoteNodeList } from "@/services/apis";
@@ -52,7 +58,6 @@ const { execute: control } = controlRunnerService();
 // 节点系统信息（CPU/内存用量 + 走势图）：复用概览接口，它自带 3 秒轮询与卸载清理。
 // remoteNodeList 只给 available/ip/port/remarks/uuid，没有系统指标，所以两边按 uuid 合并。
 const { state: AllDaemonData } = useOverviewInfo();
-
 
 const daemonId = computed(() => (route.query.node as string) || "");
 const repoSlug = computed(() => (route.query.repo as string) || "");
@@ -276,11 +281,7 @@ function batchControl(action: "stop" | "restart") {
     onOk: () => doBatchControl(action, withSvc, label)
   });
 }
-async function doBatchControl(
-  action: "stop" | "restart",
-  withSvc: RepoRunner[],
-  label: string
-) {
+async function doBatchControl(action: "stop" | "restart", withSvc: RepoRunner[], label: string) {
   batchControlling.value = true;
   try {
     const { execute, state } = controlRunnerServiceBatch();
@@ -309,6 +310,140 @@ async function doBatchControl(
   } finally {
     batchControlling.value = false;
   }
+}
+
+// ---- 批量设置环境变量（并行；默认 merge，保留各 runner 已有变量如各自 DEVICE_ID）----
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const envBatchOpen = ref(false);
+const envBatchSaving = ref(false);
+const envBatchTarget = ref<EnvTarget>("override"); // 写哪个目标：override.conf 或 .env
+const envUpsert = ref<RunnerEnvVar[]>([]);
+const envRemoveKeys = ref<string[]>([]);
+const envBatchLoading = ref(false); // 打开弹窗时拉各 runner 现有变量名（供"删除"下拉选项）
+// 各 runner 现有的变量名，按目标分：{ dir: { override: [...], dotenv: [...] } }
+const envKeysByDir = ref<Record<string, { override: string[]; dotenv: string[] }>>({});
+// 目标能落到哪些 runner：override 需要 systemd 服务，无服务的会被跳过；dotenv 每个 runner 都能写。
+const envBatchTargets = computed(() =>
+  envBatchTarget.value === "override"
+    ? selectedRunners.value.filter((r) => r.service)
+    : selectedRunners.value
+);
+// "要删除的变量"下拉选项：当前目标下、所有目标 runner 现有变量名的并集（用户只从存在的里选，不手输新建）
+const envRemovableKeys = computed(() => {
+  const set = new Set<string>();
+  for (const r of envBatchTargets.value) {
+    const entry = envKeysByDir.value[r.dir];
+    if (!entry) continue;
+    for (const k of envBatchTarget.value === "override" ? entry.override : entry.dotenv) set.add(k);
+  }
+  return Array.from(set).sort();
+});
+// 拉取选中 runner 的现有变量名（两目标都取，切换目标时无需重拉）。并行、逐个失败不影响其余。
+async function loadBatchEnvKeys() {
+  envBatchLoading.value = true;
+  const byDir: Record<string, { override: string[]; dotenv: string[] }> = {};
+  try {
+    await Promise.all(
+      selectedRunners.value.map(async (r) => {
+        try {
+          const { execute, state } = getRunnerEnv();
+          await execute({ params: { daemonId: daemonId.value }, data: { dir: r.dir } });
+          byDir[r.dir] = {
+            override: (state.value?.override?.vars || []).map((v) => v.key),
+            dotenv: (state.value?.dotenv?.vars || []).map((v) => v.key)
+          };
+        } catch {
+          byDir[r.dir] = { override: [], dotenv: [] };
+        }
+      })
+    );
+    envKeysByDir.value = byDir;
+  } finally {
+    envBatchLoading.value = false;
+  }
+}
+// 切目标时，丢掉已选但在新目标下不存在的删除项（避免删一个该目标没有的 key）
+watch(envBatchTarget, () => {
+  const allowed = new Set(envRemovableKeys.value);
+  envRemoveKeys.value = envRemoveKeys.value.filter((k) => allowed.has(k));
+});
+function openBatchEnv() {
+  if (!selectedDirs.value.length) return message.warning("请先勾选 runner");
+  envBatchTarget.value = "override";
+  envUpsert.value = [{ key: "", value: "" }];
+  envRemoveKeys.value = [];
+  envKeysByDir.value = {};
+  envBatchOpen.value = true;
+  void loadBatchEnvKeys();
+}
+function addEnvUpsertRow() {
+  envUpsert.value.push({ key: "", value: "" });
+}
+function removeEnvUpsertRow(i: number) {
+  envUpsert.value.splice(i, 1);
+}
+async function doBatchEnv() {
+  const rows = envUpsert.value
+    .map((v) => ({ key: v.key.trim(), value: v.value }))
+    .filter((v) => v.key);
+  const removeKeys = envRemoveKeys.value.map((k) => k.trim()).filter(Boolean);
+  if (!rows.length && !removeKeys.length) return message.warning("没有要增改或删除的变量");
+  const bad = [...rows.map((v) => v.key), ...removeKeys].find((k) => !ENV_KEY_RE.test(k));
+  if (bad) return message.error(`非法变量名：${bad}（只能字母数字下划线，且不以数字开头）`);
+  const keys = rows.map((v) => v.key);
+  if (new Set(keys).size !== keys.length) return message.error("有重复的变量名");
+
+  const targets = envBatchTargets.value;
+  if (!targets.length)
+    return message.warning("没有可写入的 runner（override 目标需要 systemd 服务）");
+  envBatchSaving.value = true;
+  try {
+    const { execute, state } = setRunnerEnvBatch();
+    await execute({
+      params: { daemonId: daemonId.value },
+      // merge 语义：只增改 upsert、删除 removeKeys，保留各 runner 其余变量
+      data: {
+        dirs: targets.map((r) => r.dir),
+        target: envBatchTarget.value,
+        upsert: rows,
+        remove: removeKeys,
+        replace: false
+      }
+    });
+    const results = state.value?.results || [];
+    const ok = results.filter((r) => r.ok).length;
+    const fail = results.length - ok;
+    envBatchOpen.value = false;
+    if (fail === 0) message.success(`环境变量已写入：成功 ${ok} 个`);
+    else {
+      const failNames = results
+        .filter((r) => !r.ok)
+        .map((r) => targets.find((x) => x.dir === r.dir)?.agentName || r.dir);
+      message.warning(`写入完成：成功 ${ok} 个，失败 ${fail} 个（${failNames.join("、")}）`);
+    }
+    // 环境变量需重启单元生效——提示批量重启（正在跑 job 的会中断，二次确认）
+    if (ok > 0)
+      promptBatchRestart(targets.filter((r) => results.find((x) => x.dir === r.dir && x.ok)));
+  } catch (err: any) {
+    message.error("批量设置环境变量失败：" + (err?.message || err));
+  } finally {
+    envBatchSaving.value = false;
+  }
+}
+function promptBatchRestart(targets: RepoRunner[]) {
+  if (!targets.length) return;
+  const busyCount = targets.filter((r) => r.busy).length;
+  const lines = [`环境变量已写入，需重启单元才生效。将重启 ${targets.length} 个 runner。`];
+  if (busyCount > 0) lines.push(`其中 ${busyCount} 个正在跑 job，重启会当场中断这些 CI 任务！`);
+  Modal.confirm({
+    title: "重启使环境变量生效？",
+    icon: () => h(ExclamationCircleOutlined),
+    content: lines.join(" "),
+    okText: "立即重启",
+    okType: busyCount > 0 ? "danger" : "primary",
+    cancelText: "稍后手动重启",
+    onOk: () => doBatchControl("restart", targets, "重启")
+  });
 }
 
 // ---- 批量删除选中的 runner（并行；共用一个 GitHub 删除 token）----
@@ -383,9 +518,7 @@ const goRepo = (slug: string) =>
           <template #right>
             <a-space>
               <a-button @click="openImport()"><DatabaseOutlined /> 导入 runner</a-button>
-              <a-button :loading="isLoading" @click="load()">
-                <ReloadOutlined /> 刷新
-              </a-button>
+              <a-button :loading="isLoading" @click="load()"> <ReloadOutlined /> 刷新 </a-button>
             </a-space>
           </template>
         </BetweenMenus>
@@ -567,6 +700,10 @@ const goRepo = (slug: string) =>
                     <ReloadOutlined /> 重启
                   </a-menu-item>
                   <a-menu-divider />
+                  <a-menu-item key="env" @click="openBatchEnv">
+                    <SettingOutlined /> 设置环境变量
+                  </a-menu-item>
+                  <a-menu-divider />
                   <a-menu-item key="delete" danger @click="openBatchDelete">
                     <DeleteOutlined /> 删除
                   </a-menu-item>
@@ -643,7 +780,9 @@ const goRepo = (slug: string) =>
           <a-table-column key="action" title="操作" :width="260" fixed="right">
             <template #default="{ record }">
               <a-space>
-                <a-button size="small" type="primary" ghost @click="goDetail(record)">详情</a-button>
+                <a-button size="small" type="primary" ghost @click="goDetail(record)">
+                  详情
+                </a-button>
                 <template v-if="record.service">
                   <a-button
                     v-if="!record.running"
@@ -685,6 +824,77 @@ const goRepo = (slug: string) =>
     <!-- 导入既有 runner：扫描节点磁盘 → 勾选 → 写 .cipanel 纳管 -->
     <ImportRunnerDialog ref="importDialog" @imported="load()" />
 
+    <!-- 批量设置环境变量弹窗（merge：增改 upsert、删除 removeKeys，保留各自其余变量）-->
+    <a-modal
+      v-model:open="envBatchOpen"
+      :title="`批量设置环境变量（${envBatchTargets.length} 个 runner）`"
+      :width="600"
+      ok-text="写入并提示重启"
+      :ok-button-props="{ loading: envBatchSaving }"
+      cancel-text="取消"
+      @ok="doBatchEnv"
+    >
+      <a-radio-group v-model:value="envBatchTarget" style="margin-bottom: 12px">
+        <a-radio-button value="override">systemd（override.conf）</a-radio-button>
+        <a-radio-button value="dotenv">运行时 .env</a-radio-button>
+      </a-radio-group>
+      <a-alert
+        type="info"
+        show-icon
+        style="margin-bottom: 12px"
+        :message="
+          envBatchTarget === 'override'
+            ? '合并写入 systemd 单元的 Environment=（进监听进程）：只增改下方变量、删除指定变量名，各 runner 其余变量（如各自的 DEVICE_ID）保持不变。代理这类要让 runner 连上 GitHub 的变量必须写在这里。写入后需重启单元生效。'
+            : '合并写入 runner 目录的 .env（只进 job/step）：只增改下方变量、删除指定变量名，各 runner 其余变量保持不变。设备号、库路径这类放这里。写入后需重启单元生效。'
+        "
+      />
+      <a-alert
+        v-if="envBatchTarget === 'override' && selectedRunners.length > envBatchTargets.length"
+        type="warning"
+        show-icon
+        style="margin-bottom: 12px"
+        :message="`选中的 ${selectedRunners.length} 个里有 ${selectedRunners.length - envBatchTargets.length} 个没有 systemd 服务，将被跳过。`"
+      />
+      <a-typography-text strong>增改变量（upsert）</a-typography-text>
+      <div style="margin-top: 8px">
+        <div v-for="(row, i) in envUpsert" :key="i" class="env-row">
+          <a-input v-model:value="row.key" placeholder="变量名，如 HTTP_PROXY" class="env-key" />
+          <span class="env-eq">=</span>
+          <a-input
+            v-model:value="row.value"
+            placeholder="值，如 http://127.0.0.1:7890"
+            class="env-val"
+          />
+          <a-button type="text" danger size="small" @click="removeEnvUpsertRow(i)">
+            <DeleteOutlined />
+          </a-button>
+        </div>
+        <a-button type="dashed" block size="small" style="margin-top: 4px" @click="addEnvUpsertRow">
+          <PlusOutlined /> 添加变量
+        </a-button>
+      </div>
+      <a-form layout="vertical" style="margin-top: 16px">
+        <a-form-item label="要删除的变量名（可选）">
+          <a-select
+            v-model:value="envRemoveKeys"
+            mode="multiple"
+            style="width: 100%"
+            :loading="envBatchLoading"
+            :options="envRemovableKeys.map((k) => ({ value: k, label: k }))"
+            :placeholder="
+              envRemovableKeys.length
+                ? '从选中 runner 现有的变量里选择要删除的（输入可过滤）'
+                : envBatchLoading
+                  ? '正在读取现有变量…'
+                  : '选中 runner 在该目标下暂无可删除的变量'
+            "
+            option-filter-prop="label"
+            :not-found-content="envBatchLoading ? '读取中…' : '无匹配变量'"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
     <!-- 批量删除选中 runner 确认弹窗 -->
     <a-modal
       v-model:open="batchOpen"
@@ -708,13 +918,19 @@ const goRepo = (slug: string) =>
         style="margin-bottom: 12px"
         :message="`其中 ${batchBusyCount} 个正在跑 job，删除会当场中断这些 CI 任务！`"
       />
-      <p style="margin-bottom: 8px">每个 runner 都会：停卸 systemd 服务 · 从 GitHub 注销 · 删除目录。</p>
+      <p style="margin-bottom: 8px">
+        每个 runner 都会：停卸 systemd 服务 · 从 GitHub 注销 · 删除目录。
+      </p>
       <a-form layout="vertical">
         <a-form-item label="GitHub 删除 token（可选，整批共用）">
-          <a-input v-model:value="batchToken" placeholder="留空则用该仓库已配置的 PAT 自动获取" allow-clear />
+          <a-input
+            v-model:value="batchToken"
+            placeholder="留空则用该仓库已配置的 PAT 自动获取"
+            allow-clear
+          />
           <div style="font-size: 12px; opacity: 0.6; margin-top: 4px">
-            没配 PAT 或面板连不上 GitHub 时，可从 GitHub 仓库 Settings → Actions → Runners 里复制删除
-            token 粘到这里。留空且取不到 token 时，仅本地删除、GitHub 上需手动移除。
+            没配 PAT 或面板连不上 GitHub 时，可从 GitHub 仓库 Settings → Actions → Runners
+            里复制删除 token 粘到这里。留空且取不到 token 时，仅本地删除、GitHub 上需手动移除。
           </div>
         </a-form-item>
       </a-form>
@@ -734,3 +950,21 @@ const goRepo = (slug: string) =>
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.env-key {
+  flex: 0 0 40%;
+}
+.env-eq {
+  opacity: 0.5;
+}
+.env-val {
+  flex: 1 1 auto;
+}
+</style>

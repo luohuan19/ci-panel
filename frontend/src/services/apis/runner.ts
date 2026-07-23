@@ -381,6 +381,77 @@ export const controlRunnerService = useDefineApi<
   method: "POST"
 });
 
+// ---- runner 环境变量：两个目标 ----
+//   override —— systemd drop-in override.conf 的 Environment=，进监听进程（代理放这里）
+//   dotenv   —— runner 目录的 .env，只进 job/step（设备号、库路径放这里）
+export type EnvTarget = "override" | "dotenv";
+
+export interface RunnerEnvVar {
+  key: string;
+  value: string;
+}
+
+// 单个目标文件的一节：是否存在 + 其中的变量
+export interface RunnerEnvSection {
+  present: boolean;
+  vars: RunnerEnvVar[];
+}
+
+export interface RunnerEnvResult {
+  dir: string;
+  service: string; // systemd 单元名，空 = 未装服务
+  hasSystemd: boolean; // 未装服务则不能写 override
+  override: RunnerEnvSection; // systemd drop-in（进监听进程）
+  dotenv: RunnerEnvSection; // .env（只进 job/step）
+}
+
+// 读某 runner 两个目标当前托管的环境变量（只读）
+export const getRunnerEnv = useDefineApi<
+  { params: { daemonId: string }; data: { dir: string } },
+  RunnerEnvResult
+>({
+  url: "/api/runner/env_get",
+  method: "POST"
+});
+
+// 设置某 runner 某目标的环境变量。replace=true 整表覆盖；否则合并（upsert 增改、remove 删除）。
+// override 走特权助手写盘 + daemon-reload；dotenv 直接写文件。均不重启；生效需另调 restart。
+export const setRunnerEnv = useDefineApi<
+  {
+    params: { daemonId: string };
+    data: {
+      dir: string;
+      target: EnvTarget;
+      upsert?: RunnerEnvVar[];
+      remove?: string[];
+      replace?: boolean;
+    };
+  },
+  RunnerEnvResult
+>({
+  url: "/api/runner/env_set",
+  method: "POST"
+});
+
+// 批量设置多个 runner 某目标的环境变量（panel 侧并行）。默认 merge，保留各自已有变量（如各台不同的 DEVICE_ID）。
+export const setRunnerEnvBatch = useDefineApi<
+  {
+    params: { daemonId: string };
+    data: {
+      dirs: string[];
+      target: EnvTarget;
+      upsert?: RunnerEnvVar[];
+      remove?: string[];
+      replace?: boolean;
+      concurrency?: number;
+    };
+  },
+  { results: Array<{ dir: string; ok: boolean; error?: string } & Partial<RunnerEnvResult>> }
+>({
+  url: "/api/runner/env_set_batch",
+  method: "POST"
+});
+
 // 批量启停/重启 systemd 托管的 runner（panel 侧并行执行，无 service 的项会被跳过）
 export const controlRunnerServiceBatch = useDefineApi<
   {
