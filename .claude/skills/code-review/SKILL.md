@@ -27,7 +27,7 @@ set of standards.
 
 | File | Applies to | Covers |
 | ---- | ---------- | ------ |
-| `.cursor/rules/core-project-conventions.mdc` | Everything | Package layout, minimal-change principle, English-only code and comments, no hardcoded user-facing text, full i18n conventions |
+| `.cursor/rules/core-project-conventions.mdc` | Everything | Package layout, minimal-change principle, English code identifiers (Chinese comments allowed), no hardcoded user-facing text, full i18n conventions |
 | `.cursor/rules/backend-daemon-panel-standards.mdc` | `daemon/src/**`, `panel/src/**` | Project logger over `console.*`, boundary validation for external resources, validating frontend-supplied args, cleanup for Maps/queues/Buffers |
 | `.cursor/rules/frontend-vue-component-standards.mdc` | `frontend/src/**/*.vue` | Vue 3 `<script setup lang="ts">`, props and one-way data flow, extracting hooks, splitting large templates |
 
@@ -105,7 +105,8 @@ for consumers to see type changes.
 - **Stale `common/` consumer**: shared type changed, but only one of three consumers updated
 - **Leaked internals**: internal IP, proxy address, private repo name, or machine naming in a public repo
 - **Missing cleanup**: a `setInterval`, event listener, or Map that grows without bound
-- **Non-English comments**: the project requires English throughout
+- **Mixed-language comments in one file**: comments may be Chinese (the runner services and
+  `prod-scripts/` are), but do not mix both languages in a single file — match what is there
 
 ## Output format
 

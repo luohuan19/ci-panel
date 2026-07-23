@@ -24,7 +24,8 @@ Read these before changing code — they are the authority, and the `.claude/`
 rules deliberately do not duplicate them:
 
 - `core-project-conventions.mdc` — package layout, minimal-change principle,
-  English-only code and comments, i18n conventions (`TXT_CODE_` keys, `t()`
+  English code identifiers (comments may be Chinese — match the file you edit),
+  i18n conventions (`TXT_CODE_` keys, `t()`
   single braces on the frontend, `$t()` double braces on the backend)
 - `backend-daemon-panel-standards.mdc` — project logger over `console.*`,
   boundary validation, validating frontend-supplied arguments, resource cleanup

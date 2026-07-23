@@ -14,6 +14,7 @@ import * as koa from "./service/http";
 import logger from "./service/log";
 import * as protocol from "./service/protocol";
 import * as router from "./service/router";
+import { initRunnerRoots } from "./service/runner_scan";
 import InstanceSubsystem from "./service/system_instance";
 import "./service/system_visual_data";
 import uploadManager from "./service/upload_manager";
@@ -59,6 +60,11 @@ if (fs.existsSync(LOCAL_PRESET_LANG_PATH)) {
   i18next.changeLanguage(lang);
 }
 logger.info($t("TXT_CODE_app.welcome"));
+
+// Resolve the runner scan root from the privileged helper before serving any request.
+// The helper's ALLOWED_ROOT is the real boundary; declaring a wider one here would only
+// delay the failure until after the runner is already registered on GitHub.
+initRunnerRoots();
 
 // Initialize HTTP service
 const koaApp = koa.initKoa();

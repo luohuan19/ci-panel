@@ -1,10 +1,21 @@
 # CI Panel：允许 daemon(ci-runner) 免密调用装/卸 runner systemd 服务的专用小助手。
 # 装到 /etc/sudoers.d/ci-panel-runner-install（务必 root 所有、0440、用 visudo -c 校验）。
 #
+# 不要手动装：跑 `sudo bash prod-scripts/install-runner-privileges.sh`。它会把下面的用户名和
+# 助手路径按实际部署替换掉、visudo 校验后落盘，并端到端验证免密真的生效。
+#
 # 安全要点：只放行 /usr/local/sbin/ci-panel-runner-svc 这一个 root 所有、ci-runner 不可写的脚本，
 # 不放行 cp/tee/svc.sh 等——那些会让 ci-runner 借 NOPASSWD 变相拿到任意 root。
 ci-runner ALL=(root) NOPASSWD: /usr/local/sbin/ci-panel-runner-svc
 
-# 说明：runner 的启停(start/stop/restart actions.runner.*.service)已由既有白名单放行；本脚本
-# 覆盖"装/卸/查状态/设环境变量(set-env 写 systemd drop-in)"。sudoers 不限参数，故新增动作无需改这里，
-# 但脚本更新后要重新部署到 /usr/local/sbin。set-env 只写 override.conf + daemon-reload，不重启。
+# 这是本项目唯一的一条 sudoers 规则。助手覆盖装/卸/查状态/设环境变量(set-env 写 systemd
+# drop-in)/启停(start|stop|restart)/preflight 自检。
+#
+# 为什么启停也收进助手，而不是单独放行 systemctl：sudoers 的命令参数通配符会匹配空白，且 sudo 是
+# 把参数拼成一整串来比对的，所以 `systemctl start actions.runner.*.service` 这条规则实际允许
+#   systemctl start actions.runner.x.service 任意其它单元
+# ——systemctl 接受多个单元名，一个 actions.runner 前缀就能把任意单元带上车。glob 排不掉空白，
+# 而 sudo 要到 1.9.10 才支持锚定正则。所以校验必须放在 root 拥有的助手脚本里（bash =~ 锚定整串）。
+#
+# sudoers 不限制参数，故助手新增动作无需改这里，但脚本更新后要重新部署到 /usr/local/sbin
+# （跑 install-runner-privileges.sh 即可，它会用 VERSION 认出旧版本）。

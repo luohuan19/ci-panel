@@ -240,6 +240,46 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
 export const RUNNER_SVC_HELPER =
   process.env.CIP_RUNNER_SVC_HELPER || "/usr/local/sbin/ci-panel-runner-svc";
 
+// catch 到的值类型是 unknown，取「可读文本」这件事在本模块和 runner_scan 里重复出现，
+// 统一收在这里narrow一次，避免各处退回 err: any。
+export function errText(err: unknown): string {
+  if (err instanceof Error) {
+    // execFileSync 的错误对象上挂着 stderr，比 message 更有信息量
+    const stderr = (err as Error & { stderr?: unknown }).stderr;
+    const detail = typeof stderr === "string" ? stderr.trim() : "";
+    return detail || err.message;
+  }
+  return String(err);
+}
+
+export interface HelperPreflight {
+  version: string;
+  allowedRoot: string; // 助手允许操作的根目录 —— root 侧真正的边界
+}
+
+// 向特权助手要一次自检信息。preflight 无副作用（不碰 systemd、不碰任何 runner 目录），
+// 所以可以在 daemon 启动时安全地调。拿不到就返回 null：开发机没装助手、没配免密都属正常，
+// 此时调用方退回环境变量即可。
+export function queryHelperPreflight(): HelperPreflight | null {
+  let out = "";
+  try {
+    out = String(
+      execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, "preflight"], {
+        encoding: "utf8",
+        timeout: 10000
+      })
+    );
+  } catch (err: unknown) {
+    // 免密未配、助手没装、助手是不认识 preflight 的旧版 —— 都归到「拿不到」
+    logger.warn(`[runner-provision] 助手 preflight 失败: ${errText(err)}`);
+    return null;
+  }
+  if (!/^ok$/m.test(out)) return null;
+  const allowedRoot = out.match(/^allowed_root=(.+)$/m)?.[1]?.trim() ?? "";
+  const version = out.match(/^version=(.+)$/m)?.[1]?.trim() ?? "";
+  return allowedRoot ? { version, allowedRoot } : null;
+}
+
 // 把 runner 装成 systemd 服务并 enable+start。daemon 非 root，走 sudo -n 调用只放行了 helper 的白名单。
 // 失败(尤其是未配免密 sudo)时抛 ProvisionError，带清晰指引。
 export function installSystemdService(dir: string): void {
