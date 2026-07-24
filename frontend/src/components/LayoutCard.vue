@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LayoutCard } from "@/types/index";
 import { LAYOUT_CARD_TYPES } from "@/config/index";
-import { onErrorCaptured, ref } from "vue";
+import { computed, onErrorCaptured, ref } from "vue";
 
 const props = defineProps<{
   card: LayoutCard;
@@ -11,6 +11,11 @@ const componentMap: { [key: string]: any } = LAYOUT_CARD_TYPES;
 
 const loadError = ref(false);
 const cardError = ref<Error>(new Error(""));
+
+// 一个已保存的布局可能引用了后来被删掉的卡片类型。此时 componentMap 取不到组件，
+// <component :is="undefined"> 只会在控制台警告并渲染成空节点，onErrorCaptured 也捕获不到
+// （那是警告而非抛错），结果就是一块无法排查的空白卡片。这里显式转成可见的错误卡片。
+const unknownType = computed(() => !componentMap[props.card.type]);
 
 onErrorCaptured((error: Error) => {
   console.error(`Card: ${props.card.id}-${props.card.type}-${props.card.title} Error:`, error);
@@ -27,12 +32,16 @@ onErrorCaptured((error: Error) => {
   >
     <component
       :is="componentMap[card.type]"
-      v-if="!loadError"
+      v-if="!loadError && !unknownType"
       style="height: 100%"
       :card="props.card"
     ></component>
 
-    <CardError v-else :error="cardError" :title="card.title"></CardError>
+    <CardError
+      v-else
+      :error="unknownType ? new Error(`Unknown card type: ${card.type}`) : cardError"
+      :title="card.title"
+    ></CardError>
   </div>
 </template>
 

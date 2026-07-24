@@ -85,6 +85,7 @@ declare module 'vue' {
     DownloadFileDialog: typeof import('./src/components/fc/DownloadFileDialog.vue')['default']
     Editor: typeof import('./src/components/Editor.vue')['default']
     Empty: typeof import('./src/components/Empty.vue')['default']
+    FadeUpAnimation: typeof import('./src/components/FadeUpAnimation.vue')['default']
     IconBtn: typeof import('./src/components/IconBtn.vue')['default']
     InnerCard: typeof import('./src/components/InnerCard.vue')['default']
     InputDialogProvider: typeof import('./src/components/InputDialogProvider.vue')['default']
