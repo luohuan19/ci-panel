@@ -63,8 +63,7 @@ const activeKey = ref<TabSettings>(TabSettings.Basic);
 
 const UPDATE_CMD_DESCRIPTION = t("TXT_CODE_fa487a47");
 const UPDATE_CMD_TEMPLATE =
-  t("TXT_CODE_61ca492b") +
-  '"C:/SteamCMD/steamcmd.exe" +login anonymous +force_install_dir "{mcsm_workspace}" "+app_update 380870 validate" +quit';
+  t("TXT_CODE_61ca492b") + 'cd "{mcsm_workspace}" && ./config.sh --check && ./run.sh --once';
 
 const title = computed(() => t("TXT_CODE_aac98b2a"));
 const { isPhone } = useScreen();

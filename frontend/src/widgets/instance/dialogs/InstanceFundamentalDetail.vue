@@ -36,8 +36,7 @@ const formRef = ref<FormInstance>();
 
 const updateCommandDesc = t("TXT_CODE_fa487a47");
 const UPDATE_CMD_TEMPLATE =
-  t("TXT_CODE_61ca492b") +
-  `"C:/SteamCMD/steamcmd.exe" +login anonymous +force_install_dir "{mcsm_workspace}" "+app_update 380870 validate" +quit`;
+  t("TXT_CODE_61ca492b") + `cd "{mcsm_workspace}" && ./config.sh --check && ./run.sh --once`;
 
 const initFormDetail = () => {
   if (props.instanceInfo) {
