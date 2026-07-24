@@ -238,38 +238,6 @@ declare global {
     disableDelete?: boolean;
   }
 
-  interface IQuickStartPackages {
-    language: string;
-    description: string;
-    title: string;
-    category: string;
-    runtime: string;
-    size: string;
-    hardware: string;
-    remark: string;
-    targetLink?: string;
-    author: string;
-    dockerOptional?: {
-      image: string;
-      updateCommandImage?: string;
-    };
-    setupInfo: IGlobalInstanceConfig;
-    gameType: string;
-    image: string;
-    platform: string;
-    tags?: string[];
-    isSummary?: boolean;
-    key?: string;
-  }
-
-  interface IQuickStartTemplate {
-    languages: {
-      label: string;
-      value: string;
-    }[];
-    packages: IQuickStartPackages[];
-  }
-
   export interface IBusinessProductInfo {
     productId: number;
     title: string;

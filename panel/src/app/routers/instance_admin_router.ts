@@ -2,7 +2,7 @@ import Router from "@koa/router";
 import axios from "axios";
 import fs from "fs-extra";
 import path from "path";
-import { MARKET_CACHE_FILE_PATH, SAVE_DIR_PATH } from "../const";
+import { SAVE_DIR_PATH } from "../const";
 import { ROLE } from "../entity/user";
 import { $t } from "../i18n";
 import permission from "../middleware/permission";
@@ -302,65 +302,6 @@ router.post("/multi_restart", permission({ level: ROLE.ADMIN }), async (ctx) => 
     ctx.body = true;
   } catch (err) {
     ctx.body = err;
-  }
-});
-
-// [Top-level Permission]
-// Get quick install list
-router.get("/quick_install_list", permission({ level: ROLE.USER }), async (ctx) => {
-  if (systemConfig?.allowUsePreset === false && !isTopPermissionByUuid(getUserUuid(ctx))) {
-    ctx.status = 403;
-    ctx.body = new Error($t("TXT_CODE_b5a47731"));
-    return;
-  }
-
-  const ADDR = systemConfig?.presetPackAddr;
-
-  try {
-    if (ADDR?.startsWith(SAVE_DIR_PATH)) {
-      const filesDir = path.join(process.cwd(), SAVE_DIR_PATH);
-      const fileName = ADDR?.split(SAVE_DIR_PATH)[1];
-      const filePath = path.join(filesDir, fileName ?? "");
-      if (fs.existsSync(filePath)) {
-        ctx.body = JSON.parse(await fs.readFile(filePath, "utf-8"));
-      } else {
-        throw new Error(`Request failed, status: 404`);
-      }
-      return;
-    }
-
-    // Cache logic implementation
-    const CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 hours
-
-    // Check if cache file exists and is valid
-    try {
-      const stats = await fs.stat(MARKET_CACHE_FILE_PATH);
-      const now = Date.now();
-      const fileAge = now - stats.mtime.getTime();
-
-      // Use cache
-      if (fileAge < CACHE_DURATION) {
-        const cachedData = await fs.readFile(MARKET_CACHE_FILE_PATH, "utf-8");
-        ctx.body = JSON.parse(cachedData);
-        return;
-      }
-    } catch (error) {
-      // Cache file doesn't exist, continue to fetch new data
-    }
-
-    const res = await axios.request({
-      method: "GET",
-      url: ADDR
-    });
-    if (res.status !== 200) throw new Error(`Request failed, status: ${res.status}`);
-    ctx.body = res.data;
-
-    // Save to cache file
-    fs.writeFile(MARKET_CACHE_FILE_PATH, JSON.stringify(res.data), "utf-8").catch((err) => {
-      logger.warn(`Failed to write quick install cache file at ${MARKET_CACHE_FILE_PATH}: ${err}`);
-    });
-  } catch (err) {
-    ctx.body = [];
   }
 });
 
