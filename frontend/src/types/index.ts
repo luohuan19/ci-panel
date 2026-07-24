@@ -79,11 +79,7 @@ export interface Settings {
   canFileManager: boolean;
   language: string;
   redisUrl: string;
-  businessMode: boolean;
-  businessId: string;
   allowChangeCmd: boolean;
-  registerCode: string;
-  panelId: string;
   ssoEnabled: boolean;
   ssoOnlyMode: boolean;
   ssoAutoRedirect: boolean;
@@ -243,11 +239,8 @@ export interface PanelStatus {
   versionChange?: boolean;
   settings: {
     canFileManager: boolean;
-    businessMode: boolean;
-    businessId: string;
-    allowChangeCmd: boolean;
-    panelId: string;
-    ssoEnabled: boolean;
+        allowChangeCmd: boolean;
+      ssoEnabled: boolean;
     ssoOnlyMode: boolean;
   };
 }

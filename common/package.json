@@ -1,14 +1,14 @@
 {
   "name": "mcsmanager-common",
   "version": "1.2.0",
-  "description": "MCSManager Common layer",
+  "description": "CI Panel common layer",
   "main": "dist/index.js",
-  "homepage": "https://mcsmanager.com/",
+  "homepage": "https://github.com/luohuan19/ci-panel",
   "author": "https://github.com/yumao233",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MCSManager/MCSManager"
+    "url": "https://github.com/luohuan19/ci-panel"
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",

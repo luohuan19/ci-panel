@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import CardPanel from "@/components/CardPanel.vue";
-import { openRenewalDialog } from "@/components/fc";
 import IconBtn from "@/components/IconBtn.vue";
 import TerminalCore from "@/components/TerminalCore.vue";
 import TerminalTopTags from "@/components/TerminalTopTags.vue";
@@ -27,7 +26,6 @@ import {
   InfoCircleOutlined,
   LaptopOutlined,
   LoadingOutlined,
-  MoneyCollectOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   RedoOutlined
@@ -198,20 +196,6 @@ const instanceOperations = computed(() =>
       },
       condition: () => isStopped.value && updateCmd.value
     },
-    {
-      title: t("TXT_CODE_f77093c8"),
-      icon: MoneyCollectOutlined,
-      noConfirm: true,
-      click: async () => {
-        await openRenewalDialog(
-          instanceInfo.value?.instanceUuid ?? "",
-          daemonId ?? "",
-          instanceInfo.value?.config.category ?? 0
-        );
-      },
-      props: {},
-      condition: () => !!instanceInfo.value?.config?.category
-    }
   ])
 );
 

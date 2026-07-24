@@ -51,7 +51,7 @@ const TERM_RESET = "\x1B[0m";
 const IGNORE_TEXT = [
   "\n\n",
   TERM_TEXT_GOLD,
-  "[MCSMANAGER] ",
+  "[CI-PANEL] ",
   TERM_RESET,
   TERM_TEXT_YELLOW,
   t("TXT_CODE_c5ed896f"),

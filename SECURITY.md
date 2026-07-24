@@ -1,11 +1,14 @@
 ## Security Vulnerability Reporting
 
-If you discover a security vulnerability in MCSManager and believe it may harm other users, and you are willing to help us fix it but do not wish to disclose the details publicly.
+If you discover a security vulnerability in ci-panel and believe it may harm other
+users, please report it privately rather than opening a public issue.
 
-**Please send detailed information to our email: support@mcsmanager.com.**
+**Please use GitHub's private vulnerability reporting:
+<https://github.com/luohuan19/ci-panel/security/advisories/new>.**
 
-The email subject format should be: `[Security Vulnerability] <Title>`
+Include detailed steps to reproduce the vulnerability and its impact. We will
+acknowledge the report and follow up with a fix.
 
-Please provide detailed steps to reproduce the security vulnerability, its impact, and we will reply and express our gratitude upon receiving your email.
-
-We will acknowledge your contribution by adding your name to the `readme.md` and `code`!
+ci-panel is a fork of [MCSManager](https://github.com/MCSManager/MCSManager). If the
+vulnerability originates upstream and also affects MCSManager, please report it to
+the upstream project as well.

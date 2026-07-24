@@ -14,7 +14,6 @@ import DockerPortDialog from "./DockerPortDialog.vue";
 import DockerVersionSelectDialog from "./DockerVersionSelectDialog.vue";
 import DownloadFileDialogVue from "./DownloadFileDialog.vue";
 import NodeSelectDialog from "./NodeSelectDialog.vue";
-import RenewalDialog from "./RenewalDialog.vue";
 import TagsDialog from "./TagsDialog.vue";
 import TaskLoadingDialog from "./TaskLoadingDialog.vue";
 import UploadFileDialogVue from "./UploadFileDialog.vue";
@@ -220,12 +219,6 @@ export async function useImageViewerDialog(
   return await useMountComponent({ instanceId, daemonId, fileName, frontDir }).mount(
     ImageViewerDialog
   );
-}
-
-export async function openRenewalDialog(instanceId: string, daemonId: string, productId: number) {
-  return useMountComponent({ instanceId, daemonId, productId })
-    .load<InstanceType<typeof RenewalDialog>>(RenewalDialog)
-    .openDialog();
 }
 
 export async function openNodeSelectDialog(targetPlatforms?: string[]) {

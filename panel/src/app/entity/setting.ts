@@ -52,16 +52,6 @@ export default class SystemConfig {
   // Whether to allow users to edit the start & update command of Docker instances
   allowChangeCmd = false;
 
-  // -----
-  // After it is enabled, you can connect to the redeem.mcsmanager.com platform
-  // to sell instances based on redeem
-  // (this feature may not be available in some countries)
-  businessMode = false;
-  businessId = "";
-  panelId = "";
-  registerCode = "";
-  // -----
-
   // SSO / OpenID Connect / OAuth 2.0
   ssoEnabled = false;
   ssoType: "oidc" | "oauth2" = "oidc";

@@ -92,10 +92,7 @@ router.all(
       language: systemConfig?.language || null,
       settings: {
         canFileManager: systemConfig?.canFileManager || false,
-        businessMode: systemConfig?.businessMode || false,
-        businessId: systemConfig?.businessId || null,
         allowChangeCmd: systemConfig?.allowChangeCmd || false,
-        panelId: systemConfig?.panelId || null,
         ssoEnabled: systemConfig?.ssoEnabled || false,
         ssoOnlyMode: systemConfig?.ssoOnlyMode || false
       } as Partial<SystemConfig>

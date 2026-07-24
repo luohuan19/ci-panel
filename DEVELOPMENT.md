@@ -1,12 +1,12 @@
 ## Setting Up Development Environment
 
-This section is **for developers**. If you want to develop MCSManager or contribute code, please read this content carefully:
+This section is **for developers**. If you want to develop ci-panel or contribute code, please read this content carefully:
 
 ### Required Environment
 
 - Node.js v16+
 
-We use `Visual Studio Code` to develop MCSManager, we **highly recommend** these plugins:
+We use `Visual Studio Code` to develop ci-panel, we **highly recommend** these plugins:
 
 - i18n Text Display Support (I18n Ally)
 - Code Formatting (Prettier)
@@ -20,8 +20,8 @@ We use `Visual Studio Code` to develop MCSManager, we **highly recommend** these
 #### 1. Download the Source Code
 
 ```bash
-git clone https://github.com/MCSManager/MCSManager.git
-cd MCSManager
+git clone https://github.com/luohuan19/ci-panel.git
+cd ci-panel
 ```
 
 #### 2. Download Binary Dependency Files
@@ -65,7 +65,7 @@ wget https://github.com/MCSManager/Zip-Tools/releases/download/latest/7z_linux_x
 ./install-dependents.bat
 ```
 
-#### 4. Run MCSManager
+#### 4. Run ci-panel
 
 ```bash
 npm run dev
@@ -154,6 +154,6 @@ After the build is complete, you will find the production code in the `productio
 
 ### Finally
 
-For more content, please refer to the official documentation.
-
-https://docs.mcsmanager.com/ops/mcsm_network.html
+The binary helpers (`pty`, `file_zip`, `7z`) come from the upstream
+[MCSManager](https://github.com/MCSManager/MCSManager) project; their release
+pages are the authoritative source for new architectures.

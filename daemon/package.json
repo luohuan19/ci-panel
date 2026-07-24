@@ -1,17 +1,17 @@
 {
   "name": "mcsmanager-daemon",
   "version": "4.16.2",
-  "description": "Provides remote control capability for MCSManager to manage processes, scheduled tasks, I/O streams, and more",
+  "description": "CI Panel node daemon: GitHub Actions runner scan/provision/logs, processes, scheduled tasks and I/O streams.",
   "scripts": {
     "dev": "nodemon --watch src --ext ts,js --exec \"npm run build && node --enable-source-maps production/app.js\"",
     "build": "webpack --config webpack.config.js"
   },
-  "homepage": "https://mcsmanager.com/",
+  "homepage": "https://github.com/luohuan19/ci-panel",
   "author": "https://github.com/yumao233",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MCSManager/MCSManager"
+    "url": "https://github.com/luohuan19/ci-panel"
   },
   "_moduleAliases": {
     "@languages": "../languages"

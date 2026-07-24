@@ -19,19 +19,15 @@ import NodeItem from "@/widgets/node/NodeItem.vue";
 import NodeList from "@/widgets/NodeList.vue";
 import NodeOverview from "@/widgets/NodeOverview.vue";
 import OperationLogCard from "@/widgets/OperationLogCard.vue";
-import Carousel from "@/widgets/others/Carousel.vue";
 import ClockCard from "@/widgets/others/ClockCard.vue";
 import IframeCard from "@/widgets/others/IframeCard.vue";
 import ImageBox from "@/widgets/others/ImageBox.vue";
 import LinkCard from "@/widgets/others/LinkCard.vue";
-import MusicCard from "@/widgets/others/MusicCard.vue";
-import PluginCard from "@/widgets/others/PluginCard.vue";
 import TextCard from "@/widgets/others/TextCard.vue";
 import Page404 from "@/widgets/Page404.vue";
 import DataOverview from "@/widgets/PanelOverview.vue";
 import RequestChart from "@/widgets/RequestChart.vue";
 import Settings from "@/widgets/Settings.vue";
-import ShelvesCard from "@/widgets/ShelvesCard.vue";
 import StatusBlock from "@/widgets/StatusBlock.vue";
 import TitleCard from "@/widgets/TitleCard.vue";
 import UserAccessSettings from "@/widgets/user/AccessSettings.vue";
@@ -77,10 +73,6 @@ export const LAYOUT_CARD_TYPES: { [key: string]: any } = {
   Schedule,
   InstanceShortcut,
   DefaultCard,
-  Carousel,
-  PluginCard,
-  MusicCard,
-  ShelvesCard,
   OperationLogCard
 };
 
@@ -227,18 +219,6 @@ export function getLayoutCardPool() {
       id: getRandomId(),
       permission: ROLE.GUEST,
       meta: {},
-      type: "Carousel",
-      title: t("TXT_CODE_5a196078"),
-      width: 4,
-      description: t("TXT_CODE_6ef5195f"),
-      height: LayoutCardHeight.SMALL,
-      category: NEW_CARD_TYPE.COMMON
-    },
-
-    {
-      id: getRandomId(),
-      permission: ROLE.GUEST,
-      meta: {},
       type: "IframeCard",
       title: t("TXT_CODE_3ed96265"),
       width: 4,
@@ -278,17 +258,6 @@ export function getLayoutCardPool() {
       title: t("TXT_CODE_af143e18"),
       width: 4,
       description: t("TXT_CODE_cf9e259c"),
-      height: LayoutCardHeight.SMALL,
-      category: NEW_CARD_TYPE.COMMON
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.GUEST,
-      meta: {},
-      type: "MusicCard",
-      title: t("TXT_CODE_660e2341"),
-      width: 4,
-      description: t("TXT_CODE_903a9ec9"),
       height: LayoutCardHeight.SMALL,
       category: NEW_CARD_TYPE.COMMON
     },
@@ -481,28 +450,6 @@ export function getLayoutCardPool() {
           type: "instance"
         }
       ]
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.GUEST,
-      meta: {},
-      type: "PluginCard",
-      title: t("TXT_CODE_5ebec0db"),
-      width: 4,
-      description: t("TXT_CODE_cb84b22"),
-      height: LayoutCardHeight.SMALL,
-      category: NEW_CARD_TYPE.COMMON
-    },
-    {
-      id: getRandomId(),
-      permission: ROLE.GUEST,
-      meta: {},
-      type: "ShelvesCard",
-      title: t("TXT_CODE_b99cae18"),
-      width: 8,
-      description: t("TXT_CODE_163e2d0a"),
-      height: LayoutCardHeight.MEDIUM,
-      category: NEW_CARD_TYPE.COMMON
     }
   ];
   return LAYOUT_CARD_POOL;
