@@ -21,15 +21,6 @@ declare global {
     category: number;
     basePort: number;
 
-    // Steam RCON
-    enableRcon?: boolean;
-    rconPassword?: string;
-    rconPort?: number;
-    rconIp?: string;
-
-    // Java
-    java: IInstanceJavaConfig;
-
     // Old fields
     terminalOption: {
       haveColor: boolean;
@@ -44,35 +35,9 @@ declare global {
       ignore: boolean;
     };
     docker: IGlobalInstanceDockerConfig;
-    pingConfig: {
-      ip?: string;
-      port?: number;
-      type?: number;
-    };
-    extraServiceConfig: {
-      openFrpTunnelId?: string;
-      openFrpToken?: string;
-    };
   }
 
   type ProcessType = "general" | "docker";
-
-  interface IInstanceJavaConfig {
-    id: string;
-  }
-
-  interface IJavaInfo {
-    fullname: string;
-    path?: string;
-    installTime: number;
-    downloading: boolean;
-  }
-
-  interface IJavaRuntime {
-    info: IJavaInfo;
-    path: string;
-    usingInstances: string[];
-  }
 
   interface IGlobalInstanceDockerConfig {
     /** Docker image for update command; empty = not used */

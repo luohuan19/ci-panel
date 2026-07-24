@@ -6,14 +6,10 @@ import { configureEntityParams } from "mcsmanager-common";
 import path from "path";
 import { CircularBuffer } from "../../common/string_cache";
 import StorageSubsystem from "../../common/system_storage";
-import { STEAM_CMD_PATH } from "../../const";
 import { $t } from "../../i18n";
-import javaManager from "../../service/java_manager";
 import logger from "../../service/log";
 import InstanceCommand from "../commands/base/command";
-import { commandStringToArray } from "../commands/base/command_parser";
 import FunctionDispatcher, { IPresetCommand } from "../commands/dispatcher";
-import { OpenFrp } from "../commands/task/openfrp";
 import { globalConfiguration } from "../config";
 import InstanceConfig from "./Instance_config";
 import { IInstanceProcess } from "./interface";
@@ -24,14 +20,7 @@ export const GLOBAL_INSTANCE_KEY = "__MCSM_GLOBAL_INSTANCE__";
 export const GLOBAL_INSTANCE_UUID_KEY = "global0001";
 
 interface IInstanceInfo {
-  mcPingOnline: boolean;
-  currentPlayers: number;
-  maxPlayers: number;
-  version: string;
   fileLock: number;
-  playersChart: { value: string }[];
-  openFrpStatus: boolean;
-  latency: number;
   cpuUsage?: number;
   memoryUsagePercent?: number;
   rxBytes?: number;
@@ -78,8 +67,6 @@ export default class Instance extends EventEmitter {
   public static readonly STATUS_RUNNING = 3;
 
   public static readonly TYPE_UNIVERSAL = "universal";
-  public static readonly TYPE_MINECRAFT_JAVA = "minecraft/java";
-  public static readonly TYPE_MINECRAFT_BEDROCK = "minecraft/bedrock";
 
   public instanceStatus: number = Instance.STATUS_STOP;
   public instanceUuid: string = "";
@@ -88,7 +75,6 @@ export default class Instance extends EventEmitter {
   public autoRestartCount: number = 0;
   public startTimestamp: number = 0;
   public asynchronousTask?: IExecutable | null;
-  public openFrp?: OpenFrp;
 
   public readonly lifeCycleTaskManager = new LifeCycleTaskManager(this);
   public readonly presetCommandManager = new PresetCommandManager(this);
@@ -96,14 +82,7 @@ export default class Instance extends EventEmitter {
   public config: InstanceConfig;
 
   public info: IInstanceInfo = {
-    mcPingOnline: false,
-    currentPlayers: 0,
-    maxPlayers: 0,
-    version: "",
     fileLock: 0,
-    playersChart: [],
-    openFrpStatus: false,
-    latency: 0,
     allocatedPorts: []
   };
 
@@ -151,12 +130,6 @@ export default class Instance extends EventEmitter {
       this.forceExec(new FunctionDispatcher());
     }
 
-    if (cfg?.enableRcon != null && cfg?.enableRcon !== this.config.enableRcon) {
-      if (!this.isStoppedOrBusy()) throw new Error($t("TXT_CODE_bdfa3457"));
-      configureEntityParams(this.config, cfg, "enableRcon", Boolean);
-      this.forceExec(new FunctionDispatcher());
-    }
-
     if (cfg?.processType && cfg?.processType !== this.config.processType) {
       if (!this.isStoppedOrBusy())
         throw new Error($t("TXT_CODE_instanceConf.cantModifyProcessType"));
@@ -185,27 +158,6 @@ export default class Instance extends EventEmitter {
       this.config.tag = cfg.tag;
     }
 
-    if (cfg?.extraServiceConfig) {
-      configureEntityParams(
-        this.config.extraServiceConfig,
-        cfg.extraServiceConfig,
-        "isOpenFrp",
-        Boolean
-      );
-      configureEntityParams(
-        this.config.extraServiceConfig,
-        cfg.extraServiceConfig,
-        "openFrpToken",
-        String
-      );
-      configureEntityParams(
-        this.config.extraServiceConfig,
-        cfg.extraServiceConfig,
-        "openFrpTunnelId",
-        String
-      );
-    }
-
     configureEntityParams(this.config, cfg, "nickname", String);
     configureEntityParams(this.config, cfg, "startCommand", String);
     configureEntityParams(this.config, cfg, "stopCommand", String);
@@ -217,9 +169,6 @@ export default class Instance extends EventEmitter {
     configureEntityParams(this.config, cfg, "crlf", Number);
     configureEntityParams(this.config, cfg, "endTime", Number);
     configureEntityParams(this.config, cfg, "fileCode", String);
-    configureEntityParams(this.config, cfg, "rconPassword", String);
-    configureEntityParams(this.config, cfg, "rconPort", Number);
-    configureEntityParams(this.config, cfg, "rconIp", String);
     configureEntityParams(this.config, cfg, "category", Number);
     configureEntityParams(this.config, cfg, "basePort", Number);
     configureEntityParams(this.config, cfg, "stopTimeout", Number);
@@ -262,11 +211,6 @@ export default class Instance extends EventEmitter {
       configureEntityParams(this.config.docker, cfg.docker, "deviceReadBps");
       configureEntityParams(this.config.docker, cfg.docker, "deviceWriteBps");
     }
-    if (cfg.pingConfig) {
-      configureEntityParams(this.config.pingConfig, cfg.pingConfig, "ip", String);
-      configureEntityParams(this.config.pingConfig, cfg.pingConfig, "port", Number);
-      configureEntityParams(this.config.pingConfig, cfg.pingConfig, "type", Number);
-    }
     if (cfg.eventTask) {
       configureEntityParams(this.config.eventTask, cfg.eventTask, "autoStart", Boolean);
       configureEntityParams(this.config.eventTask, cfg.eventTask, "autoRestart", Boolean);
@@ -275,12 +219,6 @@ export default class Instance extends EventEmitter {
     }
     if (cfg.terminalOption) {
       configureEntityParams(this.config.terminalOption, cfg.terminalOption, "haveColor", Boolean);
-    }
-
-    if (cfg.startCommand && commandStringToArray(cfg.startCommand)[0] != "{mcsm_java}") {
-      this.config.java.id = "";
-    } else if (cfg.java) {
-      configureEntityParams(this.config.java, cfg.java, "id", String);
     }
 
     if (persistence) {
@@ -458,14 +396,7 @@ export default class Instance extends EventEmitter {
 
   resetInstanceRuntimeInfo() {
     this.info = {
-      mcPingOnline: false,
-      currentPlayers: 0,
-      maxPlayers: 0,
-      version: "",
       fileLock: 0,
-      playersChart: [],
-      openFrpStatus: false,
-      latency: 0,
       allocatedPorts: this.info.allocatedPorts ?? []
     };
   }
@@ -529,15 +460,6 @@ export default class Instance extends EventEmitter {
     };
   }
 
-  public resetPingInfo() {
-    this.info.mcPingOnline = false;
-    this.info.currentPlayers = 0;
-    this.info.maxPlayers = 0;
-    this.info.version = "";
-
-    this.info.latency = 0;
-  }
-
   public async parseTextParams(text: string) {
     if (typeof text !== "string") return "";
     text = text.replace(/\{mcsm_workspace\}/gim, this.absoluteCwdPath());
@@ -545,15 +467,9 @@ export default class Instance extends EventEmitter {
     text = text.replace(/\{mcsm_uuid\}/gim, this.instanceUuid);
     text = text.replace(/\{mcsm_random\}/gim, randomUUID());
     text = text.replace(/\{mcsm_run_as\}/gim, this.config.runAs);
-    text = text.replace(/\{mcsm_steamcmd\}/gim, STEAM_CMD_PATH);
     text = text.replace(/\{mcsm_instance_id\}/gim, this.instanceUuid);
     text = text.replace(/\{mcsm_instance_name\}/gim, this.config.nickname);
     text = text.replace(/\{mcsm_instance_base_port\}/gim, String(this.config.basePort));
-
-    const javaId = this.config.java.id;
-    if (javaId) {
-      text = text.replace(/\{mcsm_java\}/gim, await javaManager.getJavaRuntimeCommand(javaId));
-    }
 
     const ports = Array.from(
       { length: globalConfiguration.config.portAssignInterval || 1 },

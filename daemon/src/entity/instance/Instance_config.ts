@@ -31,12 +31,6 @@ export default class InstanceConfig implements IGlobalInstanceConfig {
   public category = 0;
   public basePort = 0;
 
-  // Steam RCON protocol
-  public enableRcon = false;
-  public rconPassword = "";
-  public rconPort = 0;
-  public rconIp = "";
-
   // custom command list
   public actionCommandList: IActionCommand[] = [];
 
@@ -54,11 +48,6 @@ export default class InstanceConfig implements IGlobalInstanceConfig {
     autoRestart: false,
     autoRestartMaxTimes: -1,
     ignore: false
-  };
-
-  // java
-  public java: IInstanceJavaConfig = {
-    id: ""
   };
 
   // Extend
@@ -94,16 +83,5 @@ export default class InstanceConfig implements IGlobalInstanceConfig {
     gpuDriver: "nvidia",
     deviceReadBps: [],
     deviceWriteBps: []
-  };
-
-  public pingConfig = {
-    ip: "",
-    port: 25565,
-    type: 1
-  };
-
-  public extraServiceConfig = {
-    openFrpTunnelId: "",
-    openFrpToken: ""
   };
 }

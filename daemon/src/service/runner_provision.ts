@@ -14,7 +14,7 @@ import logger from "./log";
 import { writeMarker, readMarker } from "./runner_marker";
 
 // 实例类型常量，等于 Instance.TYPE_UNIVERSAL。刻意用字面量而不 import Instance 类：
-// instance.ts 处在 instance↔java_manager↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
+// instance.ts 处在 instance↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
 // 访问 Instance 的静态成员会踩到初始化顺序(TDZ)——「Cannot access 'TYPE_UNIVERSAL' before initialization」。
 // createInstance 的 type 只需这个字符串，不必依赖那个类。
 const INSTANCE_TYPE_UNIVERSAL = "universal";

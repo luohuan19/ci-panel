@@ -9,18 +9,8 @@ import InstanceSubsystem from "../service/system_instance";
 
 import { arrayUnique, toNumber } from "mcsmanager-common";
 import ProcessInfoCommand from "../entity/commands/process_info";
-import { ProcessConfig } from "../entity/instance/process_config";
-import { TaskCenter } from "../service/async_task_service";
-import {
-  createQuickInstallTask,
-  QuickInstallTask
-} from "../service/async_task_service/quick_install";
-import downloadManager from "../service/download_manager";
-import { IInstanceDetail, IJson } from "../service/interfaces";
-import { modService } from "../service/mod_service";
+import { IInstanceDetail } from "../service/interfaces";
 import { ROLE } from "../service/protocol";
-import FileManager from "../service/system_file";
-import uploadManager from "../service/upload_manager";
 
 // Some instances operate router authentication middleware
 routerApp.use((event, ctx, data, next) => {
@@ -383,17 +373,6 @@ routerApp.on("instance/asynchronous", (ctx, data) => {
     throw new Error("Invalid role");
   }
 
-  // Quick install Minecraft server task
-  // Why not use the ".execPreset("install", parameter)" that already exists in Instance?
-  // Because the instance has not yet been created at this stage.
-  if (taskName === "quick_install" && role === ROLE.ADMIN) {
-    const newInstanceName = String(parameter.newInstanceName);
-    const targetLink = String(parameter.targetLink);
-    logger.info(`Quick install: Name: ${newInstanceName} | Download: ${targetLink}`);
-    const task = createQuickInstallTask(targetLink, newInstanceName, parameter.setupInfo);
-    return protocol.response(ctx, task.toObject());
-  }
-
   if (!instance) {
     throw new Error("Invalid instance");
   }
@@ -424,42 +403,14 @@ routerApp.on("instance/asynchronous", (ctx, data) => {
     return protocol.response(ctx, true);
   }
 
-  // Install instance via preset package
-  if (taskName === "install_instance" && role === ROLE.ADMIN) {
-    instance
-      .execPreset("install", parameter)
-      .then(() => {})
-      .catch((err) => {
-        logger.error(
-          $t("TXT_CODE_Instance_router.performTasksErr", {
-            uuid: instance.instanceUuid,
-            taskName: taskName,
-            nickname: instance.config.nickname,
-            err: err
-          })
-        );
-      });
-    return protocol.response(ctx, true);
-  }
-
   throw new Error(`Access denied: ${taskName} is not allowed for role ${role}`);
 });
 
 // Terminate the execution of complex asynchronous tasks
 routerApp.on("instance/stop_asynchronous", (ctx, data) => {
   const instanceUuid = data.instanceUuid;
-  const { taskId } = data.parameter;
   const instance = InstanceSubsystem.getInstance(instanceUuid);
 
-  // Multi-instance async task
-  if (taskId && typeof taskId === "string") {
-    const task = TaskCenter.getTask(taskId);
-    if (!task) throw new Error(`Async Task ID: ${taskId} does not exist`);
-    task.stop();
-    return protocol.response(ctx, true);
-  }
-
-  // Singleton async task
   const task = instance?.asynchronousTask;
   if (task && task.stop) {
     task
@@ -477,89 +428,6 @@ routerApp.on("instance/stop_asynchronous", (ctx, data) => {
   protocol.response(ctx, true);
 });
 
-// Query async task status
-routerApp.on("instance/query_asynchronous", (ctx, data) => {
-  const taskId = data.parameter.taskId as string | undefined;
-  const taskName = data.taskName as string;
-  const taskNameTypeMap: IJson<string> = {
-    quick_install: QuickInstallTask.TYPE
-  };
-  const type = String(taskNameTypeMap[taskName] || QuickInstallTask.TYPE);
-  if (!taskId) {
-    const result = [];
-    for (const task of TaskCenter.getTasks(type)) {
-      result.push({
-        taskId: task.taskId,
-        status: task.status(),
-        detail: task.toObject()
-      });
-    }
-    protocol.response(ctx, result);
-  } else {
-    const task = TaskCenter.getTask(String(taskId));
-    if (task)
-      protocol.response(ctx, {
-        taskId: task.taskId,
-        status: task.status(),
-        detail: task.toObject()
-      });
-  }
-});
-
-routerApp.on("instance/process_config/list", (ctx, data) => {
-  const instanceUuid = data.instanceUuid;
-  const files = data.files;
-  const result: any[] = [];
-  try {
-    const instance = InstanceSubsystem.getInstance(instanceUuid);
-    if (!instance) throw new Error($t("TXT_CODE_3bfb9e04"));
-    const fileManager = new FileManager(instance.absoluteCwdPath());
-    for (const filePath of files) {
-      if (fileManager.check(filePath)) {
-        result.push({
-          file: filePath,
-          check: true
-        });
-      }
-    }
-    protocol.response(ctx, result);
-  } catch (err: any) {
-    protocol.responseError(ctx, err);
-  }
-});
-
-// Get or update the content of the instance specified file
-routerApp.on("instance/process_config/file", (ctx, data) => {
-  const instanceUuid = data.instanceUuid;
-  const fileName = data.fileName;
-  const config = data.config || null;
-  const fileType = data.type;
-  try {
-    const instance = InstanceSubsystem.getInstance(instanceUuid);
-    if (!instance) throw new Error($t("TXT_CODE_3bfb9e04"));
-    const fileManager = new FileManager(instance.absoluteCwdPath());
-    if (!fileManager.check(fileName)) throw new Error($t("TXT_CODE_Instance_router.accessFileErr"));
-    const filePath = path.normalize(path.join(instance.absoluteCwdPath(), fileName));
-    const processConfig = new ProcessConfig({
-      fileName: fileName,
-      redirect: fileName,
-      path: filePath,
-      type: fileType,
-      info: null,
-      fromLink: null
-    });
-    if (config) {
-      processConfig.write(config);
-      return protocol.response(ctx, true);
-    } else {
-      const json = processConfig.read();
-      return protocol.response(ctx, json);
-    }
-  } catch (err: any) {
-    protocol.responseError(ctx, err);
-  }
-});
-
 // Get instance terminal log
 routerApp.on("instance/outputlog", async (ctx, data) => {
   const instanceUuid = data.instanceUuid;
@@ -574,103 +442,5 @@ routerApp.on("instance/outputlog", async (ctx, data) => {
     });
   } catch (err: any) {
     protocol.responseError(ctx, err);
-  }
-});
-
-routerApp.on("instance/mods/list", async (ctx, data) => {
-  const instanceUuid = data.instanceUuid;
-  const page = Number(data.page) || 1;
-  const pageSize = Math.min(Number(data.pageSize) || 50, 50); // Max 50
-  const folder = data.folder ? String(data.folder) : undefined;
-  try {
-    const fileManager = new FileManager(
-      InstanceSubsystem.getInstance(instanceUuid)!.absoluteCwdPath()
-    );
-    const mods = await modService.listMods(instanceUuid, page, pageSize, folder);
-    const downloadTasks = downloadManager.tasks
-      .filter((t) => fileManager.checkPath(t.path))
-      .map((t) => {
-        let relativePath = path.relative(fileManager.toAbsolutePath(), t.path);
-        relativePath = relativePath.replace(/\\/g, "/");
-        if (!relativePath.startsWith("/")) relativePath = "/" + relativePath;
-
-        return {
-          taskId: t.id,
-          path: relativePath,
-          total: t.total,
-          current: t.current,
-          status: t.status,
-          error: t.error,
-          type: "download"
-        };
-      });
-
-    const uploadTasks = [];
-    for (const [id, writer] of uploadManager.getUploads()) {
-      if (writer.cwd === instanceUuid || writer.path.includes(instanceUuid)) {
-        uploadTasks.push({
-          id,
-          path: writer.path,
-          total: writer.size,
-          current: writer.received.reduce(
-            (acc: number, r: { start: number; end: number }) => acc + (r.end - r.start),
-            0
-          ),
-          status: 0,
-          type: "upload"
-        });
-      }
-    }
-
-    protocol.response(ctx, {
-      ...mods,
-      downloadTasks: [...downloadTasks, ...uploadTasks],
-      downloadFileFromURLTask: downloadManager.downloadingCount
-    });
-  } catch (err: any) {
-    protocol.responseError(ctx, err);
-  }
-});
-
-routerApp.on("instance/mods/toggle", async (ctx, data) => {
-  const { instanceUuid, fileName } = data;
-  try {
-    await modService.toggleMod(instanceUuid, fileName);
-    protocol.response(ctx, true);
-  } catch (err: any) {
-    protocol.responseError(ctx, err);
-  }
-});
-
-routerApp.on("instance/mods/delete", async (ctx, data) => {
-  const { instanceUuid, fileName } = data;
-  try {
-    await modService.deleteMod(instanceUuid, fileName);
-    protocol.response(ctx, true);
-  } catch (err: any) {
-    protocol.responseError(ctx, err, { disablePrint: true });
-  }
-});
-
-routerApp.on("instance/mods/install", async (ctx, data) => {
-  const { instanceUuid, url, fileName, type, fallbackUrl } = data;
-  try {
-    // async
-    modService.installMod(instanceUuid, url, fileName, type, {
-      fallbackUrl
-    });
-    protocol.response(ctx, true);
-  } catch (err: any) {
-    protocol.responseError(ctx, err, { disablePrint: true });
-  }
-});
-
-routerApp.on("instance/mods/config_files", async (ctx, data) => {
-  const { instanceUuid, modId, type, fileName } = data;
-  try {
-    const files = await modService.getModConfig(instanceUuid, modId, type, fileName);
-    protocol.response(ctx, files);
-  } catch (err: any) {
-    protocol.responseError(ctx, err, { disablePrint: true });
   }
 });
