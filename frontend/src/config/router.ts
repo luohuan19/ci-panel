@@ -114,32 +114,6 @@ const originRouterConfig: RouterConfig[] = [
             }
           },
           {
-            path: `/instances/terminal/mods`,
-            name: t("TXT_CODE_MOD_MANAGER"),
-            component: LayoutContainer,
-            meta: {
-              permission: ROLE.USER
-            }
-          },
-          {
-            path: `/instances/terminal/serverConfig`,
-            name: t("TXT_CODE_d07742fe"),
-            component: LayoutContainer,
-            meta: {
-              permission: ROLE.USER
-            },
-            children: [
-              {
-                path: `/instances/terminal/serverConfig/fileEdit`,
-                name: t("TXT_CODE_78019c60"),
-                component: LayoutContainer,
-                meta: {
-                  permission: ROLE.USER
-                }
-              }
-            ]
-          },
-          {
             path: `/instances/schedule`,
             name: t("TXT_CODE_b7d026f8"),
             component: LayoutContainer,
@@ -304,19 +278,6 @@ const originRouterConfig: RouterConfig[] = [
       mainMenu: false
     }
   },
-  {
-    path: "/shop",
-    name: t("TXT_CODE_5a408a5e"),
-    component: LayoutContainer,
-    meta: {
-      permission: ROLE.GUEST,
-      mainMenu: true,
-      condition: () => {
-        const { state: appConfig } = useAppStateStore();
-        return appConfig.settings.businessMode;
-      }
-    }
-  }
 ];
 
 function routersConfigOptimize(

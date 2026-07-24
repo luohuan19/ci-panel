@@ -21,15 +21,6 @@ declare global {
     category: number;
     basePort: number;
 
-    // Steam RCON
-    enableRcon?: boolean;
-    rconPassword?: string;
-    rconPort?: number;
-    rconIp?: string;
-
-    // Java
-    java: IInstanceJavaConfig;
-
     // Old fields
     terminalOption: {
       haveColor: boolean;
@@ -44,35 +35,9 @@ declare global {
       ignore: boolean;
     };
     docker: IGlobalInstanceDockerConfig;
-    pingConfig: {
-      ip?: string;
-      port?: number;
-      type?: number;
-    };
-    extraServiceConfig: {
-      openFrpTunnelId?: string;
-      openFrpToken?: string;
-    };
   }
 
   type ProcessType = "general" | "docker";
-
-  interface IInstanceJavaConfig {
-    id: string;
-  }
-
-  interface IJavaInfo {
-    fullname: string;
-    path?: string;
-    installTime: number;
-    downloading: boolean;
-  }
-
-  interface IJavaRuntime {
-    info: IJavaInfo;
-    path: string;
-    usingInstances: string[];
-  }
 
   interface IGlobalInstanceDockerConfig {
     /** Docker image for update command; empty = not used */
@@ -271,50 +236,6 @@ declare global {
     allowedPages?: Array<string> | null;
     line?: number;
     disableDelete?: boolean;
-  }
-
-  interface IQuickStartPackages {
-    language: string;
-    description: string;
-    title: string;
-    category: string;
-    runtime: string;
-    size: string;
-    hardware: string;
-    remark: string;
-    targetLink?: string;
-    author: string;
-    dockerOptional?: {
-      image: string;
-      updateCommandImage?: string;
-    };
-    setupInfo: IGlobalInstanceConfig;
-    gameType: string;
-    image: string;
-    platform: string;
-    tags?: string[];
-    isSummary?: boolean;
-    key?: string;
-  }
-
-  interface IQuickStartTemplate {
-    languages: {
-      label: string;
-      value: string;
-    }[];
-    packages: IQuickStartPackages[];
-  }
-
-  export interface IBusinessProductInfo {
-    productId: number;
-    title: string;
-    price: number;
-    ispId: number;
-    daemonId: string;
-    payload?: string;
-    remark?: string;
-    hours?: number;
-    daemonUuid?: string;
   }
 }
 

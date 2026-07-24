@@ -246,72 +246,6 @@ function getDefaultFrontendLayoutConfig(): IPageLayoutConfig[] {
       ]
     },
     {
-      page: "/instances/terminal/mods",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "InstanceModManager",
-          title: t("TXT_CODE_MOD_MANAGER"),
-          width: 12,
-          height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
-      page: "/instances/terminal/serverConfig",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "InstanceServerConfigOverview",
-          title: t("TXT_CODE_d07742fe"),
-          width: 12,
-          height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
-      page: "/instances/terminal/serverConfig/fileEdit",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "InstanceServerConfigFile",
-          title: t("TXT_CODE_1c45f7fe"),
-          width: 12,
-          height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        },
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "EmptyCard",
-          title: "",
-          width: 12,
-          height: LayoutCardHeight.MINI
-        }
-      ]
-    },
-    {
       page: "/instances/schedule",
       items: [
         {
@@ -527,20 +461,6 @@ function getDefaultFrontendLayoutConfig(): IPageLayoutConfig[] {
           title: t("TXT_CODE_ccb60658"),
           width: 4,
           height: LayoutCardHeight.AUTO,
-          disableDelete: true
-        }
-      ]
-    },
-    {
-      page: "/shop",
-      items: [
-        {
-          id: getRandomId(),
-          meta: {},
-          type: "ShelvesCard",
-          title: t("TXT_CODE_381f8f22"),
-          width: 12,
-          height: LayoutCardHeight.LARGE,
           disableDelete: true
         }
       ]

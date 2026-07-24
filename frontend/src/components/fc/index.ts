@@ -1,25 +1,19 @@
 import { useMountComponent } from "@/hooks/useMountComponent";
 import type { UserInstance } from "@/types/user";
 
-import CmdAssistantDialog from "@/components/fc/CmdAssistantDialog/index.vue";
 import KvOptionsDialogVue from "@/components/fc/KvOptionsDialog.vue";
 import SelectInstances from "@/components/fc/SelectInstances.vue";
 import { t } from "@/lang/i18n";
 import type { AntColumnsType } from "@/types/ant";
 import type { DownloadFileConfigItem } from "@/types/fileManager";
-import type { AddJavaConfigItem, DownloadJavaConfigItem } from "@/types/javaManager";
 import DeleteInstanceDialog from "@/widgets/instance/dialogs/DeleteInstanceDialog.vue";
 import ImageViewerDialog from "@/widgets/instance/dialogs/ImageViewer.vue";
-import MarketDialog from "@/widgets/instance/dialogs/MarketDialog.vue";
-import AddJavaDialog from "./AddJavaDialog.vue";
 import DockerCapabilityDialogVue from "./DockerCapabilityDialog.vue";
 import DockerDeviceDialogVue from "./DockerDeviceDialog.vue";
 import DockerPortDialog from "./DockerPortDialog.vue";
 import DockerVersionSelectDialog from "./DockerVersionSelectDialog.vue";
 import DownloadFileDialogVue from "./DownloadFileDialog.vue";
-import DownloadJavaDialog from "./DownloadJavaDialog.vue";
 import NodeSelectDialog from "./NodeSelectDialog.vue";
-import RenewalDialog from "./RenewalDialog.vue";
 import TagsDialog from "./TagsDialog.vue";
 import TaskLoadingDialog from "./TaskLoadingDialog.vue";
 import UploadFileDialogVue from "./UploadFileDialog.vue";
@@ -86,10 +80,6 @@ export async function useSelectInstances(data: UserInstance[] = []) {
       }
     ]
   }).mount<UserInstance[]>(SelectInstances);
-}
-
-export async function useCmdAssistantDialog() {
-  return await useMountComponent().mount<string>(CmdAssistantDialog);
 }
 
 export async function usePortEditDialog(data: PortConfigItem[] = []) {
@@ -231,12 +221,6 @@ export async function useImageViewerDialog(
   );
 }
 
-export async function openRenewalDialog(instanceId: string, daemonId: string, productId: number) {
-  return useMountComponent({ instanceId, daemonId, productId })
-    .load<InstanceType<typeof RenewalDialog>>(RenewalDialog)
-    .openDialog();
-}
-
 export async function openNodeSelectDialog(targetPlatforms?: string[]) {
   const dialog = useMountComponent({ targetPlatforms }).load<InstanceType<typeof NodeSelectDialog>>(
     NodeSelectDialog
@@ -252,37 +236,3 @@ export async function openDockerVersionSelectDialog() {
   return dialog!.openDialog();
 }
 
-export interface OpenMarketDialogProps {
-  daemonId?: string;
-  instanceId?: string;
-  autoInstall?: boolean;
-  btnText?: string;
-  dialogTitle?: string;
-  showCustomBtn?: boolean;
-  onlyDockerTemplate?: boolean;
-}
-
-export async function openMarketDialog(
-  daemonId?: string,
-  instanceId?: string,
-  options: OpenMarketDialogProps = {}
-) {
-  const dialog = useMountComponent({
-    daemonId,
-    instanceId,
-    ...options
-  }).load<InstanceType<typeof MarketDialog>>(MarketDialog);
-  return dialog!.openDialog();
-}
-
-export async function useAddJavaDialog() {
-  return (await useMountComponent().mount<AddJavaConfigItem>(AddJavaDialog)) || undefined;
-}
-
-export async function useDownloadJavaDialog(installedJavaList?: string[]) {
-  return (
-    (await useMountComponent({ installedJavaList }).mount<DownloadJavaConfigItem>(
-      DownloadJavaDialog
-    )) || undefined
-  );
-}

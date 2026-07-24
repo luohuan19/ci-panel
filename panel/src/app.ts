@@ -22,7 +22,7 @@ import SystemRemoteService from "./app/service/remote_service";
 import SystemUser from "./app/service/user_service";
 import versionAdapter from "./app/service/version_adapter";
 import { initSystemConfig, systemConfig } from "./app/setting";
-import { checkBusinessMode, getVersion, initVersionManager } from "./app/version";
+import { getVersion, initVersionManager } from "./app/version";
 
 function hasParams(name: string) {
   return process.argv.includes(name);
@@ -118,8 +118,6 @@ _  /  / / / /___  ____/ /_  /  / / / /_/ /_  / / / /_/ /_  /_/ //  __/  /
 
   // Detect whether the configuration file is from an older version and update it if so.
   versionAdapter.detectConfig();
-
-  checkBusinessMode();
 
   // Initialize services
   await SystemUser.initialize();

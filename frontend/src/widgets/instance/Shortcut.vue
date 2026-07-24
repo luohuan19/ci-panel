@@ -3,7 +3,7 @@ import CardPanel from "@/components/CardPanel.vue";
 import { useDeleteInstanceDialog } from "@/components/fc/index";
 import { useAppRouters } from "@/hooks/useAppRouters";
 import { useLayoutCardTools } from "@/hooks/useCardTools";
-import { useInstanceInfo, verifyEULA } from "@/hooks/useInstance";
+import { useInstanceInfo } from "@/hooks/useInstance";
 import { t } from "@/lang/i18n";
 import {
   killInstance,
@@ -27,8 +27,7 @@ import {
   ExclamationCircleOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
-  RedoOutlined,
-  UserOutlined
+  RedoOutlined
 } from "@ant-design/icons-vue";
 import { message, Modal } from "ant-design-vue";
 import prettyBytes, { type Options as PrettyOptions } from "pretty-bytes";
@@ -101,8 +100,6 @@ const refreshList = () => {
 
 const actions = {
   start: async () => {
-    const flag = await verifyEULA(instanceId ?? "", daemonId ?? "");
-    if (!flag) return;
     await executeOpen(operationConfig);
     message.success(t("TXT_CODE_e13abbb1"));
   },
@@ -358,13 +355,6 @@ const instanceOperations = computed(() =>
               </span>
             </div>
           </template>
-          <div v-if="instanceInfo?.info.mcPingOnline" class="instance-info-line">
-            <span class="title">{{ t("TXT_CODE_e4dce83f") }}:</span>
-            <span class="value" style="vertical-align: middle">
-              <UserOutlined />
-              {{ instanceInfo?.info.currentPlayers }} / {{ instanceInfo?.info.maxPlayers }}
-            </span>
-          </div>
         </a-typography-paragraph>
 
         <a-space warp :size="6" class="mb-4">

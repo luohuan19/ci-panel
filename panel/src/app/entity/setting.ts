@@ -43,31 +43,14 @@ export default class SystemConfig {
   // Whether to open the file management function for ordinary users
   canFileManager = true;
 
-  // Whether to allow template-based instance reset, which may pose a security risk.
-  // If you use Docker and need commercial functionality, you can try turning this feature on and testing it.
-  allowUsePreset = false;
-
   // Panel display language
   language = "en_us";
-
-  // Quick installation address
-  presetPackAddr = "https://script.mcsmanager.com/market-v2.json";
 
   // Redis address (Experimental Features)
   redisUrl = "";
 
   // Whether to allow users to edit the start & update command of Docker instances
   allowChangeCmd = false;
-
-  // -----
-  // After it is enabled, you can connect to the redeem.mcsmanager.com platform
-  // to sell instances based on redeem
-  // (this feature may not be available in some countries)
-  businessMode = false;
-  businessId = "";
-  panelId = "";
-  registerCode = "";
-  // -----
 
   // SSO / OpenID Connect / OAuth 2.0
   ssoEnabled = false;

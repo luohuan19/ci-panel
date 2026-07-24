@@ -334,13 +334,6 @@ const instanceTableColumns: AntColumnsType[] = [
   },
   { title: t("TXT_CODE_b283e720"), dataIndex: "resources", key: "resources", align: "left" },
   {
-    title: t("TXT_CODE_7e9727bd"),
-    dataIndex: "players",
-    key: "players",
-    width: 100,
-    align: "left"
-  },
-  {
     title: t("TXT_CODE_fe731dfc"),
     dataIndex: "actions",
     key: "actions",

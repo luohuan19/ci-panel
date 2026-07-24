@@ -1,5 +1,5 @@
 {
-  "name": "mcsmanager-workspace",
+  "name": "ci-panel-workspace",
   "version": "1.0.0",
   "scripts": {
     "daemon": "cd daemon &&  npm run dev",

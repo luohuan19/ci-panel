@@ -3,7 +3,6 @@ import Koa from "koa";
 
 import "./service/remote_service";
 import "./service/user_service";
-import "./service/user_statistics";
 import "./service/visual_data";
 
 import ciRouter from "./routers/ci_router";
@@ -12,12 +11,9 @@ import environmentRouter from "./routers/environment_router";
 import filemanager_router from "./routers/filemananger_router";
 import lowUserRouter from "./routers/general_user_router";
 import instanceRouter from "./routers/instance_admin_router";
-import exchangeRouter from "./routers/instance_exchange_router";
 import userInstanceRouter from "./routers/instance_operate_router";
-import javaManagerRouter from "./routers/java_manager_router";
 import loginRouter from "./routers/login_router";
 import businessUserRouter from "./routers/manage_user_router";
-import modManagerRouter from "./routers/mod_manager_router";
 import overviewRouter from "./routers/overview_router";
 import repoRouter from "./routers/repo_router";
 import runnerRouter from "./routers/runner_router";
@@ -41,9 +37,6 @@ export function mountRouters(app: Koa<Koa.DefaultState, Koa.DefaultContext>) {
   apiRouter.use(settingsRouter.routes()).use(settingsRouter.allowedMethods());
   apiRouter.use(ssoRouter.routes()).use(ssoRouter.allowedMethods());
   apiRouter.use(environmentRouter.routes()).use(environmentRouter.allowedMethods());
-  apiRouter.use(exchangeRouter.routes()).use(exchangeRouter.allowedMethods());
-  apiRouter.use(javaManagerRouter.routes()).use(javaManagerRouter.allowedMethods());
-  apiRouter.use(modManagerRouter.routes()).use(modManagerRouter.allowedMethods());
   apiRouter.use(ciRouter.routes()).use(ciRouter.allowedMethods()); // CI Job 看板（自研补充）
   apiRouter.use(runnerRouter.routes()).use(runnerRouter.allowedMethods()); // 一键添加 runner（自研补充）
   apiRouter.use(repoRouter.routes()).use(repoRouter.allowedMethods()); // 仓库注册表（自研补充）

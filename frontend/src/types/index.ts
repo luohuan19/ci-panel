@@ -21,14 +21,7 @@ export enum NEW_CARD_TYPE {
 }
 
 export interface InstanceRuntimeInfo {
-  mcPingOnline: boolean;
-  currentPlayers: number;
-  maxPlayers: number;
-  version: string;
   fileLock: number;
-  playersChart: { value: string }[];
-  openFrpStatus: boolean;
-  latency: number;
   cpuUsage?: number;
   memoryUsagePercent?: number;
   rxBytes?: number;
@@ -85,14 +78,8 @@ export interface Settings {
   loginInfo: string;
   canFileManager: boolean;
   language: string;
-  presetPackAddr: string;
   redisUrl: string;
-  allowUsePreset: boolean;
-  businessMode: boolean;
-  businessId: string;
   allowChangeCmd: boolean;
-  registerCode: string;
-  panelId: string;
   ssoEnabled: boolean;
   ssoOnlyMode: boolean;
   ssoAutoRedirect: boolean;
@@ -208,9 +195,6 @@ export interface ContainerInfo {
   ];
 }
 
-export type QuickStartTemplate = IQuickStartTemplate;
-export type QuickStartPackages = IQuickStartPackages;
-
 export interface LabelValueOption {
   label: string;
   value: string;
@@ -255,12 +239,8 @@ export interface PanelStatus {
   versionChange?: boolean;
   settings: {
     canFileManager: boolean;
-    allowUsePreset: boolean;
-    businessMode: boolean;
-    businessId: string;
-    allowChangeCmd: boolean;
-    panelId: string;
-    ssoEnabled: boolean;
+        allowChangeCmd: boolean;
+      ssoEnabled: boolean;
     ssoOnlyMode: boolean;
   };
 }

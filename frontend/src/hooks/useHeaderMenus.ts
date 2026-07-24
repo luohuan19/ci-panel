@@ -80,7 +80,7 @@ export function useHeaderMenus() {
   };
 
   const onClickIcon = () => {
-    window.open("https://github.com/MCSManager/MCSManager", "_blank");
+    window.open("https://github.com/luohuan19/ci-panel", "_blank");
   };
 
   const menus = computed(() => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getFileConfigAddr } from "@/hooks/useFileManager";
-import { INSTANCE_TYPE_TRANSLATION, TYPE_MINECRAFT_BUNGEECORD } from "@/hooks/useInstance";
-import { QUICKSTART_ACTION_TYPE, QUICKSTART_METHOD } from "@/hooks/widgets/quickStartFlow";
+import { INSTANCE_TYPE_TRANSLATION } from "@/hooks/useInstance";
+import { QUICKSTART_METHOD } from "@/hooks/widgets/quickStartFlow";
 import { t } from "@/lang/i18n";
 import { createInstance as createInstanceApi, uploadAddress } from "@/services/apis/instance";
 import uploadService, { UploadFiles } from "@/services/uploadService";
@@ -36,31 +36,6 @@ const formData = reactive<IGlobalInstanceConfig>(defaultInstanceInfo);
 const isImportMode = props.createMethod === QUICKSTART_METHOD.IMPORT;
 const isFileMode = props.createMethod === QUICKSTART_METHOD.FILE;
 const needUpload = isImportMode || isFileMode;
-
-function changeInstanceType(appType: string) {
-  if (appType.includes(QUICKSTART_ACTION_TYPE.Minecraft)) {
-    if (appType === TYPE_MINECRAFT_BUNGEECORD) {
-      formData.stopCommand = "end";
-    } else {
-      formData.stopCommand = "stop";
-    }
-  }
-
-  if (appType.includes(QUICKSTART_ACTION_TYPE.Bedrock)) {
-    formData.stopCommand = "stop";
-  }
-
-  if (appType.includes(QUICKSTART_ACTION_TYPE.Terraria)) {
-    formData.stopCommand = "stop";
-  }
-
-  if (
-    appType.includes(QUICKSTART_ACTION_TYPE.SteamGameServer) ||
-    appType.includes(QUICKSTART_ACTION_TYPE.AnyApp)
-  ) {
-    formData.stopCommand = "^c";
-  }
-}
 
 const rules: Record<string, Rule[]> = {
   nickname: [{ required: true, message: t("TXT_CODE_68a504b3") }],
@@ -244,11 +219,7 @@ const createInstance = async () => {
                 {{ t("TXT_CODE_be608c82") }}
               </a-typography-text>
             </a-typography-paragraph>
-            <a-select
-              v-model:value="formData.type"
-              :placeholder="t('TXT_CODE_3bb646e4')"
-              @change="(value) => changeInstanceType(value?.toString() ?? '')"
-            >
+            <a-select v-model:value="formData.type" :placeholder="t('TXT_CODE_3bb646e4')">
               <a-select-option
                 v-for="(item, key) in INSTANCE_TYPE_TRANSLATION"
                 :key="key"

@@ -5,26 +5,24 @@ import {
   useDockerEnvEditDialog,
   useDockerLabelEditDialog,
   usePortEditDialog,
-  useUploadFileDialog,
   useVolumeEditDialog
 } from "@/components/fc";
 import { INSTANCE_TYPE_TRANSLATION } from "@/hooks/useInstance";
-import { SEARCH_ALL_KEY, useMarketPackages, type FilterOption } from "@/hooks/useMarketPackages";
 import { useScreen } from "@/hooks/useScreen";
-import { isCN, t } from "@/lang/i18n";
+import { t } from "@/lang/i18n";
 import { getNetworkModeList } from "@/services/apis/envImage";
 import { updateAnyInstanceConfig } from "@/services/apis/instance";
 import { dockerPortsArray } from "@/tools/common";
 import { reportErrorMsg } from "@/tools/validator";
-import type { DockerNetworkModes, InstanceDetail, QuickStartPackages } from "@/types";
-import { defaultQuickStartPackages, TERMINAL_CODE } from "@/types/const";
+import type { DockerNetworkModes, InstanceDetail } from "@/types";
+import { TERMINAL_CODE } from "@/types/const";
 import { CheckOutlined, CloseOutlined } from "@ant-design/icons-vue";
 import type { FormInstance } from "ant-design-vue";
 import { message } from "ant-design-vue";
 import type { Rule } from "ant-design-vue/es/form";
 import { Dayjs } from "dayjs";
 import _ from "lodash";
-import { computed, defineComponent, ref, unref } from "vue";
+import { computed, ref, unref } from "vue";
 import { GLOBAL_INSTANCE_NAME } from "../../../config/const";
 import { dayjsToTimestamp, timestampToDayjs } from "../../../tools/time";
 import DockerImageSelect from "./components/DockerImageSelect.vue";
@@ -39,25 +37,19 @@ interface FormDetail extends InstanceDetail {
 
 interface CombinedFormData {
   instance: Partial<FormDetail>;
-  template: QuickStartPackages;
 }
 
 const props = defineProps<{
   instanceInfo?: InstanceDetail;
   instanceId?: string;
   daemonId?: string;
-  gameTypeList?: FilterOption[];
-  platformList?: FilterOption[];
-  categoryList?: FilterOption[];
 }>();
 
-const emit = defineEmits(["update", "save-template"]);
+const emit = defineEmits(["update"]);
 const open = ref(false);
 
 // eslint-disable-next-line no-unused-vars
 enum TabSettings {
-  // eslint-disable-next-line no-unused-vars
-  Template,
   // eslint-disable-next-line no-unused-vars
   Basic,
   // eslint-disable-next-line no-unused-vars
@@ -71,26 +63,14 @@ const activeKey = ref<TabSettings>(TabSettings.Basic);
 
 const UPDATE_CMD_DESCRIPTION = t("TXT_CODE_fa487a47");
 const UPDATE_CMD_TEMPLATE =
-  t("TXT_CODE_61ca492b") +
-  '"C:/SteamCMD/steamcmd.exe" +login anonymous +force_install_dir "{mcsm_workspace}" "+app_update 380870 validate" +quit';
+  t("TXT_CODE_61ca492b") + 'cd "{mcsm_workspace}" && ./config.sh --check && ./run.sh --once';
 
-const formType = ref<"template" | "normal">("normal");
-const isEditMode = ref(false);
-const isTemplateMode = computed(() => formType.value === "template");
-const title = computed(() =>
-  isTemplateMode.value
-    ? isEditMode.value
-      ? t("TXT_CODE_921206fc")
-      : t("TXT_CODE_3d45d8d")
-    : t("TXT_CODE_aac98b2a")
-);
+const title = computed(() => t("TXT_CODE_aac98b2a"));
 const { isPhone } = useScreen();
 
-// Unified form (merged instance + template)
 const formRef = ref<FormInstance>();
 const formData = ref<CombinedFormData>({
-  instance: {},
-  template: _.cloneDeep(defaultQuickStartPackages)
+  instance: {}
 });
 
 const formRules = computed<Record<string, any>>(() => ({
@@ -144,26 +124,8 @@ const formRules = computed<Record<string, any>>(() => ({
         ]
       }
     }
-  },
-  template: {
-    title: [{ required: true, message: t("TXT_CODE_6b5509c7") }],
-    language: [{ required: true, message: t("TXT_CODE_60752a40") }],
-    platform: [{ required: true, message: t("TXT_CODE_46039f9b") }],
-    description: [{ required: true, message: t("TXT_CODE_8d6c8ae7") }],
-    image: [{ required: true, message: t("TXT_CODE_c11ac499") }],
-    author: [{ required: true, message: t("TXT_CODE_f6d73056") }],
-    gameType: [{ required: true, message: t("TXT_CODE_f0694685") }],
-    category: [{ required: true, message: t("TXT_CODE_b2391fca") }],
-    runtime: [{ required: true, message: t("TXT_CODE_8717ed9d") }],
-    hardware: [{ required: true, message: t("TXT_CODE_f7909939") }],
-    setupInfo: {
-      type: [{ required: true, message: t("TXT_CODE_9f4eaa41") }]
-    }
   }
 }));
-
-const templateIndex = ref<number>(-1);
-const { languageOptions } = useMarketPackages();
 
 const initFormDetail = () => {
   if (props.instanceInfo) {
@@ -175,57 +137,9 @@ const initFormDetail = () => {
       deviceWriteBpsText: props.instanceInfo?.config?.docker.deviceWriteBps?.join(",") || "",
       imageSelectMethod: "SELECT"
     };
-  } else {
-    selectOptions.value.appGameTypeList = props.gameTypeList;
-    selectOptions.value.appPlatformList = props.platformList;
-    selectOptions.value.appCategoryList = props.categoryList;
-
-    formData.value.instance = {
-      config: formData.value.template!.setupInfo!,
-      dayjsEndTime: timestampToDayjs(formData.value.template!.setupInfo!.endTime),
-      networkAliasesText:
-        formData.value.template!.setupInfo!.docker.networkAliases?.join(",") || "",
-      deviceReadBpsText: formData.value.template!.setupInfo!.docker.deviceReadBps?.join(",") || "",
-      deviceWriteBpsText:
-        formData.value.template!.setupInfo!.docker.deviceWriteBps?.join(",") || "",
-      imageSelectMethod: "SELECT"
-    };
   }
   initGpuAllocMode();
   initGpuDeviceIdsText();
-};
-
-const VNodes = defineComponent({
-  props: {
-    vnodes: {
-      type: Object,
-      required: true
-    }
-  },
-  render() {
-    return this.vnodes;
-  }
-});
-const selectOptions = ref({
-  appGameTypeList: props.gameTypeList,
-  appPlatformList: props.platformList,
-  appCategoryList: props.categoryList
-});
-const searchFormData = ref<{
-  appGameTypeList: string;
-  appPlatformList: string;
-  appCategoryList: string;
-}>({
-  appGameTypeList: "",
-  appPlatformList: "",
-  appCategoryList: ""
-});
-const addOption = (item: string, category: keyof typeof selectOptions.value) => {
-  selectOptions.value![category]!.push({
-    label: item,
-    value: item
-  });
-  searchFormData.value[category] = "";
 };
 
 const networkModes = ref<DockerNetworkModes[]>([]);
@@ -288,56 +202,26 @@ const loadNetworkModes = async () => {
   }
 };
 
-const openDialog = async ({ item, i }: { item?: QuickStartPackages; i?: number } = {}) => {
-  if (item) {
-    formData.value.template = _.cloneDeep(item);
-    if (!formData.value.template.setupInfo?.docker)
-      formData.value.template.setupInfo!.docker = _.cloneDeep(
-        defaultQuickStartPackages.setupInfo!.docker
-      );
-    isEditMode.value = true;
-    templateIndex.value = Number(i);
-
-    formType.value = "template";
-    activeKey.value = TabSettings.Template;
-  } else if (Number(i) < 0) {
-    formData.value.template = _.cloneDeep(defaultQuickStartPackages);
-    formData.value.template.language = isCN() ? "zh_cn" : "en_us";
-    isEditMode.value = false;
-
-    formType.value = "template";
-    activeKey.value = TabSettings.Template;
-  } else {
-    await Promise.all([loadNetworkModes()]);
-  }
+const openDialog = async () => {
+  await loadNetworkModes();
   initFormDetail();
   open.value = true;
 };
 
 const submit = async () => {
   try {
-    if (isTemplateMode.value) {
-      await formRef.value?.validate();
-      emit("save-template", _.cloneDeep(formData.value.template), templateIndex.value);
-      open.value = false;
-      message.success(isEditMode.value ? t("TXT_CODE_a7907771") : t("TXT_CODE_d28c05df"));
-      formRef.value?.resetFields();
-      formData.value.template = _.cloneDeep(defaultQuickStartPackages);
-      return;
-    } else {
-      await formRef.value?.validate();
-      const postData = encodeFormData();
-      await execute({
-        params: {
-          uuid: props.instanceId ?? "",
-          daemonId: props.daemonId ?? ""
-        },
-        data: postData?.config!
-      });
-      emit("update");
-      open.value = false;
-      return message.success(t("TXT_CODE_d3de39b4"));
-    }
+    await formRef.value?.validate();
+    const postData = encodeFormData();
+    await execute({
+      params: {
+        uuid: props.instanceId ?? "",
+        daemonId: props.daemonId ?? ""
+      },
+      data: postData?.config!
+    });
+    emit("update");
+    open.value = false;
+    return message.success(t("TXT_CODE_d3de39b4"));
   } catch (error: any) {
     console.error(error);
     return reportErrorMsg(error.message ?? t("TXT_CODE_9911ac11"));
@@ -483,11 +367,6 @@ const handleEditDockerConfig = async (
   }
 };
 
-const handleUploadImg = async () => {
-  const url = await useUploadFileDialog();
-  if (url && formData.value.template) formData.value.template.image = url;
-};
-
 defineExpose({
   openDialog
 });
@@ -505,7 +384,7 @@ defineExpose({
     @ok="submit"
   >
     <div class="dialog-overflow-container">
-      <a-tooltip v-if="!isTemplateMode" :title="t('TXT_CODE_cdf7c16a')" placement="top">
+      <a-tooltip :title="t('TXT_CODE_cdf7c16a')" placement="top">
         <a-typography-text type="secondary" class="typography-text-ellipsis">
           {{ t("TXT_CODE_cdf7c16a") }}
         </a-typography-text>
@@ -522,280 +401,9 @@ defineExpose({
         autocomplete="off"
       >
         <a-tabs v-model:active-key="activeKey">
-          <a-tab-pane
-            v-if="isTemplateMode && formData.template"
-            :key="TabSettings.Template"
-            :tab="t('TXT_CODE_d9c63fdd')"
-          >
-            <a-row :gutter="20">
-              <a-col :span="24" :sm="24" :md="12">
-                <a-form-item :name="['template', 'image']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_80c5409f") }}
-                  </a-typography-title>
-                  <a-image
-                    fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1700' height='800' viewBox='0 0 170 80'%3E%3Crect width='1700' height='800' fill='%230044ff' fill-opacity='0.1'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='20' fill='%23ffffff80'%3EEmpty%3C/text%3E%3C/svg%3E"
-                    class="cursor-pointer"
-                    style="border-radius: 8px"
-                    width="100%"
-                    :src="formData.template.image"
-                    :placeholder="false"
-                    :preview="false"
-                    @click="handleUploadImg"
-                  />
-                  <a-input
-                    v-model:value="formData.template.image"
-                    class="mt-10"
-                    :placeholder="t('TXT_CODE_99a42341')"
-                  />
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="24" :md="12">
-                <a-form-item :name="['template', 'title']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_f4fba0cd") }}
-                  </a-typography-title>
-                  <a-input
-                    v-model:value="formData.template.title"
-                    :placeholder="t('TXT_CODE_6b5509c7')"
-                  />
-                </a-form-item>
-
-                <a-form-item :name="['template', 'description']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_59cdbec3") }}
-                  </a-typography-title>
-                  <a-textarea
-                    v-model:value="formData.template.description"
-                    :placeholder="t('TXT_CODE_98dbd049')"
-                    allow-clear
-                    size="large"
-                    :auto-size="{ minRows: 1 }"
-                  />
-                </a-form-item>
-
-                <a-row :gutter="20">
-                  <a-col :span="24" :lg="12">
-                    <a-form-item :name="['template', 'language']">
-                      <a-typography-title :level="5" class="require-field">
-                        {{ t("TXT_CODE_2a34c50a") }}
-                      </a-typography-title>
-                      <a-select
-                        v-model:value="formData.template.language"
-                        :placeholder="t('TXT_CODE_60752a40')"
-                        :options="languageOptions"
-                      />
-                    </a-form-item>
-                  </a-col>
-                  <a-col :span="24" :lg="12">
-                    <a-form-item :name="['template', 'author']">
-                      <a-typography-title :level="5" class="require-field">
-                        {{ t("TXT_CODE_3d56da34") }}
-                      </a-typography-title>
-                      <a-input
-                        v-model:value="formData.template.author"
-                        :placeholder="t('TXT_CODE_e6adf32d')"
-                      />
-                    </a-form-item>
-                  </a-col>
-                </a-row>
-              </a-col>
-            </a-row>
-
-            <a-row :gutter="20">
-              <a-col :span="24" :sm="12" :lg="6">
-                <a-form-item :name="['template', 'setupInfo', 'type']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_c5ace40b") }}
-                  </a-typography-title>
-                  <a-select
-                    v-if="formData.template.setupInfo"
-                    v-model:value="formData.template.setupInfo.type"
-                    :placeholder="t('TXT_CODE_3bb646e4')"
-                    show-search
-                  >
-                    <a-select-option
-                      v-for="(item, key) in INSTANCE_TYPE_TRANSLATION"
-                      :key="key"
-                      :value="key"
-                    >
-                      {{ item }}
-                    </a-select-option>
-                  </a-select>
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="12" :lg="6">
-                <a-form-item :name="['template', 'gameType']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_ebfb4831") }}
-                  </a-typography-title>
-                  <a-select
-                    v-model:value="formData.template.gameType"
-                    show-search
-                    :placeholder="t('TXT_CODE_3bb646e4')"
-                    :options="
-                      selectOptions.appGameTypeList?.filter((item) => item.value !== SEARCH_ALL_KEY)
-                    "
-                  >
-                    <template #dropdownRender="{ menuNode: menu }">
-                      <v-nodes :vnodes="menu" />
-                      <a-divider style="margin: 4px 0" />
-                      <a-space style="padding: 4px 8px">
-                        <a-input
-                          ref="inputRef"
-                          v-model:value="searchFormData.appGameTypeList"
-                          size="middle"
-                        />
-                        <a-button
-                          type="text"
-                          @click="addOption(searchFormData.appGameTypeList, 'appGameTypeList')"
-                        >
-                          <template #icon>
-                            <PlusOutlined />
-                          </template>
-                          {{ t("TXT_CODE_a1d885c1") }}
-                        </a-button>
-                      </a-space>
-                    </template>
-                  </a-select>
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="12" :lg="6">
-                <a-form-item :name="['template', 'platform']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_1ce1d1d1") }}
-                  </a-typography-title>
-                  <a-select
-                    v-model:value="formData.template.platform"
-                    show-search
-                    :placeholder="t('TXT_CODE_3bb646e4')"
-                    :options="
-                      selectOptions.appPlatformList?.filter((item) => item.value !== SEARCH_ALL_KEY)
-                    "
-                  >
-                    <template #dropdownRender="{ menuNode: menu }">
-                      <v-nodes :vnodes="menu" />
-                      <a-divider style="margin: 4px 0" />
-                      <a-space style="padding: 4px 8px">
-                        <a-input
-                          ref="inputRef"
-                          v-model:value="searchFormData.appPlatformList"
-                          size="middle"
-                        />
-                        <a-button
-                          type="text"
-                          @click="addOption(searchFormData.appPlatformList, 'appPlatformList')"
-                        >
-                          <template #icon>
-                            <PlusOutlined />
-                          </template>
-                          {{ t("TXT_CODE_a1d885c1") }}
-                        </a-button>
-                      </a-space>
-                    </template>
-                  </a-select>
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="12" :lg="6">
-                <a-form-item :name="['template', 'category']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_2d8a400") }}
-                  </a-typography-title>
-                  <a-select
-                    v-model:value="formData.template.category"
-                    show-search
-                    :placeholder="t('TXT_CODE_3bb646e4')"
-                    :options="
-                      selectOptions.appCategoryList?.filter((item) => item.value !== SEARCH_ALL_KEY)
-                    "
-                  >
-                    <template #dropdownRender="{ menuNode: menu }">
-                      <v-nodes :vnodes="menu" />
-                      <a-divider style="margin: 4px 0" />
-                      <a-space style="padding: 4px 8px">
-                        <a-input
-                          ref="inputRef"
-                          v-model:value="searchFormData.appCategoryList"
-                          size="middle"
-                        />
-                        <a-button
-                          type="text"
-                          @click="addOption(searchFormData.appCategoryList, 'appCategoryList')"
-                        >
-                          <template #icon>
-                            <PlusOutlined />
-                          </template>
-                          {{ t("TXT_CODE_a1d885c1") }}
-                        </a-button>
-                      </a-space>
-                    </template>
-                  </a-select>
-                </a-form-item>
-              </a-col>
-            </a-row>
-
-            <a-row :gutter="20">
-              <a-col :span="24" :sm="12" :lg="8">
-                <a-form-item :name="['template', 'runtime']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_80c85070") }}
-                  </a-typography-title>
-                  <a-input
-                    v-model:value="formData.template.runtime"
-                    :placeholder="t('TXT_CODE_772bb48a')"
-                  />
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="12" :lg="8">
-                <a-form-item :name="['template', 'hardware']">
-                  <a-typography-title :level="5" class="require-field">
-                    {{ t("TXT_CODE_683e3033") }}
-                  </a-typography-title>
-                  <a-input
-                    v-model:value="formData.template.hardware"
-                    :placeholder="t('TXT_CODE_d79ff710')"
-                  />
-                </a-form-item>
-              </a-col>
-              <a-col :span="24" :sm="12" :lg="8">
-                <a-form-item :name="['template', 'size']">
-                  <a-typography-title :level="5">
-                    {{ t("TXT_CODE_8dbcf565") }}
-                  </a-typography-title>
-                  <a-input
-                    v-model:value="formData.template.size"
-                    placeholder="Example: 1024MB, 1GB"
-                    allow-clear
-                  />
-                </a-form-item>
-              </a-col>
-            </a-row>
-
-            <a-form-item :name="['template', 'targetLink']">
-              <a-typography-title :level="5">
-                {{ t("TXT_CODE_13eac7e1") }}
-              </a-typography-title>
-              <a-input
-                v-model:value="formData.template.targetLink"
-                :placeholder="t('TXT_CODE_8d83752')"
-              />
-            </a-form-item>
-
-            <a-form-item :name="['template', 'tags']">
-              <a-typography-title :level="5">
-                {{ t("TXT_CODE_9901af98") }}
-              </a-typography-title>
-              <a-select
-                v-model:value="formData.template.tags"
-                mode="tags"
-                :placeholder="t('TXT_CODE_7d839745')"
-                :token-separators="[',']"
-              ></a-select>
-            </a-form-item>
-          </a-tab-pane>
           <a-tab-pane :key="TabSettings.Basic" :tab="t('TXT_CODE_cc7b54b9')">
             <a-row :gutter="20">
-              <a-col v-if="!isTemplateMode" :xs="24" :lg="8" :offset="0">
+              <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item :name="['instance', 'config', 'nickname']">
                   <a-typography-title :level="5" class="require-field">
                     {{ t("TXT_CODE_f70badb9") }}
@@ -813,7 +421,7 @@ defineExpose({
                   />
                 </a-form-item>
               </a-col>
-              <a-col v-if="!isTemplateMode" :xs="24" :lg="8" :offset="0">
+              <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
                   <a-typography-title :level="5" class="require-field">
                     {{ t("TXT_CODE_2f291d8b") }}
@@ -841,7 +449,7 @@ defineExpose({
                 </a-form-item>
               </a-col>
 
-              <a-col v-if="!isTemplateMode" :xs="24" :lg="8" :offset="0">
+              <a-col :xs="24" :lg="8" :offset="0">
                 <a-form-item>
                   <a-typography-title :level="5">{{ t("TXT_CODE_fa920c0") }}</a-typography-title>
                   <a-typography-paragraph>
@@ -927,7 +535,7 @@ defineExpose({
           </a-tab-pane>
           <a-tab-pane :key="TabSettings.Advanced" :tab="t('TXT_CODE_31a1d824')">
             <a-row :gutter="20">
-              <a-col v-if="!isTemplateMode" :xs="24" :offset="0">
+              <a-col :xs="24" :offset="0">
                 <a-form-item :name="['instance', 'config', 'cwd']">
                   <a-typography-title :level="5" class="require-field">
                     {{ t("TXT_CODE_ee67e1a3") }}
@@ -1193,7 +801,7 @@ defineExpose({
                   </a-form-item>
                 </a-col>
 
-                <a-col v-if="!isTemplateMode" :xs="24" :lg="8" :offset="0">
+                <a-col :xs="24" :lg="8" :offset="0">
                   <a-form-item :name="['instance', 'config', 'basePort']">
                     <a-typography-title :level="5">
                       {{ t("TXT_CODE_15f5fb07") }}

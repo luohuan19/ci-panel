@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { getProPanelUrl } from "@/components/IframeBox/config";
-import IframeBox from "@/components/IframeBox/index.vue";
 import LeftMenusPanel from "@/components/LeftMenusPanel.vue";
 import Loading from "@/components/Loading.vue";
 import { useUploadFileDialog } from "@/components/fc";
 import { router } from "@/config/router";
-import { SUPPORTED_LANGS, isCN, t } from "@/lang/i18n";
+import { SUPPORTED_LANGS, t } from "@/lang/i18n";
 import { setSettingInfo, settingInfo } from "@/services/apis";
 import { useAppConfigStore } from "@/stores/useAppConfigStore";
 import { useLayoutConfigStore } from "@/stores/useLayoutConfig";
@@ -15,13 +13,9 @@ import { reportErrorMsg } from "@/tools/validator";
 import type { LayoutCard, Settings } from "@/types";
 import {
   ApiOutlined,
-  BankOutlined,
-  BookOutlined,
   BugOutlined,
   GithubOutlined,
   LockOutlined,
-  MessageOutlined,
-  MoneyCollectOutlined,
   PicLeftOutlined,
   ProjectOutlined,
   QuestionCircleOutlined
@@ -100,18 +94,6 @@ const menus = arrayFilter([
     key: "baseInfo",
     icon: ProjectOutlined
   },
-  // {
-  //   title: t("TXT_CODE_574ed474"),
-  //   key: "pro",
-  //   icon: SketchOutlined,
-  //   condition: () => isCN()
-  // },
-  // {
-  //   title: t("TXT_CODE_caf8ebb7"),
-  //   key: "redeem",
-  //   icon: KeyOutlined,
-  //   condition: () => isCN()
-  // },
   {
     title: t("TXT_CODE_1c18acc0"),
     key: "ui",
@@ -126,17 +108,6 @@ const menus = arrayFilter([
     title: t("TXT_CODE_SSO_TAB_TITLE"),
     key: "sso",
     icon: ApiOutlined
-  },
-  {
-    title: t("TXT_CODE_46cb40d5"),
-    key: "sponsor",
-    icon: MoneyCollectOutlined,
-    condition: () => !isCN(),
-    click: () => {
-      let url = "https://www.patreon.com/mcsmanager";
-      if (isCN()) url = "https://afdian.com/a/mcsmanager";
-      window.open(url, "_blank");
-    }
   },
   {
     title: t("TXT_CODE_3b4b656d"),
@@ -177,30 +148,15 @@ const aboutLinks = arrayFilter([
   {
     title: "GitHub",
     icon: GithubOutlined,
-    url: "https://github.com/MCSManager/MCSManager"
-  },
-  {
-    title: "Discord",
-    icon: MessageOutlined,
-    url: "https://discord.gg/BNpYMVX7Cd"
+    url: "https://github.com/luohuan19/ci-panel"
   }
 ]);
 
 const contacts = arrayFilter([
   {
-    title: t("TXT_CODE_41dd4d19"),
-    icon: BankOutlined,
-    url: "https://mcsmanager.com/"
-  },
-  {
-    title: t("TXT_CODE_74c3d3e5"),
-    icon: BookOutlined,
-    url: "https://docs.mcsmanager.com/"
-  },
-  {
     title: t("TXT_CODE_26407d1f"),
     icon: BugOutlined,
-    url: "https://github.com/MCSManager/MCSManager/issues"
+    url: "https://github.com/luohuan19/ci-panel/issues"
   }
 ]);
 
@@ -400,11 +356,6 @@ onMounted(async () => {
   if (cfg?.theme?.sidebarPosition === "left" || cfg?.theme?.sidebarPosition === "right") {
     sidebarPosition.value = cfg.theme.sidebarPosition;
   }
-  setTimeout(() => {
-    if (router.currentRoute.value.query.tab === "pro") {
-      leftMenusPanelRef.value?.setActiveKey("pro");
-    }
-  }, 100);
 });
 
 onUnmounted(() => {
@@ -470,24 +421,6 @@ onUnmounted(() => {
                     <a-input
                       v-model:value="formData.httpIp"
                       style="max-width: 320px"
-                      :placeholder="t('TXT_CODE_4ea93630')"
-                    />
-                  </a-form-item>
-
-                  <a-form-item>
-                    <a-typography-title :level="5">Panel ID</a-typography-title>
-                    <a-typography-paragraph type="secondary">
-                      {{ t("TXT_CODE_e2976753") }}
-                      <br />
-                      <span v-if="formData.panelId">
-                        {{ t("TXT_CODE_e56cced3") }}
-                      </span>
-                      <span v-else>
-                        {{ t("TXT_CODE_699b4b66") }}
-                      </span>
-                    </a-typography-paragraph>
-                    <a-input
-                      v-model:value="formData.panelId"
                       :placeholder="t('TXT_CODE_4ea93630')"
                     />
                   </a-form-item>
@@ -717,29 +650,6 @@ onUnmounted(() => {
                     </a-typography-paragraph>
                     <a-select
                       v-model:value.prop="(formData as any).canFileManager"
-                      style="max-width: 320px"
-                    >
-                      <a-select-option
-                        v-for="item in allYesNo"
-                        :key="item.value"
-                        :value="item.value"
-                      >
-                        {{ item.label }}
-                      </a-select-option>
-                    </a-select>
-                  </a-form-item>
-
-                  <a-form-item>
-                    <a-typography-title :level="5">
-                      {{ t("TXT_CODE_3c93920b") }}
-                    </a-typography-title>
-                    <a-typography-paragraph>
-                      <a-typography-text type="secondary">
-                        {{ t("TXT_CODE_bc2e52a0") }}
-                      </a-typography-text>
-                    </a-typography-paragraph>
-                    <a-select
-                      v-model:value.prop="(formData as any).allowUsePreset"
                       style="max-width: 320px"
                     >
                       <a-select-option
@@ -1130,14 +1040,6 @@ onUnmounted(() => {
             </div>
           </template>
 
-          <template #pro>
-            <IframeBox :src="getProPanelUrl('/status')" :height="card.height" />
-          </template>
-
-          <template #redeem>
-            <IframeBox :src="getProPanelUrl('/')" :height="card.height" />
-          </template>
-
           <template #about>
             <div class="content-box" :style="{ maxHeight: card.height }">
               <a-typography-title :level="4" class="mb-24">
@@ -1178,19 +1080,6 @@ onUnmounted(() => {
                   {{ $t("TXT_CODE_e57bd50f") }}
                 </p>
                 <pre style="font-size: 13px">{{ ApacheLicense }}</pre>
-              </a-typography-paragraph>
-            </div>
-          </template>
-
-          <template #sponsor>
-            <div class="content-box" :style="{ maxHeight: card.height }">
-              <a-typography-title :level="4" class="mb-24">
-                {{ t("TXT_CODE_46cb40d5") }}
-              </a-typography-title>
-              <a-typography-paragraph>
-                <p>
-                  {{ $t("TXT_CODE_d0c670df") }}
-                </p>
               </a-typography-paragraph>
             </div>
           </template>

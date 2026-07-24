@@ -5,7 +5,7 @@ import { $t } from "../i18n";
 import { speedLimit } from "../middleware/limit";
 import permission from "../middleware/permission";
 import validator from "../middleware/validator";
-import { checkInstanceAdvancedParams, getAppMarketList } from "../service/instance_service";
+import { checkInstanceAdvancedParams } from "../service/instance_service";
 import { operationLogger } from "../service/operation_logger";
 import { getUserPermission, getUserUuid } from "../service/passport_service";
 import { timeUuid } from "../service/password";
@@ -196,37 +196,6 @@ router.all(
 );
 
 // [Low-level Permission]
-// query asynchronous task status
-router.all(
-  "/query_asynchronous",
-  permission({ level: ROLE.ADMIN, speedLimit: false }),
-  validator({
-    query: { daemonId: String, uuid: String }
-  }),
-  async (ctx) => {
-    try {
-      const daemonId = String(ctx.query.daemonId);
-      const instanceUuid = String(ctx.query.uuid);
-      const taskName = String(ctx.query.task_name);
-      const parameter = ctx.request.body;
-      const taskId = parameter.taskId;
-      // Must have administrator to query all asynchronous tasks
-      if (!taskId && !isTopPermissionByUuid(getUserUuid(ctx))) {
-        throw new Error("Unauthorized access");
-      }
-      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
-      ctx.body = await new RemoteRequest(remoteService).request("instance/query_asynchronous", {
-        instanceUuid,
-        taskName,
-        parameter
-      });
-    } catch (err) {
-      ctx.body = err;
-    }
-  }
-);
-
-// [Low-level Permission]
 // Request to establish a data stream dedicated channel with the daemon
 router.post(
   "/stream_channel",
@@ -255,91 +224,6 @@ router.post(
         prefix,
         remoteMappings
       };
-    } catch (err) {
-      ctx.body = err;
-    }
-  }
-);
-
-// [Low-level Permission]
-// Get the instance configuration file list based on the file list
-router.post(
-  "/process_config/list",
-  permission({ level: ROLE.USER }),
-  validator({ query: { daemonId: String, uuid: String } }),
-  async (ctx) => {
-    try {
-      const daemonId = String(ctx.query.daemonId);
-      const instanceUuid = String(ctx.query.uuid);
-      const files = ctx.request.body.files;
-      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
-      const result = await new RemoteRequest(remoteService).request(
-        "instance/process_config/list",
-        {
-          instanceUuid,
-          files
-        }
-      );
-      ctx.body = result;
-    } catch (err) {
-      ctx.body = err;
-    }
-  }
-);
-
-// [Low-level Permission]
-// Get the content of the specified configuration file
-router.get(
-  "/process_config/file",
-  permission({ level: ROLE.USER }),
-  validator({ query: { daemonId: String, uuid: String, fileName: String } }),
-  async (ctx) => {
-    try {
-      const daemonId = String(ctx.query.daemonId);
-      const instanceUuid = String(ctx.query.uuid);
-      const fileName = String(ctx.query.fileName);
-      const type = String(ctx.query.type);
-      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
-      const result = await new RemoteRequest(remoteService).request(
-        "instance/process_config/file",
-        {
-          instanceUuid,
-          fileName,
-          config: null,
-          type
-        }
-      );
-      ctx.body = result;
-    } catch (err) {
-      ctx.body = err;
-    }
-  }
-);
-
-// [Low-level Permission]
-// Update the content of the specified configuration file
-router.put(
-  "/process_config/file",
-  permission({ level: ROLE.USER }),
-  validator({ query: { daemonId: String, uuid: String, fileName: String } }),
-  async (ctx) => {
-    try {
-      const daemonId = String(ctx.query.daemonId);
-      const instanceUuid = String(ctx.query.uuid);
-      const fileName = String(ctx.query.fileName);
-      const type = String(ctx.query.type);
-      const config = ctx.request.body;
-      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
-      const result = await new RemoteRequest(remoteService).request(
-        "instance/process_config/file",
-        {
-          instanceUuid,
-          fileName,
-          config,
-          type
-        }
-      );
-      ctx.body = result;
     } catch (err) {
       ctx.body = err;
     }
@@ -378,19 +262,6 @@ router.put(
         instanceTags = instanceTags!.sort((a, b) => (a > b ? 1 : -1));
       }
 
-      // Steam Rcon configuration
-      const rconIp = toText(config.rconIp);
-      const rconPort = toNumber(config.rconPort);
-      const rconPassword = toText(config.rconPassword);
-      const enableRcon = toBoolean(config.enableRcon);
-
-      // Ping protocol configuration
-      const pingConfig = {
-        ip: toText(config.pingConfig?.ip),
-        port: toNumber(config.pingConfig?.port),
-        type: config.pingConfig?.type
-      };
-
       // event task configuration
       const eventTask = {
         autoStart: toBoolean(config.eventTask?.autoStart),
@@ -404,12 +275,6 @@ router.put(
         pty: toBoolean(config.terminalOption?.pty),
         ptyWindowCol: toNumber(config.terminalOption?.ptyWindowCol),
         ptyWindowRow: toNumber(config.terminalOption?.ptyWindowRow)
-      };
-
-      // extra service
-      const extraServiceConfig = {
-        openFrpTunnelId: toText(config.extraServiceConfig?.openFrpTunnelId),
-        openFrpToken: toText(config.extraServiceConfig?.openFrpToken)
       };
 
       const crlf = !isEmpty(config.crlf) ? toNumber(config?.crlf) : null;
@@ -426,18 +291,12 @@ router.put(
       await new RemoteRequest(remoteService).request("instance/update", {
         instanceUuid,
         config: {
-          pingConfig: !isEmpty(config.pingConfig) ? pingConfig : null,
           eventTask: !isEmpty(config.eventTask) ? eventTask : null,
           terminalOption: !isEmpty(config.terminalOption) ? terminalOption : null,
-          extraServiceConfig: !isEmpty(config.extraServiceConfig) ? extraServiceConfig : null,
           crlf,
           oe,
           ie,
           stopCommand,
-          rconIp,
-          rconPort,
-          rconPassword,
-          enableRcon,
           tag: instanceTags,
           fileCode,
           ...advancedConfig
@@ -509,62 +368,6 @@ router.post(
         role: getUserPermission(ctx) // Permission check is performed in the daemon
       });
       ctx.body = result;
-    } catch (err) {
-      ctx.body = err;
-    }
-  }
-);
-
-// [Low-level Permission]
-// Reinstall the instance
-router.post(
-  "/install_instance",
-  speedLimit(3),
-  permission({ level: ROLE.USER, speedLimit: true }),
-  validator({
-    query: { daemonId: String, uuid: String },
-    body: { description: String, title: String }
-  }),
-  async (ctx) => {
-    if (systemConfig?.allowUsePreset === false && !isTopPermissionByUuid(getUserUuid(ctx))) {
-      ctx.status = 403;
-      ctx.body = new Error($t("TXT_CODE_b5a47731"));
-      return;
-    }
-    try {
-      const daemonId = String(ctx.query.daemonId);
-      const instanceUuid = String(ctx.query.uuid);
-
-      // Use "description" and "title" as Package ID
-      // Do NOT use other parameters from frontend, it may be a malicious attack
-      const description = String(ctx.request.body.description);
-      const title = String(ctx.request.body.title);
-
-      const presetUrl = systemConfig?.presetPackAddr;
-      if (!presetUrl) throw new Error("Preset Addr is empty!");
-
-      const presetConfig = await getAppMarketList();
-      const packages = presetConfig?.packages || [];
-
-      if (!(packages instanceof Array)) throw new Error("Preset Config is not array!");
-
-      // Find the target preset config
-      const targetPresetConfig = packages.find(
-        (v) => v.title === title && v.description === description
-      );
-      if (!targetPresetConfig) throw new Error("Preset Config is not found!");
-
-      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
-      await new RemoteRequest(remoteService).request("instance/asynchronous", {
-        taskName: "install_instance",
-        instanceUuid,
-        parameter: targetPresetConfig,
-        // targetPresetConfig is a template configured by the administrator,
-        // so it is theoretically safe and does not require a permission check
-        role: ROLE.ADMIN
-      });
-
-      ctx.body = true;
     } catch (err) {
       ctx.body = err;
     }

@@ -203,21 +203,6 @@ onMounted(async () => {
             <span>
               <strong>{{ $t("TXT_CODE_d4c8fb3b") }}</strong>
             </span>
-            <a
-              href="https://docs.mcsmanager.com/ops/proxy_https.html"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {{ $t("TXT_CODE_9b3ce825") }}
-            </a>
-            <span>|</span>
-            <a
-              href="https://docs.mcsmanager.com/ops/mcsm_network.html"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {{ $t("TXT_CODE_10cc2794") }}
-            </a>
           </div>
         </a-typography-paragraph>
         <a-typography-title :level="5">{{ $t("TXT_CODE_f1c96d8a") }}</a-typography-title>

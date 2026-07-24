@@ -8,7 +8,6 @@ import { GOLANG_ZIP_PATH, LOCAL_PRESET_LANG_PATH, PTY_PATH } from "./const";
 import { globalConfiguration } from "./entity/config";
 import { $t, i18next } from "./i18n";
 import "./service/async_task_service";
-import "./service/async_task_service/quick_install";
 import { checkDependencies } from "./service/dependencies";
 import * as koa from "./service/http";
 import logger from "./service/log";

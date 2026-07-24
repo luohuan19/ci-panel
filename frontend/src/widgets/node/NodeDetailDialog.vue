@@ -214,10 +214,6 @@ defineExpose({ openDialog });
             <a-typography-paragraph>
               <a-typography-text type="secondary">
                 {{ t("TXT_CODE_5ef2cf20") }}
-
-                <a href="https://docs.mcsmanager.com/advanced/distributed.html" target="_blank">
-                  {{ t("TXT_CODE_be1351ce") }}
-                </a>
               </a-typography-text>
             </a-typography-paragraph>
             <a-input

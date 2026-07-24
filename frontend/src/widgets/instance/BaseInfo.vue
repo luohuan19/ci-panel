@@ -34,17 +34,6 @@ const getInstanceName = computed(() => {
   }
 });
 
-const instanceGameServerInfo = computed(() => {
-  if (instanceInfo.value?.info?.mcPingOnline) {
-    return {
-      players: `${instanceInfo.value?.info.currentPlayers} / ${instanceInfo.value?.info.maxPlayers}`,
-      version: instanceInfo.value?.info.version
-    };
-  } else {
-    return null;
-  }
-});
-
 onMounted(async () => {
   if (instanceId && daemonId) {
     await execute({
@@ -102,19 +91,6 @@ onMounted(async () => {
         </span>
       </a-typography-paragraph>
 
-      <a-typography-paragraph v-if="instanceGameServerInfo">
-        <span>{{ t("TXT_CODE_855c4a1c") }}</span>
-        <span>{{ instanceGameServerInfo.players }}</span>
-      </a-typography-paragraph>
-      <a-typography-paragraph v-if="instanceGameServerInfo">
-        <span>
-          {{ t("TXT_CODE_e260a220") }}
-        </span>
-        <span>
-          {{ instanceGameServerInfo.version }}
-        </span>
-      </a-typography-paragraph>
-
       <template v-if="instanceInfo?.config.processType === 'docker'">
         <a-typography-paragraph>
           {{ t("TXT_CODE_4f917a65") }}
@@ -146,13 +122,13 @@ onMounted(async () => {
         <span>{{ t("TXT_CODE_ae747cc0") }}</span>
         <span>{{ parseTimestamp(instanceInfo?.config.endTime) || t("TXT_CODE_e3a77a77") }}</span>
       </a-typography-paragraph>
-      <a-typography-paragraph v-if="!instanceGameServerInfo">
+      <a-typography-paragraph>
         {{ t("TXT_CODE_8b8e08a6") }}{{ parseTimestamp(instanceInfo?.config.createDatetime) }}
       </a-typography-paragraph>
       <a-typography-paragraph>
         {{ t("TXT_CODE_46f575ae") }}{{ parseTimestamp(instanceInfo?.config.lastDatetime) }}
       </a-typography-paragraph>
-      <a-typography-paragraph v-if="!instanceGameServerInfo">
+      <a-typography-paragraph>
         <span>{{ t("TXT_CODE_cec321b4") }}{{ instanceInfo?.config.oe.toUpperCase() }} </span>
         <span class="ml-6">
           {{ t("TXT_CODE_400a4210") }}{{ instanceInfo?.config.ie.toUpperCase() }}

@@ -18,7 +18,7 @@ const LANGUAGE_MAP = {
   "tr_TR.json": "Turkish"
 };
 
-const SYSTEM_PROMPT = `You are a UI localization translator for MCSManager.
+const SYSTEM_PROMPT = `You are a UI localization translator for ci-panel.
 Input: a JSON array of objects like {"key": string, "text": string}. Translate each "text" to {target}.
 Output: ONLY a valid JSON array with the same objects shape, the same "key" values, and the same array order/length.
 Rules: keep all placeholders/tokens unchanged (e.g. "{{...}}", "<...>", "{...}"), preserve all whitespace/newlines (including "\\n"), and keep punctuation consistent. Use natural {target} wording and be as concise as possible.

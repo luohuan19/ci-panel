@@ -59,9 +59,6 @@ const handleOpenDetailDialog = async () => {
             <a-button type="primary" @click="handleOpenDetailDialog">
               {{ t("TXT_CODE_15a381d5") }}
             </a-button>
-            <a-button href="https://docs.mcsmanager.com/" target="_black">
-              {{ t("TXT_CODE_3a302f23") }}
-            </a-button>
           </template>
           <template #center>
             <div class="search-input">

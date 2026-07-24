@@ -1,7 +1,6 @@
 /* eslint-disable no-unused-vars */
 import { TYPE_UNIVERSAL } from "@/hooks/useInstance";
 import { t } from "@/lang/i18n";
-import type { QuickStartPackages } from ".";
 
 export enum AppTheme {
   AUTO = 0,
@@ -154,10 +153,6 @@ export const defaultDockerConfig: IGlobalInstanceDockerConfig = {
   deviceWriteBps: []
 };
 
-export const defaultInstanceJavaConfig: IInstanceJavaConfig = {
-  id: ""
-};
-
 export const defaultInstanceInfo: IGlobalInstanceConfig = {
   nickname: "",
   startCommand: "",
@@ -180,15 +175,6 @@ export const defaultInstanceInfo: IGlobalInstanceConfig = {
   category: 0,
   basePort: undefined as any,
 
-  // Steam RCON
-  enableRcon: false,
-  rconPassword: "",
-  rconPort: undefined,
-  rconIp: "",
-
-  // Java
-  java: defaultInstanceJavaConfig,
-
   // Old fields
   terminalOption: {
     haveColor: true,
@@ -202,33 +188,6 @@ export const defaultInstanceInfo: IGlobalInstanceConfig = {
     autoRestartMaxTimes: 3,
     ignore: false
   },
-  docker: defaultDockerConfig,
-  pingConfig: {
-    ip: "",
-    port: undefined,
-    type: 1
-  },
-  extraServiceConfig: {
-    openFrpTunnelId: "",
-    openFrpToken: ""
-  }
+  docker: defaultDockerConfig
 };
 
-export const defaultQuickStartPackages: QuickStartPackages = {
-  language: "",
-  description: "",
-  title: "",
-  category: "",
-  runtime: "",
-  size: "",
-  hardware: "",
-  remark: "",
-  targetLink: "",
-  author: "",
-  setupInfo: defaultInstanceInfo,
-  gameType: "",
-  image: "",
-  platform: "",
-  tags: [],
-  isSummary: false
-};
