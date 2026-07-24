@@ -731,29 +731,6 @@ onUnmounted(() => {
 
                   <a-form-item>
                     <a-typography-title :level="5">
-                      {{ t("TXT_CODE_3c93920b") }}
-                    </a-typography-title>
-                    <a-typography-paragraph>
-                      <a-typography-text type="secondary">
-                        {{ t("TXT_CODE_bc2e52a0") }}
-                      </a-typography-text>
-                    </a-typography-paragraph>
-                    <a-select
-                      v-model:value.prop="(formData as any).allowUsePreset"
-                      style="max-width: 320px"
-                    >
-                      <a-select-option
-                        v-for="item in allYesNo"
-                        :key="item.value"
-                        :value="item.value"
-                      >
-                        {{ item.label }}
-                      </a-select-option>
-                    </a-select>
-                  </a-form-item>
-
-                  <a-form-item>
-                    <a-typography-title :level="5">
                       {{ t("TXT_CODE_405cd346") }}
                     </a-typography-title>
                     <a-typography-paragraph>

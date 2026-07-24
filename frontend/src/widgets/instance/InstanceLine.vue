@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useDeleteInstanceDialog } from "@/components/fc/index";
 import { useAppRouters } from "@/hooks/useAppRouters";
-import { verifyEULA } from "@/hooks/useInstance";
 import { t } from "@/lang/i18n";
 import { openInstance, restartInstance, stopInstance } from "@/services/apis/instance";
 import { formatMemoryUsage } from "@/tools/memory";
@@ -18,8 +17,7 @@ import {
   FrownOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
-  RedoOutlined,
-  UserOutlined
+  RedoOutlined
 } from "@ant-design/icons-vue";
 import { message } from "ant-design-vue";
 import type { ColumnType } from "ant-design-vue/es/table";
@@ -56,8 +54,6 @@ const refreshList = () => {
 
 const actions = {
   start: async () => {
-    const flag = await verifyEULA(instanceId ?? "", daemonId ?? "");
-    if (!flag) return;
     await executeOpen(operationConfig);
     message.success(t("TXT_CODE_e13abbb1"));
   },
@@ -158,13 +154,6 @@ const toInstanceTerminal = async () => {
           {{ formatMemoryUsage(record.inst.info.memoryUsage, record.inst.info.memoryLimit) }}
         </a-tag>
       </a-space>
-    </template>
-
-    <template v-else-if="column.key === 'players' && !node">
-      <div v-if="record.inst.info?.mcPingOnline">
-        <UserOutlined />
-        {{ record.inst.info?.currentPlayers }} / {{ record.inst.info?.maxPlayers }}
-      </div>
     </template>
 
     <template v-else-if="column.key === 'actions' && !node">

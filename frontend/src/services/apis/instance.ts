@@ -2,9 +2,7 @@ import { useDefineApi } from "@/stores/useDefineApi";
 import type { RemoteMappingEntry } from "@/tools/protocol";
 import type {
   InstanceDetail,
-  JsonData,
   NewScheduleTask,
-  QuickStartTemplate,
   Schedule
 } from "@/types";
 
@@ -232,121 +230,6 @@ export const createInstance = useDefineApi<
   url: "/api/instance"
 });
 
-export const quickInstallListAddr = useDefineApi<any, QuickStartTemplate>({
-  url: "/api/instance/quick_install_list",
-  method: "GET"
-});
-
-export const createAsyncTask = useDefineApi<
-  {
-    params: {
-      daemonId: string;
-      uuid: string;
-      task_name: string;
-    };
-    data: {
-      time: number;
-      newInstanceName: string;
-      targetLink?: string;
-      setupInfo?: JsonData;
-    };
-  },
-  {
-    instanceConfig: IGlobalInstanceConfig;
-    instanceStatus: number;
-    instanceUuid: string;
-    status: number;
-    taskId: string;
-  }
->({
-  url: "/api/protected_instance/asynchronous",
-  method: "POST"
-});
-
-export const queryAsyncTask = useDefineApi<
-  {
-    params: {
-      daemonId: string;
-      uuid: string;
-      task_name: string;
-    };
-    data: {
-      taskId: string;
-    };
-  },
-  {
-    taskId: string;
-    status: number;
-    detail: {
-      instanceConfig: IGlobalInstanceConfig;
-      instanceStatus: number;
-      instanceUuid: string;
-      status: number;
-      taskId: string;
-      downloadProgress?: {
-        percentage: number;
-        downloadedBytes: number;
-        totalBytes: number;
-        speed: number;
-        eta: number;
-      };
-    };
-  }
->({
-  url: "/api/protected_instance/query_asynchronous",
-  method: "POST"
-});
-
-export const getConfigFileList = useDefineApi<
-  {
-    params: {
-      uuid: string;
-      daemonId: string;
-    };
-    data: {
-      files: string[];
-    };
-  },
-  {
-    check: boolean;
-    file: string;
-  }[]
->({
-  method: "POST",
-  url: "/api/protected_instance/process_config/list"
-});
-
-export const getConfigFile = useDefineApi<
-  {
-    params: {
-      uuid: string;
-      daemonId: string;
-      fileName: string;
-      type: string;
-    };
-  },
-  any
->({
-  method: "GET",
-  url: "/api/protected_instance/process_config/file"
-});
-
-export const updateConfigFile = useDefineApi<
-  {
-    params: {
-      uuid: string;
-      daemonId: string;
-      fileName: string;
-      type: string;
-    };
-    data: any;
-  },
-  boolean
->({
-  method: "PUT",
-  url: "/api/protected_instance/process_config/file"
-});
-
 export const batchStart = useDefineApi<
   {
     data: {
@@ -453,23 +336,5 @@ export const scheduleCreate = useDefineApi<
   boolean
 >({
   url: "/api/protected_schedule",
-  method: "POST"
-});
-
-export const reinstallInstance = useDefineApi<
-  {
-    params: {
-      daemonId: string;
-      uuid: string;
-    };
-    data: {
-      targetUrl?: string;
-      title: string;
-      description: string;
-    };
-  },
-  boolean
->({
-  url: "/api/protected_instance/install_instance",
   method: "POST"
 });

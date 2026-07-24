@@ -8,10 +8,7 @@ import NewImage from "@/widgets/imageManager/NewImage.vue";
 import InstanceBaseInfo from "@/widgets/instance/BaseInfo.vue";
 import InstanceFileManager from "@/widgets/instance/FileManager.vue";
 import InstanceManagerBtns from "@/widgets/instance/ManagerBtns.vue";
-import InstanceModManager from "@/widgets/instance/ModManager.vue";
 import Schedule from "@/widgets/instance/Schedule.vue";
-import InstanceServerConfigFile from "@/widgets/instance/ServerConfigFile.vue";
-import InstanceServerConfigOverview from "@/widgets/instance/ServerConfigOverview.vue";
 import InstanceShortcut from "@/widgets/instance/Shortcut.vue";
 import Terminal from "@/widgets/instance/Terminal.vue";
 import InstanceChart from "@/widgets/InstanceChart.vue";
@@ -66,10 +63,7 @@ export const LAYOUT_CARD_TYPES: { [key: string]: any } = {
   Terminal,
   InstanceManagerBtns,
   InstanceBaseInfo,
-  InstanceServerConfigOverview,
-  InstanceServerConfigFile,
   InstanceFileManager,
-  InstanceModManager,
   UserAccessSettings,
   ImageBox,
   IframeCard,

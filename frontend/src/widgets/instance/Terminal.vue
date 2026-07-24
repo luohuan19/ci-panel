@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import CardPanel from "@/components/CardPanel.vue";
-import { openMarketDialog, openRenewalDialog } from "@/components/fc";
+import { openRenewalDialog } from "@/components/fc";
 import IconBtn from "@/components/IconBtn.vue";
 import TerminalCore from "@/components/TerminalCore.vue";
 import TerminalTopTags from "@/components/TerminalTopTags.vue";
 import { useLayoutCardTools } from "@/hooks/useCardTools";
-import { INSTANCE_TYPE_TRANSLATION, verifyEULA } from "@/hooks/useInstance";
+import { INSTANCE_TYPE_TRANSLATION } from "@/hooks/useInstance";
 import { useScreen } from "@/hooks/useScreen";
 import { t } from "@/lang/i18n";
 import {
@@ -15,8 +15,6 @@ import {
   stopInstance,
   updateInstance
 } from "@/services/apis/instance";
-import { useAppStateStore } from "@/stores/useAppStateStore";
-import { sleep } from "@/tools/common";
 import { reportErrorMsg } from "@/tools/validator";
 import type { LayoutCard } from "@/types";
 import { INSTANCE_CRASH_TIMEOUT, INSTANCE_STATUS } from "@/types/const";
@@ -27,7 +25,6 @@ import {
   CloudServerOutlined,
   DownOutlined,
   InfoCircleOutlined,
-  InteractionOutlined,
   LaptopOutlined,
   LoadingOutlined,
   MoneyCollectOutlined,
@@ -46,7 +43,6 @@ const props = defineProps<{
 }>();
 
 const { isPhone } = useScreen();
-const { state, isAdmin } = useAppStateStore();
 const { getMetaOrRouteValue } = useLayoutCardTools(props.card);
 
 // The `useTerminal` is shared by this component and `TerminalCore`.
@@ -58,7 +54,6 @@ const {
   isStopped,
   isRunning,
   isBuys,
-  isGlobalTerminal,
   isDockerMode,
   clearTerminal
 } = terminalHook;
@@ -78,12 +73,6 @@ const toOpenInstance = async () => {
   if (checkRunningTimer) clearTimeout(checkRunningTimer);
   clearTerminal();
   try {
-    if (instanceInfo.value?.config?.type?.startsWith("minecraft/java")) {
-      const flag = await verifyEULA(instanceId ?? "", daemonId ?? "");
-      if (!flag) return;
-      await sleep(1000);
-    }
-
     await requestOpenInstance({
       params: {
         uuid: instanceId ?? "",
@@ -208,27 +197,6 @@ const instanceOperations = computed(() =>
         }
       },
       condition: () => isStopped.value && updateCmd.value
-    },
-    {
-      title: t("TXT_CODE_b19ed1dd"),
-      icon: InteractionOutlined,
-      noConfirm: true,
-      click: async () => {
-        try {
-          clearTerminal();
-          await openMarketDialog(daemonId ?? "", instanceId ?? "", {
-            autoInstall: true,
-            onlyDockerTemplate: isDockerMode.value
-          });
-        } catch (error: any) {
-          // ignore
-        }
-      },
-      props: {},
-      condition: () =>
-        isStopped.value &&
-        (state.settings.allowUsePreset || isAdmin.value) &&
-        !isGlobalTerminal.value
     },
     {
       title: t("TXT_CODE_f77093c8"),
