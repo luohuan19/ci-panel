@@ -19,18 +19,21 @@ with runner management.
 - **CI job board** — recent workflow runs across the registered repositories
 - **File manager and web terminal** — per-runner working directory access
 - **Distributed** — one panel, many nodes; multi-user with granular permissions
-- **NPU/GPU monitoring** — per-node hardware metrics
+- **Node metrics** — rolling per-node CPU and memory usage
 
 ## Packages
 
 Four packages, **not** an npm workspace — each installs and builds separately.
 
-| Package     | Role                                                        |
-| ----------- | ----------------------------------------------------------- |
-| `panel/`    | Web backend — users, auth, node connections, HTTP API       |
-| `daemon/`   | Node daemon — runner scan/provision/logs, NPU monitoring    |
-| `frontend/` | Vue 3 UI                                                    |
-| `common/`   | Shared types, consumed by the other three                   |
+| Package     | Role                                                             |
+| ----------- | ---------------------------------------------------------------- |
+| `panel/`    | Web backend — users, auth, node connections, HTTP API            |
+| `daemon/`   | Node daemon — runner scan/provision/logs, instances, files, Docker |
+| `frontend/` | Vue 3 UI                                                         |
+| `common/`   | Shared types, consumed by the other three                        |
+
+For how the pieces fit together, see [ARCHITECTURE.md](ARCHITECTURE.md)
+([中文](ARCHITECTURE_ZH.md)).
 
 ## Runtime environment
 
