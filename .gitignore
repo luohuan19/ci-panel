@@ -14,6 +14,7 @@ lib/
 production/
 .DS_Store
 production-code/
+dist-release/
 test.js
 .idea/
 ai-api.key
