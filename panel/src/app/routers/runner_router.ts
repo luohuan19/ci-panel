@@ -116,6 +116,29 @@ router.post(
 );
 
 // [Top-level Permission]
+// 检测代理连通性：透传给 daemon，用当前代理探测 GitHub / Google 等
+router.post(
+  "/proxy_check",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const config = ctx.request.body;
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/proxy_check",
+        config,
+        30000
+      );
+      ctx.body = result;
+    } catch (err) {
+      ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
 // 在指定节点上准备并注册一个 runner，然后创建对应实例（不自动启动）
 router.post(
   "/provision",

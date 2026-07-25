@@ -10,6 +10,7 @@ import { openNodeSelectDialog } from "@/components/fc/index";
 import SelectDirDialog from "./SelectDirDialog.vue";
 import {
   checkRunnerPackage,
+  checkRunnerProxy,
   startRunnerDownload,
   runnerDownloadProgress,
   startRunnerBatch,
@@ -19,7 +20,8 @@ import {
   runnerRepoGroups,
   listRunnerDirs,
   type RunnerBatchProgressItem,
-  type RepoLabelGroup
+  type RepoLabelGroup,
+  type ProxyCheckTargetResult
 } from "@/services/apis/runner";
 
 const emit = defineEmits<{ (e: "created"): void }>();
@@ -177,6 +179,8 @@ const previewText = computed(() => {
 const checking = ref(false);
 const checkText = ref("");
 const checkOk = ref<boolean | null>(null);
+const proxyChecking = ref(false);
+const proxyCheckResults = ref<ProxyCheckTargetResult[]>([]);
 
 // 下载（拉取最新版）状态
 const downloading = ref(false);
@@ -329,6 +333,7 @@ const openDialog = async (m: "direct" | "import" = "direct") => {
     mode.value = m;
     checkText.value = "";
     checkOk.value = null;
+    proxyCheckResults.value = [];
     stopPolling();
     downloading.value = false;
     dlPercent.value = 0;
@@ -388,6 +393,26 @@ const doCheck = async () => {
     checkText.value = "检查失败：" + (err?.message || err);
   } finally {
     checking.value = false;
+  }
+};
+
+// 检测代理连通性：用当前填的代理探测 GitHub / Google 等目标
+const doProxyCheck = async () => {
+  proxyChecking.value = true;
+  proxyCheckResults.value = [];
+  try {
+    const { execute, state } = checkRunnerProxy();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: { proxy: shared.proxy.trim() }
+    });
+    const r = state.value;
+    proxyCheckResults.value = r?.results ?? [];
+    if (!proxyCheckResults.value.length) message.error("未获取到检测结果");
+  } catch (err: any) {
+    message.error("代理检测失败：" + (err?.message || err));
+  } finally {
+    proxyChecking.value = false;
   }
 };
 
@@ -715,7 +740,26 @@ const statusColor = (s: string) =>
         </a-col>
         <a-col :span="18">
           <a-form-item label="代理（可选，连 GitHub 用）">
-            <a-input v-model:value="shared.proxy" placeholder="http://127.0.0.1:7890" />
+            <a-input-group compact>
+              <a-input
+                v-model:value="shared.proxy"
+                placeholder="http://127.0.0.1:7890"
+                style="width: calc(100% - 96px)"
+              />
+              <a-button style="width: 96px" :loading="proxyChecking" @click="doProxyCheck">
+                检测代理
+              </a-button>
+            </a-input-group>
+            <div v-if="proxyCheckResults.length" style="font-size: 12px; margin-top: 4px">
+              <span
+                v-for="r in proxyCheckResults"
+                :key="r.url"
+                :style="{ color: r.ok ? '#17b890' : '#ef5350', marginRight: '12px' }"
+              >
+                {{ r.name }}
+                {{ r.ok ? "✓ " + r.status + "（" + r.ms + "ms）" : "✗ " + (r.error || "不通") }}
+              </span>
+            </div>
           </a-form-item>
         </a-col>
         <a-col :span="6">
