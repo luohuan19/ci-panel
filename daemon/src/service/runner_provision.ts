@@ -927,6 +927,54 @@ export async function checkRunnerPackage(params: CheckParams) {
   };
 }
 
+// ---- 代理连通性检测：用当前代理探测 GitHub / Google 等目标 ----
+export interface ProxyCheckTargetResult {
+  name: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  ms: number;
+  error?: string;
+}
+
+// 探测目标：runner 注册/下载依赖 GitHub，Google 用来判断外网整体是否通
+const PROXY_CHECK_TARGETS: { name: string; url: string }[] = [
+  { name: "GitHub", url: "https://github.com" },
+  { name: "GitHub API", url: "https://api.github.com" },
+  { name: "Google", url: "https://www.google.com" }
+];
+
+// 用给定代理（前端不传则回退 CIP_RUNNER_PROXY）逐个探测目标；
+// 只要拿到 HTTP 响应（即使 3xx/4xx）就算「通」——说明代理已把请求送达目标。
+export async function checkProxyConnectivity(proxy?: string) {
+  const usedProxy = resolveProxy(proxy);
+  const results = await Promise.all(
+    PROXY_CHECK_TARGETS.map(async (t): Promise<ProxyCheckTargetResult> => {
+      const started = Date.now();
+      const cfg: any = {
+        timeout: 8000,
+        headers: { "User-Agent": "ci-panel" },
+        validateStatus: () => true,
+        maxRedirects: 0
+      };
+      applyProxy(cfg, proxy);
+      try {
+        const res = await axios.get(t.url, cfg);
+        return { name: t.name, url: t.url, ok: true, status: res.status, ms: Date.now() - started };
+      } catch (err: any) {
+        return {
+          name: t.name,
+          url: t.url,
+          ok: false,
+          ms: Date.now() - started,
+          error: err?.message || String(err)
+        };
+      }
+    })
+  );
+  return { proxy: usedProxy, results };
+}
+
 // ---- 下载：用 curl 从 GitHub 拉取（走代理 + 跟随重定向最稳；进度用轮询临时文件大小）----
 interface DownloadState {
   total: number;

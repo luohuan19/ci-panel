@@ -115,6 +115,31 @@ export const checkRunnerPackage = useDefineApi<
   method: "POST"
 });
 
+export interface ProxyCheckTargetResult {
+  name: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  ms: number;
+  error?: string;
+}
+
+export interface ProxyCheckResult {
+  proxy: string;
+  results: ProxyCheckTargetResult[];
+}
+
+export const checkRunnerProxy = useDefineApi<
+  {
+    params: { daemonId: string };
+    data: { proxy?: string };
+  },
+  ProxyCheckResult
+>({
+  url: "/api/runner/proxy_check",
+  method: "POST"
+});
+
 export const provisionRunnerBatch = useDefineApi<
   {
     params: { daemonId: string };
