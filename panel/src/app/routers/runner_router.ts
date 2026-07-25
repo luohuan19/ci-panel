@@ -124,16 +124,24 @@ router.post(
   async (ctx) => {
     try {
       const daemonId = String(ctx.query.daemonId);
-      const config = ctx.request.body;
+      // 前端类型可被绕过，边界处校验 proxy：只接受缺省或字符串
+      const body = (ctx.request.body ?? {}) as { proxy?: unknown };
+      if (body.proxy !== undefined && typeof body.proxy !== "string") {
+        ctx.status = 400;
+        ctx.body = { err: "proxy must be a string" };
+        return;
+      }
       const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
       const result = await new RemoteRequest(remoteService).request(
         "runner/proxy_check",
-        config,
+        { proxy: body.proxy },
         30000
       );
       ctx.body = result;
-    } catch (err) {
-      ctx.body = err;
+    } catch (err: any) {
+      // 不能把 Error 直接塞进 body：会序列化成 {} 且仍是 200，掩盖 daemon 失败
+      ctx.status = 500;
+      ctx.body = { err: err?.message || String(err) };
     }
   }
 );

@@ -204,7 +204,12 @@ routerApp.on("runner/check", async (ctx, data) => {
 // 检测代理连通性：用当前代理探测 GitHub / Google 等目标
 routerApp.on("runner/proxy_check", async (ctx, data) => {
   try {
-    const result = await checkProxyConnectivity(data?.proxy);
+    const proxy = data?.proxy;
+    // panel↔daemon 也是不可信边界，再校验一次 proxy 类型
+    if (proxy !== undefined && typeof proxy !== "string") {
+      throw new Error("proxy must be a string");
+    }
+    const result = await checkProxyConnectivity(proxy);
     protocol.msg(ctx, "runner/proxy_check", result);
   } catch (err: any) {
     protocol.error(ctx, "runner/proxy_check", { err: err?.message || String(err) });
