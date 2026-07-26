@@ -178,11 +178,13 @@ fi
 
 echo "[5/8] 收集部署脚本与特权配置…"
 cp -r "$ROOT/prod-scripts" "$STAGE/prod-scripts"
-if [ -d "$ROOT/deploy" ]; then
-  cp -r "$ROOT/deploy/." "$STAGE/"
-else
-  echo "      提示: deploy/ 尚不存在（install.sh / update.sh / systemd 模板是下一阶段的内容），本包内暂不含部署脚本"
+if [ ! -d "$ROOT/deploy" ]; then
+  echo "deploy/ 不存在 —— 没有 install.sh 的包装不上，不产出这种包" >&2
+  exit 1
 fi
+# deploy/ 的内容摊到包根，install.sh 就和 VERSION、daemon/、web/ 同级，
+# 于是解包后直接 `sudo bash install.sh` 即可（它以此判断自己在包内运行）。
+cp -r "$ROOT/deploy/." "$STAGE/"
 
 echo "[6/8] 写 VERSION …"
 {
@@ -209,9 +211,32 @@ for entry in \
   daemon/app.js daemon/package.json \
   daemon/node_modules/koa/package.json \
   prod-scripts/ci-panel-runner-svc \
-  prod-scripts/install-runner-privileges.sh; do
+  prod-scripts/install-runner-privileges.sh \
+  install.sh \
+  update.sh \
+  ci-panel-ctl \
+  lib/common.sh \
+  systemd/ci-panel-daemon.service.tmpl \
+  systemd/ci-panel-web.service.tmpl; do
   check "$entry"
 done
+
+# 占位符必须还在 —— 渲染是 install.sh / update.sh 在目标机上做的
+for tmpl in "$STAGE"/systemd/*.service.tmpl; do
+  # systemd/ 不存在时 glob 不展开，$tmpl 会是字面量，报出来的三条 "没有 __USER__"
+  # 会盖过真正的原因（上面的 check 已经报过"缺失 systemd/..."）
+  if [ ! -f "$tmpl" ]; then continue; fi
+  for token in __USER__ __ROOT__ __NODE__; do
+    if ! grep -q "$token" "$tmpl"; then
+      echo "      ${tmpl#"$STAGE"/} 里没有 $token —— 模板被改坏了？" >&2
+      missing=1
+    fi
+  done
+done
+if [ -f "$STAGE/ci-panel-ctl" ] && ! grep -q '__ROOT__' "$STAGE/ci-panel-ctl"; then
+  echo "      ci-panel-ctl 里没有 __ROOT__ —— 渲染占位符被改坏了？" >&2
+  missing=1
+fi
 
 if [ "$SKIP_LIB" -eq 0 ]; then
   for arch in x64 arm64; do

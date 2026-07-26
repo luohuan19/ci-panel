@@ -1,0 +1,487 @@
+#!/usr/bin/env bash
+# 在一台机器上部署 ci-panel。默认只装 daemon —— 也就是给面板加一个 runner 节点。
+#
+# 三种取包方式，按这个顺序自动判断:
+#   1) 已经解包，在包里直接跑（离线场景）:
+#        sudo bash install.sh --scan-root /data/ci-runner
+#   2) 本地有 tarball:
+#        sudo bash install.sh --file ci-panel-1.0.0-linux.tar.gz
+#   3) 让脚本自己去 GitHub Release 取（默认 latest）:
+#        sudo bash install.sh --version 1.0.0
+#
+# 重复运行是安全的: shared/ 下的数据、daemon 的身份 key、.env 里已有的值都不会被覆盖。
+#
+# 装完的目录结构（--root，默认 /opt/ci-panel）:
+#   releases/<version>/   每个版本一份，其中 daemon/{data,logs,tmp} 是指向 shared 的软链
+#   current -> releases/<version>/    systemd 的 WorkingDirectory 指着它
+#   shared/daemon/{data,logs,tmp}     数据唯一真相源，跨版本保留
+#   .env                              CIP_* 环境变量，systemd 以 root 读取后注入
+#
+# 为什么数据必须放 shared: panel 和 daemon 的数据路径全是基于 process.cwd() 拼的
+# (daemon/src/service/system_file.ts、panel/src/app/common/storage/jsonl_storage.ts)，
+# 直接换目录升级会把用户、节点表和 daemon 身份一起留在旧目录里。
+set -euo pipefail
+
+# 公共函数在同级的 lib/common.sh 里。这里还没有 die 可用，只能自己报错。
+_self="${BASH_SOURCE[0]:-}"
+if [ -z "$_self" ] || [ ! -f "$_self" ]; then
+  echo "错误: 本脚本需要同级的 lib/common.sh，没法用 'curl ... | bash' 的方式跑。" >&2
+  echo "请下载完整包后再执行：" >&2
+  echo "  1) 到 https://github.com/luohuan19/ci-panel/releases/latest 取 ci-panel-<版本>-linux.tar.gz" >&2
+  echo "  2) tar xzf ci-panel-<版本>-linux.tar.gz && cd ci-panel-<版本>" >&2
+  echo "  3) sudo bash install.sh" >&2
+  exit 1
+fi
+SELF_DIR="$(cd "$(dirname "$_self")" && pwd)"
+if [ ! -f "$SELF_DIR/lib/common.sh" ]; then
+  echo "错误: 找不到 $SELF_DIR/lib/common.sh —— 包不完整？" >&2
+  exit 1
+fi
+# shellcheck source=lib/common.sh
+. "$SELF_DIR/lib/common.sh"
+
+NODE_MIN_MAJOR=20
+NODE_PINNED="20.19.4" # --install-node 时下载的版本
+
+ROLE="daemon"
+RUN_USER="ci-runner"
+INSTALL_ROOT="/opt/ci-panel"
+SCAN_ROOT="/data/ci-runner"
+DAEMON_PORT="24444"
+TARBALL=""
+WANT_VERSION=""
+RUNNER_PKG=""
+GITHUB_REPOS=""
+RUNNER_PROXY=""
+INSTALL_NODE=0
+SKIP_PRIVILEGES=0
+ASSUME_YES=0
+
+SRC=""     # 解包/包内的源目录
+VERSION="" # 从 SRC/VERSION 读出来的版本号
+ARCH=""
+NODE_BIN=""
+RELEASE_DIR=""
+TMP=""
+
+usage() {
+  cat <<'EOF'
+用法: sudo bash install.sh [选项]
+
+取包（不指定则优先用当前目录里的包，否则取 GitHub latest release）
+  --file <tarball>        用本地 tarball
+  --version <v>           从 GitHub Release 取指定版本，如 1.0.0
+
+部署
+  --role daemon|all       daemon=只装节点(默认)，all=同机再装 web 面板
+  --user <name>           daemon 的运行用户，也是 runner 目录属主（默认 ci-runner）
+  --root <path>           安装根目录（默认 /opt/ci-panel）
+  --scan-root <path>      runner 根目录，写进特权助手的 ALLOWED_ROOT（默认 /data/ci-runner）
+  --daemon-port <n>       daemon 端口，仅首次安装时写入配置（默认 24444）
+  --runner-pkg <path>     预置 GitHub runner 安装包，省掉首次创建时现场下载约 130MB
+  --runner-proxy <url>    写入 .env 的 CIP_RUNNER_PROXY —— daemon 拉 runner 包和注册时的代理兜底
+  --github-repos <a/b,c/d>  写入 .env 的 CIP_GITHUB_REPOS。这是 panel 的配置（daemon 不读），
+                          所以只有 --role all 用得上；而且它只在面板仓库列表还是空的时候
+                          导入一次，之后仓库由面板 UI 管理
+  --install-node          系统没有 node>=20 时，下载官方运行时到 <root>/runtime/
+  --skip-privileges       跳过特权配置（不推荐：创建 runner 会在注册到 GitHub 之后才失败）
+  --yes                   不做交互确认
+EOF
+}
+
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role) ROLE="${2:?--role 需要参数}" && shift 2 ;;
+      --user) RUN_USER="${2:?--user 需要参数}" && shift 2 ;;
+      --root) INSTALL_ROOT="${2:?--root 需要参数}" && shift 2 ;;
+      --scan-root) SCAN_ROOT="${2:?--scan-root 需要参数}" && shift 2 ;;
+      --daemon-port) DAEMON_PORT="${2:?--daemon-port 需要参数}" && shift 2 ;;
+      --file) TARBALL="${2:?--file 需要参数}" && shift 2 ;;
+      --version) WANT_VERSION="${2:?--version 需要参数}" && shift 2 ;;
+      --runner-pkg) RUNNER_PKG="${2:?--runner-pkg 需要参数}" && shift 2 ;;
+      --github-repos) GITHUB_REPOS="${2:?--github-repos 需要参数}" && shift 2 ;;
+      --runner-proxy) RUNNER_PROXY="${2:?--runner-proxy 需要参数}" && shift 2 ;;
+      --install-node) INSTALL_NODE=1 && shift ;;
+      --skip-privileges) SKIP_PRIVILEGES=1 && shift ;;
+      --yes | -y) ASSUME_YES=1 && shift ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *) die "未知参数: $1（-h 看用法）" ;;
+    esac
+  done
+
+  case "$ROLE" in
+    daemon | all) ;;
+    *) die "--role 只能是 daemon 或 all，收到: $ROLE" ;;
+  esac
+
+  if ! printf '%s' "$DAEMON_PORT" | grep -Eq '^[0-9]{1,5}$' ||
+    [ "$DAEMON_PORT" -lt 1 ] || [ "$DAEMON_PORT" -gt 65535 ]; then
+    die "--daemon-port 不是合法端口: $DAEMON_PORT"
+  fi
+
+  if [ -n "$WANT_VERSION" ]; then validate_version "$WANT_VERSION"; fi
+
+  # 代理地址写错的话，daemon 拉 runner 包和注册会全部失败，而且只能从日志里看出来
+  if [ -n "$RUNNER_PROXY" ]; then
+    case "$RUNNER_PROXY" in
+      http://* | https://* | socks5://* | socks5h://*) ;;
+      *) die "--runner-proxy 需要带协议前缀（http:// https:// socks5://），收到: $RUNNER_PROXY" ;;
+    esac
+  fi
+
+  # 这几个值会被 sed 塞进 systemd 单元模板，含 sed 的元字符会渲染出坏单元
+  case "$INSTALL_ROOT$RUN_USER" in
+    *'|'* | *'&'* | *'\'*) die "--root / --user 里不能含 | & \\ 这几个字符" ;;
+  esac
+
+  INSTALL_ROOT="$(readlink -m "$INSTALL_ROOT")"
+  case "$INSTALL_ROOT" in
+    / | /usr | /etc | /var | /home | /opt) die "--root 太宽: $INSTALL_ROOT" ;;
+  esac
+
+  # CIP_GITHUB_REPOS 是 panel 读的（panel/src/app/service/repo_service.ts），
+  # 只装 daemon 的机器上没有进程会看它。仍然写进 .env（不静默丢掉用户给的值，
+  # 将来这台机器升成 --role all 就生效），但要说清楚现在不起作用。
+  if [ "$ROLE" = "daemon" ] && [ -n "$GITHUB_REPOS" ]; then
+    warn "--github-repos 是 panel 的配置，--role daemon 下没有进程读它；值仍会写入 .env 备用"
+  fi
+}
+
+cleanup() {
+  if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
+}
+
+preflight() {
+  need_root
+  need_cmd systemctl
+  need_cmd tar
+  if [ ! -d /run/systemd/system ]; then
+    die "这台机器不是 systemd 引导的，本脚本装的是 systemd 单元"
+  fi
+  TMP="$(mktemp -d)"
+  trap cleanup EXIT
+}
+
+resolve_source() {
+  if [ -z "$TARBALL" ] && [ -f "$SELF_DIR/VERSION" ] && [ -d "$SELF_DIR/daemon" ]; then
+    SRC="$SELF_DIR"
+    log "用当前目录里已解包的版本: $SRC"
+    return
+  fi
+  if [ -n "$TARBALL" ]; then
+    if [ ! -f "$TARBALL" ]; then die "找不到包文件: $TARBALL"; fi
+    TARBALL="$(readlink -m "$TARBALL")"
+    verify_checksum "$TARBALL"
+    unpack "$TARBALL"
+    return
+  fi
+  need_cmd curl
+  if [ -z "$WANT_VERSION" ]; then
+    log "查询 $REPO 的 latest release …"
+    local tag
+    tag="$(resolve_latest_tag)"
+    if [ -z "$tag" ]; then
+      die "取不到 latest release。用 --version <v> 指定，或 --file 用本地包（也可能要设 https_proxy）"
+    fi
+    WANT_VERSION="${tag#"$TAG_PREFIX"}"
+    log "latest = $tag → 版本 $WANT_VERSION"
+  fi
+  download_release "$WANT_VERSION"
+}
+
+read_version() {
+  if ! VERSION="$(read_version_file "$SRC")" || [ -z "$VERSION" ]; then
+    die "包里没有 VERSION 文件或缺 version= 行: $SRC"
+  fi
+}
+
+detect_arch() {
+  local machine
+  machine="$(uname -m)"
+  case "$machine" in
+    x86_64 | amd64) ARCH="x64" ;;
+    aarch64 | arm64) ARCH="arm64" ;;
+    *) die "不支持的架构: $machine（包里只带了 x64 与 arm64 的 pty/7z/file_zip）" ;;
+  esac
+  # daemon 启动时 checkDependencies() 找不到 file_zip 会直接抛错退出，先在这里拦住
+  local f
+  for f in "pty_linux_$ARCH" "file_zip_linux_$ARCH" "7z_linux_$ARCH"; do
+    if [ ! -f "$SRC/daemon/lib/$f" ]; then
+      die "包里缺 daemon/lib/$f，这个包没法在 $ARCH 上跑（是用 --skip-lib 打的？）"
+    fi
+  done
+  log "架构 $ARCH，lib 二进制齐全"
+}
+
+ensure_node() {
+  local candidate major
+  candidate="$(command -v node 2>/dev/null || true)"
+  if [ -n "$candidate" ]; then
+    major="$("$candidate" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+    if [ "$major" -ge "$NODE_MIN_MAJOR" ] 2>/dev/null; then
+      NODE_BIN="$candidate"
+      log "用系统 node: $NODE_BIN ($("$NODE_BIN" -v))"
+      return
+    fi
+    warn "系统 node 版本过低: $("$candidate" -v)（需要 >= v$NODE_MIN_MAJOR）"
+  fi
+
+  local pinned_dir="$INSTALL_ROOT/runtime/node-v$NODE_PINNED-linux-$ARCH"
+  if [ -x "$pinned_dir/bin/node" ]; then
+    NODE_BIN="$pinned_dir/bin/node"
+    log "用之前装好的运行时: $NODE_BIN"
+    return
+  fi
+  if [ "$INSTALL_NODE" -ne 1 ]; then
+    die "没有可用的 node >= v$NODE_MIN_MAJOR。要么自己装（apt/dnf/nvm 皆可），要么加 --install-node 让本脚本下载官方运行时到 $INSTALL_ROOT/runtime/"
+  fi
+
+  need_cmd curl
+  local tarball="node-v$NODE_PINNED-linux-$ARCH.tar.xz"
+  log "下载 node v$NODE_PINNED ($ARCH) …"
+  if ! curl -fL --retry 3 -o "$TMP/$tarball" "https://nodejs.org/dist/v$NODE_PINNED/$tarball"; then
+    die "node 下载失败（需要设 https_proxy？）"
+  fi
+  mkdir -p "$INSTALL_ROOT/runtime"
+  # --no-same-owner + chown root: 否则归档里的 uid 会被保留，万一正好落到 RUN_USER 头上，
+  # 服务用户就能改写自己的 node 二进制 —— 而这个 daemon 持有 sudo -n 免密权限。
+  if ! tar --no-same-owner -C "$INSTALL_ROOT/runtime" -xJf "$TMP/$tarball"; then
+    die "node 解包失败（缺 xz？装一下 xz-utils / xz）"
+  fi
+  chown -R root:root "$INSTALL_ROOT/runtime"
+  if [ ! -x "$pinned_dir/bin/node" ]; then die "node 解包后没找到 $pinned_dir/bin/node"; fi
+  NODE_BIN="$pinned_dir/bin/node"
+  log "运行时就绪: $NODE_BIN"
+}
+
+# NODE_BIN 也会被 sed 塞进单元模板，和 --root/--user 一样要挡掉元字符
+check_node_bin() {
+  case "$NODE_BIN" in
+    *'|'* | *'&'* | *'\'*) die "node 路径里含 | & \\，无法安全渲染 systemd 单元: $NODE_BIN" ;;
+  esac
+}
+
+# 服务以 RUN_USER 运行，而这里的 node 是 root 的 PATH 找出来的 —— 两者不一定通。
+# 典型情况: node 装在某个用户的 ~/.local/bin 里，换个用户就没有执行权限，
+# 而这种失败要等到 systemd 拉起服务时才暴露。所以在渲染单元之前就以该用户身份试一次。
+check_node_usable_by_user() {
+  if [ "$RUN_USER" = "root" ]; then return; fi
+  if ! su -s /bin/sh -c "$(printf '%q' "$NODE_BIN") -v" "$RUN_USER" >/dev/null 2>&1; then
+    die "用户 $RUN_USER 跑不了 $NODE_BIN。
+常见原因是这个 node 装在别的用户 home 里（比如 ~/.local/bin），换用户就没权限。
+装一个系统级的 node，或者加 --install-node 把运行时放到 $INSTALL_ROOT/runtime/。"
+  fi
+}
+
+ensure_user() {
+  if id "$RUN_USER" >/dev/null 2>&1; then return; fi
+  if [ "$RUN_USER" = "root" ]; then die "daemon 不能以 root 运行（特权助手的前提就是它是普通用户）"; fi
+  if ! confirm "用户 $RUN_USER 不存在，创建它？"; then die "已取消"; fi
+  useradd --create-home --shell /bin/bash "$RUN_USER"
+  log "已创建用户 $RUN_USER"
+}
+
+install_release() {
+  RELEASE_DIR="$INSTALL_ROOT/releases/$VERSION"
+  if [ -d "$RELEASE_DIR" ]; then
+    if ! confirm "$VERSION 已经装过（$RELEASE_DIR），重新覆盖这个版本的代码？（shared/ 里的数据不动）"; then
+      die "已取消"
+    fi
+  fi
+  log "安装到 $RELEASE_DIR …"
+  deploy_release_dir
+}
+
+seed_daemon_config() {
+  local cfg="$INSTALL_ROOT/shared/daemon/data/Config/global.json"
+  if [ -f "$cfg" ]; then
+    log "daemon 配置已存在，保留不动（里面的 key 是这个节点的身份）"
+    if [ "$DAEMON_PORT" != "24444" ]; then
+      warn "--daemon-port 本次忽略：端口改动请直接编辑 $cfg 后重启服务"
+    fi
+    return
+  fi
+  log "写 daemon 初始配置（端口 $DAEMON_PORT）…"
+  mkdir -p "$(dirname "$cfg")"
+  # 只写 port 就够: StorageSubsystem.load 会把 JSON 深合并到 Config 类默认值上，
+  # key 由类默认值现场随机生成并落盘（daemon/src/entity/config.ts）。
+  printf '{\n  "port": %s\n}\n' "$DAEMON_PORT" >"$cfg"
+  chmod 640 "$cfg" # 里面马上会有节点密钥（daemon 首次 load 时生成）
+  chown -R "$RUN_USER:$RUN_USER" "$INSTALL_ROOT/shared/daemon/data"
+}
+
+place_runner_pkg() {
+  if [ -z "$RUNNER_PKG" ]; then return; fi
+  if [ ! -f "$RUNNER_PKG" ]; then die "找不到 runner 安装包: $RUNNER_PKG"; fi
+  case "$(basename "$RUNNER_PKG")" in
+    *"linux-$ARCH"*) ;;
+    *) die "runner 包架构和本机不符: $(basename "$RUNNER_PKG") 不含 linux-$ARCH。arm64 的包在 x64 上解出来跑不了" ;;
+  esac
+  local dest="$INSTALL_ROOT/shared/daemon/data/runner-pkg"
+  mkdir -p "$dest"
+  cp -f "$RUNNER_PKG" "$dest/"
+  chown -R "$RUN_USER:$RUN_USER" "$dest"
+  log "已放置 runner 安装包: $(basename "$RUNNER_PKG")"
+}
+
+env_set() { # file key value
+  local file="$1" key="$2" value="$3" escaped
+  case "$value" in
+    *$'\n'*) die "$key 的值里不能有换行" ;;
+  esac
+  if grep -qE "^$key=" "$file" 2>/dev/null; then
+    # 转义 sed 替换串里的元字符: & 会被展开成整个匹配，| 是这里的分隔符
+    escaped="$(printf '%s' "$value" | sed -e 's/[&|\\]/\\&/g')"
+    sed -i "s|^$key=.*|$key=$escaped|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$file"
+  fi
+}
+
+write_env() {
+  local env_file="$INSTALL_ROOT/.env"
+  if [ ! -f "$env_file" ]; then
+    log "创建 $env_file …"
+    cat >"$env_file" <<'EOF'
+# ci-panel 的部署环境变量。systemd 以 root 读取后注入服务进程（EnvironmentFile）。
+# 改完要 systemctl restart ci-panel-daemon（和 ci-panel-web，如果装了）才生效。
+#
+# 注意下面两组的归属不同：只装了 daemon 的机器上，panel 那组没有进程会读。
+
+# ---- daemon 读的 ----
+# 拉 runner 安装包和跑 config.sh 注册都要连 GitHub。前端表单没填代理时用这个兜底。
+# CIP_RUNNER_PROXY=http://127.0.0.1:7890
+
+# ---- panel(web) 读的 ----
+# CI Job 看板的仓库列表，逗号分隔。只在面板仓库列表还是空的时候导入一次，
+# 之后仓库由面板 UI 管理（见 panel/src/app/service/repo_service.ts 的 migrateFromEnv）。
+# CIP_GITHUB_REPOS=owner/repo
+
+# 各仓库没配专用 PAT 时的全局兜底 token。这个文件是 600 root:root，
+# 但它终究是明文 —— 不要复制到别处，也不要提交进任何仓库。
+# CIP_GITHUB_TOKEN=
+EOF
+  fi
+  chmod 600 "$env_file"
+  chown root:root "$env_file"
+  if [ -n "$GITHUB_REPOS" ]; then env_set "$env_file" CIP_GITHUB_REPOS "$GITHUB_REPOS"; fi
+  if [ -n "$RUNNER_PROXY" ]; then env_set "$env_file" CIP_RUNNER_PROXY "$RUNNER_PROXY"; fi
+}
+
+install_privileges() {
+  if [ "$SKIP_PRIVILEGES" -eq 1 ]; then
+    warn "按要求跳过特权配置。在补上之前，创建 runner 会在它已经注册到 GitHub 之后才失败，"
+    warn "并在 GitHub 上留下一个永远不上线的 runner。补的方法："
+    warn "  sudo bash $RELEASE_DIR/prod-scripts/install-runner-privileges.sh --user $RUN_USER --root $SCAN_ROOT"
+    return
+  fi
+  log "配置 systemd 特权助手（scan-root $SCAN_ROOT）…"
+  if ! bash "$RELEASE_DIR/prod-scripts/install-runner-privileges.sh" \
+    --user "$RUN_USER" --root "$SCAN_ROOT"; then
+    die "特权配置失败（上面有原因）。修好后重跑本脚本即可，装过的部分不会重复做"
+  fi
+}
+
+install_units() {
+  log "安装 systemd 单元 …"
+  if [ "$ROLE" = "all" ]; then
+    render_units_for_roles "$RELEASE_DIR" daemon web
+  else
+    render_units_for_roles "$RELEASE_DIR" daemon
+  fi
+}
+
+install_ctl() {
+  local dest="/usr/local/bin/ci-panel-ctl"
+  if [ ! -f "$RELEASE_DIR/ci-panel-ctl" ]; then
+    warn "包里没有 ci-panel-ctl，跳过"
+    return
+  fi
+  sed -e "s|__ROOT__|$INSTALL_ROOT|g" "$RELEASE_DIR/ci-panel-ctl" >"$dest.new"
+  chmod 755 "$dest.new"
+  chown root:root "$dest.new"
+  mv -T "$dest.new" "$dest" # 原地覆盖会让此刻正在跑的 ctl 读到半截脚本
+  log "已安装运维入口: $dest"
+}
+
+activate() {
+  log "切换 current -> releases/$VERSION 并启动 …"
+  ln -sfnT "$RELEASE_DIR" "$INSTALL_ROOT/current"
+  # 不要把 stderr 也丢掉：enable 失败时 set -e 会让脚本直接退出，
+  # 吞掉 stderr 的话用户只看到"无声中断"
+  if ! systemctl enable "$DAEMON_UNIT" >/dev/null; then die "systemctl enable $DAEMON_UNIT 失败"; fi
+  systemctl restart "$DAEMON_UNIT"
+  if [ "$ROLE" = "all" ]; then
+    if ! systemctl enable "$WEB_UNIT" >/dev/null; then die "systemctl enable $WEB_UNIT 失败"; fi
+    systemctl restart "$WEB_UNIT"
+  fi
+}
+
+print_summary() {
+  local cfg="$INSTALL_ROOT/shared/daemon/data/Config/global.json"
+  local key port host
+  key="$(read_json_field "$cfg" key)"
+  port="$(daemon_port)"
+  host="$(detect_ip)"
+  if [ -z "$host" ]; then host="<这台机器的 IP>"; fi
+
+  printf '\n'
+  log "ci-panel $VERSION 部署完成（role=$ROLE）"
+  printf '\n在面板里添加这个节点：\n'
+  printf '  地址   %s\n' "$host"
+  printf '  端口   %s\n' "$port"
+  printf '  密钥   %s\n' "$key"
+  printf '\n这个密钥等同于该节点的准入凭据，只在面板里填，不要贴到聊天或工单里。\n'
+  printf '别忘了放开防火墙上的 %s 端口 —— 节点连不上最常见的原因就是这个。\n' "$port"
+  if [ "$ROLE" = "all" ]; then
+    printf '\n面板地址 http://%s:%s —— 首次打开会进安装向导，在那里创建管理员账号。\n' "$host" "$(web_port)"
+  fi
+  if [ -z "$RUNNER_PKG" ] && [ ! -d "$INSTALL_ROOT/shared/daemon/data/runner-pkg" ]; then
+    printf '\n没有预置 runner 安装包，首次创建 runner 时 daemon 会现场下载（约 130MB，走代理会很慢）。\n'
+    printf '想省这一步：install.sh --runner-pkg actions-runner-linux-%s-<版本>.tar.gz\n' "$ARCH"
+  fi
+  printf '\n常用命令：\n'
+  printf '  ci-panel-ctl status                   # 状态与版本\n'
+  printf '  ci-panel-ctl logs                     # 跟踪日志\n'
+  printf '  ci-panel-ctl update                   # 更新到 latest release\n'
+  printf '\n'
+}
+
+main() {
+  parse_args "$@"
+  preflight
+  resolve_source
+  read_version
+  detect_arch
+  ensure_node
+  check_node_bin
+  ensure_user
+  check_node_usable_by_user
+  install_release
+  link_shared daemon
+  seed_daemon_config
+  place_runner_pkg
+  if [ "$ROLE" = "all" ]; then link_shared web; fi
+  write_env
+  install_privileges
+  install_units
+  install_ctl
+  activate
+
+  if ! probe_service "$DAEMON_UNIT" "$(daemon_port)" daemon; then
+    die "daemon 起不来。日志: journalctl -u $DAEMON_UNIT -n 50"
+  fi
+  if [ "$ROLE" = "all" ]; then
+    if ! probe_service "$WEB_UNIT" "$(web_port)" web; then
+      die "web 起不来。日志: journalctl -u $WEB_UNIT -n 50"
+    fi
+  fi
+  print_summary
+}
+
+# 直接执行才跑 main；被 source 时只加载函数，方便单独验证渲染、配置写入这些逻辑
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

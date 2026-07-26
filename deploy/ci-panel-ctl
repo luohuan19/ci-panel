@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# ci-panel 的运维入口。install.sh / update.sh 会把 __ROOT__ 换成实际安装根目录，
+# 然后装到 /usr/local/bin/ci-panel-ctl —— 不要直接跑包里的这一份。
+set -euo pipefail
+
+ROOT="__ROOT__"
+DAEMON_UNIT="ci-panel-daemon.service"
+WEB_UNIT="ci-panel-web.service"
+
+# 判断"有没有被渲染过"要看是不是绝对路径，不能去匹配占位符字面量 ——
+# sed 会把这段检查里的占位符一起换掉，那样渲染后的脚本反而永远命中自己的守卫。
+case "$ROOT" in
+  /*) ;;
+  *)
+    echo "错误: 这份脚本还没被渲染。请用 /usr/local/bin/ci-panel-ctl（由 install.sh 安装）" >&2
+    exit 1
+    ;;
+esac
+
+usage() {
+  cat <<'EOF'
+用法: ci-panel-ctl <命令> [参数]
+
+  status                  版本、组件状态、端口
+  version                 只打印版本号
+  logs [daemon|web]       跟踪 systemd 日志（默认 daemon）
+  applog [daemon|web]     跟踪应用自己写的日志文件
+  restart [daemon|web]    重启（不带参数=全部已装组件）
+  start / stop [...]      同上
+  check                   看有没有新版本
+  update [参数…]          更新，参数透传给 update.sh（如 --version 1.1.0 / --file pkg.tar.gz）
+  rollback                回滚到上一个版本
+  node-key                打印本节点的接入密钥（敏感，别外传）
+EOF
+}
+
+die() {
+  printf '\033[31m错误:\033[0m %s\n' "$*" >&2
+  exit 1
+}
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then die "这个命令要 root：sudo ci-panel-ctl $*"; fi
+}
+
+installed_roles() {
+  if [ -f "/etc/systemd/system/$DAEMON_UNIT" ]; then echo daemon; fi
+  if [ -f "/etc/systemd/system/$WEB_UNIT" ]; then echo web; fi
+}
+
+unit_of() {
+  case "$1" in
+    daemon) printf '%s' "$DAEMON_UNIT" ;;
+    web) printf '%s' "$WEB_UNIT" ;;
+    *) die "组件只能是 daemon 或 web，收到: $1" ;;
+  esac
+}
+
+# 只取数字/字符串字段，用不着把 node 拉进来
+json_num() { # file field
+  if [ ! -f "$1" ]; then return 0; fi
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p" "$1" | head -n1
+}
+
+json_str() { # file field
+  if [ ! -f "$1" ]; then return 0; fi
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1
+}
+
+version_of() { # release dir
+  if [ ! -f "$1/VERSION" ]; then
+    printf 'unknown'
+    return
+  fi
+  sed -n 's/^version=//p' "$1/VERSION" | head -n1
+}
+
+port_of() {
+  local port=""
+  case "$1" in
+    daemon) port="$(json_num "$ROOT/shared/daemon/data/Config/global.json" port)" ;;
+    web) port="$(json_num "$ROOT/shared/web/data/SystemConfig/config.json" httpPort)" ;;
+  esac
+  if [ -z "$port" ]; then
+    case "$1" in
+      daemon) port=24444 ;;
+      web) port=23333 ;;
+    esac
+  fi
+  printf '%s' "$port"
+}
+
+cmd_status() {
+  local roles role state prev
+  roles="$(installed_roles)"
+  printf '版本      %s\n' "$(version_of "$ROOT/current")"
+  printf 'current   %s\n' "$(readlink -f "$ROOT/current" 2>/dev/null || echo '(缺失)')"
+  if [ -f "$ROOT/.previous" ]; then
+    prev="$(cat "$ROOT/.previous")"
+    printf '上一版    %s (%s)\n' "$(version_of "$prev")" "$(basename "$prev")"
+  fi
+  printf '\n'
+  for role in $roles; do
+    if systemctl is-active --quiet "$(unit_of "$role")"; then
+      state="$(printf '\033[32mactive\033[0m')"
+    else
+      state="$(printf '\033[31minactive\033[0m')"
+    fi
+    printf '%-8s %-20b 端口 %s\n' "$role" "$state" "$(port_of "$role")"
+  done
+  if [ -z "$roles" ]; then printf '没有找到任何 ci-panel 单元\n'; fi
+}
+
+cmd_logs() {
+  local role="${1:-daemon}"
+  exec journalctl -u "$(unit_of "$role")" -f -n 100
+}
+
+cmd_applog() {
+  local role="${1:-daemon}"
+  unit_of "$role" >/dev/null # 借它校验组件名，和 logs / restart 的报错保持一致
+  local f="$ROOT/shared/$role/logs/current.log"
+  if [ ! -f "$f" ]; then die "没有这个日志文件: $f"; fi
+  exec tail -f -n 100 "$f"
+}
+
+cmd_lifecycle() { # action [role]
+  local action="$1"
+  shift
+  need_root "$action" "$@"
+  local roles
+  if [ $# -gt 0 ]; then roles="$*"; else roles="$(installed_roles)"; fi
+  local role
+  for role in $roles; do
+    systemctl "$action" "$(unit_of "$role")"
+    printf '%s %s\n' "$action" "$(unit_of "$role")"
+  done
+}
+
+run_update() { # args…
+  need_root update
+  local script="$ROOT/current/update.sh"
+  if [ ! -f "$script" ]; then
+    die "找不到 $script（这个版本的包里没带 update.sh？）"
+  fi
+  exec bash "$script" --root "$ROOT" "$@"
+}
+
+cmd_node_key() {
+  need_root node-key # 密钥只给 root 看；shared/ 目录本身也是 750
+  local key
+  key="$(json_str "$ROOT/shared/daemon/data/Config/global.json" key)"
+  if [ -z "$key" ]; then die "读不到节点密钥（daemon 还没启动过？）"; fi
+  printf '%s\n' "$key"
+  printf '\n这是本节点的准入凭据，只填到面板里，不要贴到聊天或工单。\n' >&2
+}
+
+case "${1:-}" in
+  status) cmd_status ;;
+  version) printf '%s\n' "$(version_of "$ROOT/current")" ;;
+  logs)
+    shift
+    cmd_logs "$@"
+    ;;
+  applog)
+    shift
+    cmd_applog "$@"
+    ;;
+  restart | start | stop)
+    action="$1"
+    shift
+    cmd_lifecycle "$action" "$@"
+    ;;
+  check) run_update --check ;;
+  rollback) run_update --rollback ;;
+  update)
+    shift
+    run_update "$@"
+    ;;
+  node-key) cmd_node_key ;;
+  -h | --help | help | "") usage ;;
+  *) die "未知命令: $1（ci-panel-ctl --help 看用法）" ;;
+esac
