@@ -5,8 +5,20 @@
 
 ## 结构与前提
 
-ci-panel 是 **一个 panel + 多个 daemon 节点**。加机器就是加节点，panel 和已有 runner
-全程不用动。所以最常见的操作是 `--role daemon`。
+ci-panel 是 **一个 panel + 多个 daemon 节点**。panel 只是控制面，实际干活的是各台机器上的
+daemon。加机器就是加节点，panel 和已有 runner 全程不用动。
+
+一台机器装成什么由 `--role` 决定：
+
+| role | 装什么 | 用在哪 |
+| --- | --- | --- |
+| `daemon`（默认） | 只有 daemon | 跑 runner 的机器。**最常用** |
+| `web` | 只有面板，不装 daemon、不配特权助手 | 专职的管理机 |
+| `all` | 面板 + 本机 daemon | 面板机自己也要跑 runner |
+
+包里始终带着 `web/`（约 64MB），但 `--role daemon` 时它只是躺在磁盘上——不渲染单元、
+不启动、不占端口。这是"单一 tarball"的取舍：同一个包发布能保证面板和节点的版本不漂移
+（面板会拿 `daemonVersion` 比对各节点上报的版本），代价是每台纯节点多占些磁盘。
 
 一个发布包同时含 x64 与 arm64 的二进制，一个包通用。四个 npm 包里没有原生模块，
 按架构分文件的只有 `daemon/lib/` 下的 pty / 7z / file_zip，运行时自己挑。
@@ -72,7 +84,8 @@ sudo bash install.sh --scan-root /data/ci-runner
 | `--daemon-port <n>` | `24444` | 只在首次安装写入配置 |
 | `--runner-pkg <path>` | — | 预置 GitHub runner 安装包，省掉首次创建时现场下载约 130MB |
 | `--install-node` | — | 没有 node ≥ 20 时下载官方运行时 |
-| `--role all` | `daemon` | 同机再装一套 web 面板 |
+| `--role web\|all` | `daemon` | `web`=只装面板；`all`=面板加本机 daemon |
+| `--web-port <n>` | `23333` | 面板端口，只在首次安装写入配置 |
 | `--yes` | — | 不做交互确认 |
 
 脚本做完这些事：解包到 `releases/<版本>/`、把 `data`/`logs`/`tmp` 软链到 `shared/`、
@@ -97,6 +110,24 @@ sudo bash install.sh --scan-root /data/ci-runner
 
 **不要跨机器拷贝 `daemon/data/Config/global.json`**——里面的 `key` 是这个节点的身份，
 两台机器用同一份会互相顶掉。新机器首次启动会自己生成。
+
+## 装面板服务器
+
+面板专机（自己不跑 runner）：
+
+```bash
+sudo bash install.sh --role web
+```
+
+它只装 `ci-panel-web.service`，**不装 daemon，也不跑特权配置**——纯管理机不需要那套
+sudo 授权和 runner 根目录。装完打开 `http://<面板机>:23333` 走安装向导创建管理员账号，
+然后把各节点逐台加进来。
+
+启动初期日志里会有"找不到本机守护进程"的告警：panel 启动时会去找同级的 daemon 自动登记
+（`remote_service.ts` 的 `initConnectLocalhost`），纯面板机上找不到是正常的，它每 5 秒
+重试一次，等你在面板里添加了第一个节点就不再出现。
+
+面板机自己也要跑 runner 的话用 `--role all`，那就还需要 `--scan-root` 等 daemon 侧参数。
 
 ## 更新与回滚
 
@@ -144,7 +175,7 @@ sudo ci-panel-ctl rollback          # 切回上一个版本
 ├── current -> releases/…   systemd 的 WorkingDirectory 指着它，回滚就是切它
 ├── shared/daemon/data      节点身份、runner 安装包、实例数据 —— 数据唯一真相源
 ├── shared/daemon/logs      daemon 自己写的日志（current.log）
-├── shared/web/…            --role all 时才有
+├── shared/web/…            --role web / all 时才有
 ├── backups/<时间戳>/       更新前的数据快照
 ├── runtime/                --install-node 下载的 node
 └── .env                    CIP_* 环境变量，600 root:root

@@ -111,13 +111,22 @@ cmd_status() {
   if [ -z "$roles" ]; then printf '没有找到任何 ci-panel 单元\n'; fi
 }
 
+# 默认组件跟着这台机器实际装了什么走：纯面板机上默认 daemon 只会报"单元不存在"
+default_role() {
+  case "$(installed_roles | tr '\n' ' ')" in
+    *daemon*) printf 'daemon' ;;
+    *web*) printf 'web' ;;
+    *) printf 'daemon' ;;
+  esac
+}
+
 cmd_logs() {
-  local role="${1:-daemon}"
+  local role="${1:-$(default_role)}"
   exec journalctl -u "$(unit_of "$role")" -f -n 100
 }
 
 cmd_applog() {
-  local role="${1:-daemon}"
+  local role="${1:-$(default_role)}"
   unit_of "$role" >/dev/null # 借它校验组件名，和 logs / restart 的报错保持一致
   local f="$ROOT/shared/$role/logs/current.log"
   if [ ! -f "$f" ]; then die "没有这个日志文件: $f"; fi

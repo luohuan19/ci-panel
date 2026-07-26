@@ -48,6 +48,7 @@ RUN_USER="ci-runner"
 INSTALL_ROOT="/opt/ci-panel"
 SCAN_ROOT="/data/ci-runner"
 DAEMON_PORT="24444"
+WEB_PORT_OPT="23333"
 TARBALL=""
 WANT_VERSION=""
 RUNNER_PKG=""
@@ -73,11 +74,13 @@ usage() {
   --version <v>           从 GitHub Release 取指定版本，如 1.0.0
 
 部署
-  --role daemon|all       daemon=只装节点(默认)，all=同机再装 web 面板
+  --role daemon|web|all   daemon=只装节点(默认)；web=只装面板，不装 daemon 也不配特权；
+                          all=同机既是面板又是节点
   --user <name>           daemon 的运行用户，也是 runner 目录属主（默认 ci-runner）
   --root <path>           安装根目录（默认 /opt/ci-panel）
   --scan-root <path>      runner 根目录，写进特权助手的 ALLOWED_ROOT（默认 /data/ci-runner）
   --daemon-port <n>       daemon 端口，仅首次安装时写入配置（默认 24444）
+  --web-port <n>          面板端口，仅首次安装时写入配置（默认 23333，--role web/all 有效）
   --runner-pkg <path>     预置 GitHub runner 安装包，省掉首次创建时现场下载约 130MB
   --runner-proxy <url>    写入 .env 的 CIP_RUNNER_PROXY —— daemon 拉 runner 包和注册时的代理兜底
   --github-repos <a/b,c/d>  写入 .env 的 CIP_GITHUB_REPOS。这是 panel 的配置（daemon 不读），
@@ -97,6 +100,7 @@ parse_args() {
       --root) INSTALL_ROOT="${2:?--root 需要参数}" && shift 2 ;;
       --scan-root) SCAN_ROOT="${2:?--scan-root 需要参数}" && shift 2 ;;
       --daemon-port) DAEMON_PORT="${2:?--daemon-port 需要参数}" && shift 2 ;;
+      --web-port) WEB_PORT_OPT="${2:?--web-port 需要参数}" && shift 2 ;;
       --file) TARBALL="${2:?--file 需要参数}" && shift 2 ;;
       --version) WANT_VERSION="${2:?--version 需要参数}" && shift 2 ;;
       --runner-pkg) RUNNER_PKG="${2:?--runner-pkg 需要参数}" && shift 2 ;;
@@ -114,13 +118,20 @@ parse_args() {
   done
 
   case "$ROLE" in
-    daemon | all) ;;
-    *) die "--role 只能是 daemon 或 all，收到: $ROLE" ;;
+    daemon | web | all) ;;
+    *) die "--role 只能是 daemon、web 或 all，收到: $ROLE" ;;
   esac
 
-  if ! printf '%s' "$DAEMON_PORT" | grep -Eq '^[0-9]{1,5}$' ||
-    [ "$DAEMON_PORT" -lt 1 ] || [ "$DAEMON_PORT" -gt 65535 ]; then
-    die "--daemon-port 不是合法端口: $DAEMON_PORT"
+  local port
+  for port in "$DAEMON_PORT" "$WEB_PORT_OPT"; do
+    if ! printf '%s' "$port" | grep -Eq '^[0-9]{1,5}$' || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+      die "不是合法端口: $port"
+    fi
+  done
+
+  # --role web 是纯管理机：它不装 daemon，这些参数无处可用，静默忽略会让人以为生效了
+  if [ "$ROLE" = "web" ] && [ -n "$RUNNER_PKG" ]; then
+    die "--role web 不装 daemon，用不上 --runner-pkg（runner 包要放到实际跑 runner 的节点上）"
   fi
 
   if [ -n "$WANT_VERSION" ]; then validate_version "$WANT_VERSION"; fi
@@ -154,6 +165,9 @@ parse_args() {
 cleanup() {
   if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
 }
+
+wants_daemon() { [ "$ROLE" = "daemon" ] || [ "$ROLE" = "all" ]; }
+wants_web() { [ "$ROLE" = "web" ] || [ "$ROLE" = "all" ]; }
 
 preflight() {
   need_root
@@ -207,6 +221,10 @@ detect_arch() {
     aarch64 | arm64) ARCH="arm64" ;;
     *) die "不支持的架构: $machine（包里只带了 x64 与 arm64 的 pty/7z/file_zip）" ;;
   esac
+  if ! wants_daemon; then
+    log "架构 $ARCH（--role web 不跑 daemon，不检查它的 lib 二进制）"
+    return
+  fi
   # daemon 启动时 checkDependencies() 找不到 file_zip 会直接抛错退出，先在这里拦住
   local f
   for f in "pty_linux_$ARCH" "file_zip_linux_$ARCH" "7z_linux_$ARCH"; do
@@ -314,6 +332,23 @@ seed_daemon_config() {
   chown -R "$RUN_USER:$RUN_USER" "$INSTALL_ROOT/shared/daemon/data"
 }
 
+seed_web_config() {
+  local cfg="$INSTALL_ROOT/shared/web/data/SystemConfig/config.json"
+  if [ -f "$cfg" ]; then
+    log "面板配置已存在，保留不动"
+    if [ "$WEB_PORT_OPT" != "23333" ]; then
+      warn "--web-port 本次忽略：端口改动请直接编辑 $cfg 后重启服务"
+    fi
+    return
+  fi
+  log "写面板初始配置（端口 $WEB_PORT_OPT）…"
+  mkdir -p "$(dirname "$cfg")"
+  # 同 seed_daemon_config: StorageSystem.load 会把 JSON 深合并到 SystemConfig 类默认值上
+  # （panel/src/app/setting.ts），所以只写端口就够。
+  printf '{\n  "httpPort": %s\n}\n' "$WEB_PORT_OPT" >"$cfg"
+  chown -R "$RUN_USER:$RUN_USER" "$INSTALL_ROOT/shared/web/data"
+}
+
 place_runner_pkg() {
   if [ -z "$RUNNER_PKG" ]; then return; fi
   if [ ! -f "$RUNNER_PKG" ]; then die "找不到 runner 安装包: $RUNNER_PKG"; fi
@@ -373,6 +408,10 @@ EOF
 }
 
 install_privileges() {
+  if ! wants_daemon; then
+    log "--role web 不跑 runner，跳过特权配置（不给纯管理机加多余的 sudo 授权面）"
+    return
+  fi
   if [ "$SKIP_PRIVILEGES" -eq 1 ]; then
     warn "按要求跳过特权配置。在补上之前，创建 runner 会在它已经注册到 GitHub 之后才失败，"
     warn "并在 GitHub 上留下一个永远不上线的 runner。补的方法："
@@ -388,11 +427,11 @@ install_privileges() {
 
 install_units() {
   log "安装 systemd 单元 …"
-  if [ "$ROLE" = "all" ]; then
-    render_units_for_roles "$RELEASE_DIR" daemon web
-  else
-    render_units_for_roles "$RELEASE_DIR" daemon
-  fi
+  local roles=""
+  if wants_daemon; then roles="daemon"; fi
+  if wants_web; then roles="$roles web"; fi
+  # shellcheck disable=SC2086  # 这里要的就是把角色列表按空格拆开
+  render_units_for_roles "$RELEASE_DIR" $roles
 }
 
 install_ctl() {
@@ -408,42 +447,56 @@ install_ctl() {
   log "已安装运维入口: $dest"
 }
 
+enable_and_start() { # unit
+  # 不要把 stderr 也丢掉：enable 失败时 set -e 会让脚本直接退出，
+  # 吞掉 stderr 的话用户只看到"无声中断"
+  if ! systemctl enable "$1" >/dev/null; then die "systemctl enable $1 失败"; fi
+  systemctl restart "$1"
+}
+
 activate() {
   log "切换 current -> releases/$VERSION 并启动 …"
   ln -sfnT "$RELEASE_DIR" "$INSTALL_ROOT/current"
-  # 不要把 stderr 也丢掉：enable 失败时 set -e 会让脚本直接退出，
-  # 吞掉 stderr 的话用户只看到"无声中断"
-  if ! systemctl enable "$DAEMON_UNIT" >/dev/null; then die "systemctl enable $DAEMON_UNIT 失败"; fi
-  systemctl restart "$DAEMON_UNIT"
-  if [ "$ROLE" = "all" ]; then
-    if ! systemctl enable "$WEB_UNIT" >/dev/null; then die "systemctl enable $WEB_UNIT 失败"; fi
-    systemctl restart "$WEB_UNIT"
-  fi
+  if wants_daemon; then enable_and_start "$DAEMON_UNIT"; fi
+  if wants_web; then enable_and_start "$WEB_UNIT"; fi
 }
 
 print_summary() {
-  local cfg="$INSTALL_ROOT/shared/daemon/data/Config/global.json"
-  local key port host
-  key="$(read_json_field "$cfg" key)"
-  port="$(daemon_port)"
+  local host
   host="$(detect_ip)"
   if [ -z "$host" ]; then host="<这台机器的 IP>"; fi
 
   printf '\n'
   log "ci-panel $VERSION 部署完成（role=$ROLE）"
-  printf '\n在面板里添加这个节点：\n'
-  printf '  地址   %s\n' "$host"
-  printf '  端口   %s\n' "$port"
-  printf '  密钥   %s\n' "$key"
-  printf '\n这个密钥等同于该节点的准入凭据，只在面板里填，不要贴到聊天或工单里。\n'
-  printf '别忘了放开防火墙上的 %s 端口 —— 节点连不上最常见的原因就是这个。\n' "$port"
-  if [ "$ROLE" = "all" ]; then
+
+  if wants_daemon; then
+    local port key
+    port="$(daemon_port)"
+    key="$(read_json_field "$INSTALL_ROOT/shared/daemon/data/Config/global.json" key)"
+    printf '\n在面板里添加这个节点：\n'
+    printf '  地址   %s\n' "$host"
+    printf '  端口   %s\n' "$port"
+    printf '  密钥   %s\n' "$key"
+    printf '\n这个密钥等同于该节点的准入凭据，只在面板里填，不要贴到聊天或工单里。\n'
+    printf '别忘了放开防火墙上的 %s 端口 —— 节点连不上最常见的原因就是这个。\n' "$port"
+    if [ -z "$RUNNER_PKG" ] && [ ! -d "$INSTALL_ROOT/shared/daemon/data/runner-pkg" ]; then
+      printf '\n没有预置 runner 安装包，首次创建 runner 时 daemon 会现场下载（约 130MB，走代理会很慢）。\n'
+      printf '想省这一步：install.sh --runner-pkg actions-runner-linux-%s-<版本>.tar.gz\n' "$ARCH"
+    fi
+  fi
+
+  if wants_web; then
     printf '\n面板地址 http://%s:%s —— 首次打开会进安装向导，在那里创建管理员账号。\n' "$host" "$(web_port)"
+    if ! wants_daemon; then
+      # panel 启动时会去找同级的 daemon 自动登记（remote_service.ts 的 initConnectLocalhost），
+      # 纯面板机上找不到是正常的：它每 5 秒重试一次，等你在面板里加了第一个节点就停。
+      # 不说明的话，日志里那几行告警看着像是装坏了。
+      printf '\n这台是纯面板机，没有本机 daemon。启动初期日志里会有"找不到本机守护进程"的告警，\n'
+      printf '在面板里添加第一个节点之后就不再出现，属正常现象。\n'
+      printf '各节点用 install.sh（默认 --role daemon）单独部署，然后在面板里逐台添加。\n'
+    fi
   fi
-  if [ -z "$RUNNER_PKG" ] && [ ! -d "$INSTALL_ROOT/shared/daemon/data/runner-pkg" ]; then
-    printf '\n没有预置 runner 安装包，首次创建 runner 时 daemon 会现场下载（约 130MB，走代理会很慢）。\n'
-    printf '想省这一步：install.sh --runner-pkg actions-runner-linux-%s-<版本>.tar.gz\n' "$ARCH"
-  fi
+
   printf '\n常用命令：\n'
   printf '  ci-panel-ctl status                   # 状态与版本\n'
   printf '  ci-panel-ctl logs                     # 跟踪日志\n'
@@ -462,23 +515,28 @@ main() {
   ensure_user
   check_node_usable_by_user
   install_release
-  link_shared daemon
-  seed_daemon_config
-  place_runner_pkg
-  if [ "$ROLE" = "all" ]; then link_shared web; fi
+
+  if wants_daemon; then
+    link_shared daemon
+    seed_daemon_config
+    place_runner_pkg
+  fi
+  if wants_web; then
+    link_shared web
+    seed_web_config
+  fi
+
   write_env
   install_privileges
   install_units
   install_ctl
   activate
 
-  if ! probe_service "$DAEMON_UNIT" "$(daemon_port)" daemon; then
+  if wants_daemon && ! probe_service "$DAEMON_UNIT" "$(daemon_port)" daemon; then
     die "daemon 起不来。日志: journalctl -u $DAEMON_UNIT -n 50"
   fi
-  if [ "$ROLE" = "all" ]; then
-    if ! probe_service "$WEB_UNIT" "$(web_port)" web; then
-      die "web 起不来。日志: journalctl -u $WEB_UNIT -n 50"
-    fi
+  if wants_web && ! probe_service "$WEB_UNIT" "$(web_port)" web; then
+    die "web 起不来。日志: journalctl -u $WEB_UNIT -n 50"
   fi
   print_summary
 }

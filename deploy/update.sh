@@ -234,6 +234,15 @@ refresh_privileges() { # release_dir [helper_path]
   local release="$1"
   # 助手路径可以传第二个参数覆盖，默认就是 install-runner-privileges.sh 装过去的位置
   local helper="${2:-/usr/local/sbin/ci-panel-runner-svc}"
+
+  # 纯面板机（--role web）不跑 runner，助手对它毫无意义，别拿"没装助手"去吓唬人
+  case " $ROLES " in
+    *" daemon "*) ;;
+    *)
+      log "这台机器没有 daemon，跳过特权助手（面板本身不在本地管 runner）"
+      return
+      ;;
+  esac
   local installer="$release/prod-scripts/install-runner-privileges.sh"
   local src="$release/prod-scripts/ci-panel-runner-svc"
 
