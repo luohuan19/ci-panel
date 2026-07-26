@@ -1,0 +1,111 @@
+name: Release
+
+# 打一个 cip-v* 的 tag 就发版。前缀是 cip- 而不是裸的 v：这个仓库里已经有 100 多个
+# 从上游 MCSManager 继承来的 v9.x / v10.x tag，共用一个命名空间会让版本语义彻底混乱。
+on:
+  push:
+    tags: ["cip-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，如 1.0.0（不要带 cip-v 前缀）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, smoke-test and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            common/package-lock.json
+            panel/package-lock.json
+            daemon/package-lock.json
+            frontend/package-lock.json
+
+      - name: Resolve version
+        id: ver
+        # 输入走 env 而不是直接把 ${{ }} 写进 run：GitHub 表达式是在 YAML 层做文本替换的，
+        # 直接内联时一个含引号的输入就能逃出引号，在这个持有 contents:write 的 runner 上
+        # 执行任意命令 —— 而且那发生在下面的 semver 校验之前。
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="$INPUT_VERSION"
+          else
+            version="${GITHUB_REF_NAME#cip-v}"
+          fi
+          # 和 pack.sh 用同一条规则：major.minor 要能被 frontend/src/tools/version.ts 取到
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "版本号格式不对: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=cip-v$version" >> "$GITHUB_OUTPUT"
+          echo "tarball=dist-release/ci-panel-$version-linux.tar.gz" >> "$GITHUB_OUTPUT"
+
+      # pty / 7z / file_zip 来自另外两个仓库的 release，每次发版重新下 25MB 既慢又多一个
+      # 失败点。清单没变就直接复用（pack.sh 用 wget -nc，命中缓存时不会重下）。
+      - name: Cache daemon lib binaries
+        uses: actions/cache@v4
+        with:
+          path: dist-release/.lib-cache
+          key: daemon-lib-${{ hashFiles('lib-urls.txt') }}
+
+      # 四个包不是 npm workspace。在根目录装就够：它会拉根依赖，其 install 生命周期
+      # 脚本再去装 daemon/panel/frontend 并构建 common —— 与 ci.yml 的做法保持一致。
+      - name: Install dependencies
+        run: npm install
+
+      - name: Pack release tarball
+        run: bash scripts/release/pack.sh "${{ steps.ver.outputs.version }}"
+
+      # 真的把 web + daemon 跑起来。panel 的 main().catch 是 process.exit(0)，
+      # 启动失败也返回 0，所以这一步看的是端口、首页和日志，不是退出码。
+      - name: Smoke-test the packed tarball
+        run: bash scripts/release/smoke-test.sh "${{ steps.ver.outputs.tarball }}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$(cat <<'EOF'
+          ## 安装
+
+          新机器上加一个 runner 节点：
+
+          ```bash
+          curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/ci-panel-${{ steps.ver.outputs.version }}-linux.tar.gz
+          tar xzf ci-panel-${{ steps.ver.outputs.version }}-linux.tar.gz
+          cd ci-panel-${{ steps.ver.outputs.version }}
+          sudo bash install.sh --scan-root /data/ci-runner
+          ```
+
+          已经装过的机器：
+
+          ```bash
+          sudo ci-panel-ctl update      # 出问题用 sudo ci-panel-ctl rollback 切回去
+          ```
+
+          详见仓库里的 DEPLOY.md。包内含 x64 与 arm64 两套二进制，一个包通用。
+
+          EOF
+          )"
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "ci-panel ${{ steps.ver.outputs.version }}" \
+            --notes "$notes" \
+            --generate-notes \
+            "${{ steps.ver.outputs.tarball }}" \
+            "${{ steps.ver.outputs.tarball }}.sha256"

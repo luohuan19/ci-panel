@@ -52,9 +52,11 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) ([中文](DEVELOPMENT_ZH.md)).
 
 ## Deployment
 
-`prod-scripts/` holds the production install and service scripts, including the
-runner privilege setup required at deploy time — see
-[prod-scripts/README.md](prod-scripts/README.md).
+See [DEPLOY.md](DEPLOY.md) — installing a runner node from a release tarball,
+updating with automatic rollback, and the directory layout.
+
+`prod-scripts/` holds the runner privilege setup that the installer invokes at
+deploy time — see [prod-scripts/README.md](prod-scripts/README.md).
 
 ## Security
 
