@@ -223,6 +223,55 @@ prune_releases() {
   done < <(ls -1dt "$INSTALL_ROOT/releases"/*/ 2>/dev/null | sed 's:/$::' || true)
 }
 
+# 特权助手装在 /usr/local/sbin，不在 releases/ 下，所以它不会跟着 current 软链一起切换。
+# 新版本可能修了助手的 bug 或给它加了动作，只跑 update 的机器必须在这里补上，否则
+# daemon 去调新动作时才失败 —— 而那时 runner 可能已经注册到 GitHub 了
+# （见 prod-scripts/README.md）。
+#
+# ALLOWED_ROOT 不用让用户重传 --scan-root: 助手自己就是这个值的真相源，preflight 会打印，
+# daemon 的 initRunnerRoots 也是这么读回去的。
+refresh_privileges() { # release_dir [helper_path]
+  local release="$1"
+  # 助手路径可以传第二个参数覆盖，默认就是 install-runner-privileges.sh 装过去的位置
+  local helper="${2:-/usr/local/sbin/ci-panel-runner-svc}"
+  local installer="$release/prod-scripts/install-runner-privileges.sh"
+  local src="$release/prod-scripts/ci-panel-runner-svc"
+
+  if [ ! -x "$helper" ]; then
+    warn "这台机器没配特权助手，跳过。补上之前创建 runner 会失败："
+    warn "  sudo bash $installer --user $RUN_USER --root <runner 根目录>"
+    return
+  fi
+  if [ ! -f "$installer" ] || [ ! -f "$src" ]; then
+    warn "包里没有 prod-scripts，跳过特权助手更新"
+    return
+  fi
+
+  local pre want have root
+  pre="$("$helper" preflight 2>/dev/null || true)"
+  have="$(printf '%s' "$pre" | sed -n 's/^version=//p' | head -n1 || true)"
+  root="$(printf '%s' "$pre" | sed -n 's/^allowed_root=//p' | head -n1 || true)"
+  want="$(sed -n 's/^VERSION=//p' "$src" | head -n1 || true)"
+
+  if [ -z "$root" ]; then
+    warn "已装的助手不认识 preflight（版本太旧），读不到 ALLOWED_ROOT，无法自动升级。手动跑："
+    warn "  sudo bash $installer --user $RUN_USER --root <runner 根目录>"
+    return
+  fi
+  if [ -n "$want" ] && [ "$want" = "$have" ]; then
+    log "特权助手已是 v$have，无需更新"
+    return
+  fi
+
+  log "更新特权助手 v${have:-?} → v${want:-?}（ALLOWED_ROOT=$root，取自助手自身）"
+  # 这里失败不触发服务回滚: 服务本身是好的，只是 runner 管理能力没跟上，
+  # 把话说清楚让人手动处理，比把一次成功的升级整个推翻更合适。
+  if ! bash "$installer" --user "$RUN_USER" --root "$root"; then
+    warn "特权助手更新失败。服务不受影响，但创建/删除 runner 可能出问题。手动重试："
+    warn "  sudo bash $installer --user $RUN_USER --root $root"
+  fi
+}
+
 prune_backups() {
   local kept=0 dir
   while IFS= read -r dir; do
@@ -259,6 +308,7 @@ do_rollback() {
     fi
     die "两个版本都起不来，需要人工介入。current 现在指向 $(readlink -f "$INSTALL_ROOT/current")"
   fi
+  refresh_privileges "$prev" # 助手也退回这个版本，别留下新助手配旧代码的组合
   log "已回滚到 $(current_version)"
 }
 
@@ -341,6 +391,9 @@ do_update() {
     fi
     die "回滚也失败了，需要人工介入。current 指向 $(readlink -f "$INSTALL_ROOT/current")"
   fi
+
+  # 助手不在 releases/ 下，切软链带不动它，得显式跟着新版本更新
+  refresh_privileges "$RELEASE_DIR"
 
   # systemd 单元已经在 switch_to 里跟着新版本渲染过了，这里补上 ctl
   if [ -f "$RELEASE_DIR/ci-panel-ctl" ]; then
