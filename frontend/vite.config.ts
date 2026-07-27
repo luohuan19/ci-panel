@@ -21,10 +21,13 @@ export default defineConfig({
           if (path.includes("node_modules/ant-design-vue")) {
             return "ant";
           }
-          if (path.includes("node_modules/zrender")) {
-            return "zrender";
-          }
-          if (path.includes("node_modules/echarts")) {
+          // zrender 必须和 echarts 待在同一个 chunk 里。两者之间存在循环引用：
+          // zrender 的顶层初始化会调到 echarts 的函数，而那个函数又要用 zrender 里
+          // 还没初始化完的绑定。同一个 chunk 内 rollup 会把顺序排对，一旦拆成两个
+          // chunk 就变成跨 chunk 的暂时性死区，生产构建一加载就抛
+          // "hc is not a function"，整个前端连挂载都到不了（dev 模式下不分 chunk，
+          // 所以只在生产构建复现）。
+          if (path.includes("node_modules/zrender") || path.includes("node_modules/echarts")) {
             return "echart";
           }
           if (path.includes("node_modules/lodash")) {
