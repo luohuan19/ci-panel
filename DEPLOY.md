@@ -218,6 +218,43 @@ sudo bash install.sh --scan-root /data/ci-runner \
 `--runner-pkg` 的**架构必须和目标机一致**（脚本会校验文件名里的 `linux-<arch>`），
 arm64 的包在 x64 上解出来跑不了。不给这个参数的话，首次创建 runner 时 daemon 会现场下载。
 
+## 接管已被纳管的 runner
+
+装 daemon 的机器上，如果 runner 早先被**另一个 daemon 实例**纳管过（常见于原本用开发实例
+管理、后来改成 systemd 部署），新 daemon 会陷入一个自相矛盾的状态：导入页面把它们置灰说
+"已纳管"，runner 列表却是空的，两边都没有入口。
+
+原因是纳管关系记在两个地方，而它们的生命周期不同：
+
+| 记在哪 | 跟着谁 | 换 daemon 时 |
+| --- | --- | --- |
+| `<runner 目录>/.cipanel` | runner 目录 | 留在原地 |
+| `<data>/InstanceConfig/<uuid>.json` | daemon 的 data 目录 | 新装的是空的 |
+
+`.cipanel` 是纳管关系的唯一真相源（见 `daemon/src/service/runner_marker.ts`），所以新
+daemon 认得出"已被纳管"，但它自己没有对应的实例记录，于是列不出来。
+
+把旧实例配置搬过去即可，它们只认 `cwd` 里的绝对路径，不跟任何 daemon 绑定：
+
+```bash
+OLD=<旧 daemon>/data/InstanceConfig
+NEW=/opt/ci-panel/shared/daemon/data/InstanceConfig
+cp -a "$NEW" /tmp/instconf-backup                      # 先留个底
+for f in "$OLD"/*.json; do
+  # global0001 是 daemon 内建的全局实例，新 daemon 自己有一份，别覆盖
+  [ "$(basename "$f")" = global0001.json ] && continue
+  cp -p "$f" "$NEW/"
+done
+chown -R <运行用户>: "$NEW"
+sudo systemctl restart ci-panel-daemon
+```
+
+daemon 只在**启动时**加载实例，所以必须重启才生效。日志里
+`[runner-scan] 已纳管（经句柄实例发现）：N 个` 应该从 0 变成实际数量。
+
+彻底重来也是一个选择：删掉各 runner 目录下的 `.cipanel`，再从面板重新导入 —— 代价是
+marker 里记的 group 和注册标签会丢。
+
 ## 排障
 
 | 现象 | 先查这里 |
@@ -228,6 +265,7 @@ arm64 的包在 x64 上解出来跑不了。不给这个参数的话，首次创
 | 创建 runner 失败，GitHub 上留下不上线的 runner | 特权没配好：`sudo bash <root>/current/prod-scripts/install-runner-privileges.sh --check` |
 | 拉 runner 安装包很慢或失败 | `.env` 里设 `CIP_RUNNER_PROXY`，或用 `--runner-pkg` 预置 |
 | 更新后服务异常 | `sudo ci-panel-ctl rollback`；数据快照在 `backups/` |
+| 面板上 runner 显示"已纳管"却加不进列表 | 这台机器的 runner 曾被另一个 daemon 纳管过，实例记录没跟过来。见下方"接管已被纳管的 runner" |
 
 `ci-panel-ctl` 的完整命令见 `ci-panel-ctl --help`。特权助手的授权边界、为什么启停也要走
 助手，见 [prod-scripts/README.md](prod-scripts/README.md)。
