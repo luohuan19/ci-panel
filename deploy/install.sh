@@ -236,27 +236,55 @@ detect_arch() {
   log "架构 $ARCH，lib 二进制齐全"
 }
 
+# 服务是以 RUN_USER 跑的，所以"这个 node 能不能用"要以那个用户的身份回答。
+# /usr/local/bin/node 这种看着像系统路径、实则软链到某个用户 home 的情况很常见，
+# 光看版本号判断不出来。
+node_usable_by_user() { # path
+  if [ "$RUN_USER" = "root" ]; then return 0; fi
+  su -s /bin/sh -c "$(printf '%q' "$1") -v" "$RUN_USER" >/dev/null 2>&1
+}
+
+# 报错时把软链的真身指出来，否则"/usr/local/bin/node 用不了"看着莫名其妙
+node_link_hint() { # path
+  local target
+  target="$(readlink "$1" 2>/dev/null || true)"
+  if [ -n "$target" ]; then printf '（软链指向 %s）' "$target"; fi
+}
+
 ensure_node() {
-  local candidate major
-  candidate="$(command -v node 2>/dev/null || true)"
-  if [ -n "$candidate" ]; then
-    major="$("$candidate" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
-    if [ "$major" -ge "$NODE_MIN_MAJOR" ] 2>/dev/null; then
-      NODE_BIN="$candidate"
-      log "用系统 node: $NODE_BIN ($("$NODE_BIN" -v))"
+  local pinned_dir="$INSTALL_ROOT/runtime/node-v$NODE_PINNED-linux-$ARCH"
+
+  # --install-node 是明确指令，不该被"系统上恰好有个够新的 node"抢先 ——
+  # 之前正是这个顺序导致加了这个参数也照样去用系统 node，然后才发现它不可用。
+  if [ "$INSTALL_NODE" -ne 1 ]; then
+    local candidate major
+    candidate="$(command -v node 2>/dev/null || true)"
+    if [ -n "$candidate" ]; then
+      major="$("$candidate" -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+      if [ "$major" -lt "$NODE_MIN_MAJOR" ] 2>/dev/null; then
+        warn "系统 node 版本过低: $("$candidate" -v)（需要 >= v$NODE_MIN_MAJOR）"
+      elif ! node_usable_by_user "$candidate"; then
+        # 版本够 ≠ 能用：服务用户执行不了的话，装出来的单元一拉起就失败
+        warn "系统 node $candidate 版本够，但 $RUN_USER 执行不了$(node_link_hint "$candidate")"
+      else
+        NODE_BIN="$candidate"
+        log "用系统 node: $NODE_BIN ($("$NODE_BIN" -v))"
+        return
+      fi
+    fi
+
+    if [ -x "$pinned_dir/bin/node" ] && node_usable_by_user "$pinned_dir/bin/node"; then
+      NODE_BIN="$pinned_dir/bin/node"
+      log "用之前装好的运行时: $NODE_BIN"
       return
     fi
-    warn "系统 node 版本过低: $("$candidate" -v)（需要 >= v$NODE_MIN_MAJOR）"
+    die "没有 $RUN_USER 能用的 node >= v$NODE_MIN_MAJOR$(node_link_hint "$(command -v node 2>/dev/null || true)")。装一个系统级的，或者加 --install-node 把官方运行时放到 $INSTALL_ROOT/runtime/"
   fi
 
-  local pinned_dir="$INSTALL_ROOT/runtime/node-v$NODE_PINNED-linux-$ARCH"
-  if [ -x "$pinned_dir/bin/node" ]; then
+  if [ -x "$pinned_dir/bin/node" ] && node_usable_by_user "$pinned_dir/bin/node"; then
     NODE_BIN="$pinned_dir/bin/node"
     log "用之前装好的运行时: $NODE_BIN"
     return
-  fi
-  if [ "$INSTALL_NODE" -ne 1 ]; then
-    die "没有可用的 node >= v$NODE_MIN_MAJOR。要么自己装（apt/dnf/nvm 皆可），要么加 --install-node 让本脚本下载官方运行时到 $INSTALL_ROOT/runtime/"
   fi
 
   need_cmd curl
@@ -273,6 +301,9 @@ ensure_node() {
   fi
   chown -R root:root "$INSTALL_ROOT/runtime"
   if [ ! -x "$pinned_dir/bin/node" ]; then die "node 解包后没找到 $pinned_dir/bin/node"; fi
+  if ! node_usable_by_user "$pinned_dir/bin/node"; then
+    die "装好的运行时 $pinned_dir/bin/node$(node_link_hint "$pinned_dir/bin/node") 仍然不能被 $RUN_USER 执行（$INSTALL_ROOT 的权限？）"
+  fi
   NODE_BIN="$pinned_dir/bin/node"
   log "运行时就绪: $NODE_BIN"
 }
@@ -282,18 +313,6 @@ check_node_bin() {
   case "$NODE_BIN" in
     *'|'* | *'&'* | *'\'*) die "node 路径里含 | & \\，无法安全渲染 systemd 单元: $NODE_BIN" ;;
   esac
-}
-
-# 服务以 RUN_USER 运行，而这里的 node 是 root 的 PATH 找出来的 —— 两者不一定通。
-# 典型情况: node 装在某个用户的 ~/.local/bin 里，换个用户就没有执行权限，
-# 而这种失败要等到 systemd 拉起服务时才暴露。所以在渲染单元之前就以该用户身份试一次。
-check_node_usable_by_user() {
-  if [ "$RUN_USER" = "root" ]; then return; fi
-  if ! su -s /bin/sh -c "$(printf '%q' "$NODE_BIN") -v" "$RUN_USER" >/dev/null 2>&1; then
-    die "用户 $RUN_USER 跑不了 $NODE_BIN。
-常见原因是这个 node 装在别的用户 home 里（比如 ~/.local/bin），换用户就没权限。
-装一个系统级的 node，或者加 --install-node 把运行时放到 $INSTALL_ROOT/runtime/。"
-  fi
 }
 
 ensure_user() {
@@ -516,10 +535,10 @@ main() {
   resolve_source
   read_version
   detect_arch
+  # 先建用户：选 node 时要以它的身份验证可执行性
+  ensure_user
   ensure_node
   check_node_bin
-  ensure_user
-  check_node_usable_by_user
   install_release
 
   if wants_daemon; then
