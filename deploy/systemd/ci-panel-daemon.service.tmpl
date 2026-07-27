@@ -1,0 +1,27 @@
+[Unit]
+Description=CI Panel daemon (GitHub Actions runner node)
+Documentation=https://github.com/luohuan19/ci-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__/current/daemon
+EnvironmentFile=-__ROOT__/.env
+ExecStart=__NODE__ --enable-source-maps --max-old-space-size=8192 app.js
+Restart=always
+RestartSec=3
+
+# 这里刻意不加 ProtectSystem / PrivateTmp / NoNewPrivileges 之类的沙箱选项:
+# daemon 必须能跑 `sudo -n ci-panel-runner-svc` 去装卸 runner 的 systemd 单元和写
+# drop-in 环境变量，沙箱会把这条路打断。真正的授权边界在助手自己那一侧
+# (root 所有、单元名整串锚定校验、只认 ALLOWED_ROOT 下含 .runner 的目录)，
+# 详见 prod-scripts/README.md。
+#
+# 也不需要 KillMode=process: runner 跑在自己的 actions.runner.*.service 单元里，
+# 由 systemd 经 D-Bus 启动、有独立 cgroup，不是 daemon 的子进程。所以重启或更新
+# daemon 不会打断正在跑的 CI job。
+
+[Install]
+WantedBy=multi-user.target

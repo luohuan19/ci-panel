@@ -1,0 +1,22 @@
+[Unit]
+Description=CI Panel web (panel)
+Documentation=https://github.com/luohuan19/ci-panel
+After=network-online.target ci-panel-daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__/current/web
+EnvironmentFile=-__ROOT__/.env
+ExecStart=__NODE__ --enable-source-maps --max-old-space-size=4096 app.js
+Restart=always
+RestartSec=3
+
+# After= 而不是 Requires= ci-panel-daemon.service: panel 启动时会去读同级
+# ../daemon/data/Config/global.json 自动登记本机 daemon
+# (panel/src/app/service/remote_service.ts)，连不上会每 5 秒重试，所以
+# daemon 起得晚一点没关系，也不该因为 daemon 挂了就把面板一起拖下线。
+
+[Install]
+WantedBy=multi-user.target

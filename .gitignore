@@ -11,9 +11,14 @@ data/
 dist/
 out/
 lib/
+# 这条 lib/ 是给 daemon 运行时下载的 pty/7z 二进制用的，但它是无路径规则，
+# 会连 deploy/lib/ 里的部署公共库一起吞掉 —— 那份漏掉的话 install.sh 和
+# update.sh 在干净 clone 出来的环境里全都起不来。
+!deploy/lib/
 production/
 .DS_Store
 production-code/
+dist-release/
 test.js
 .idea/
 ai-api.key
