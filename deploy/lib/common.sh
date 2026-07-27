@@ -78,6 +78,10 @@ validate_path_for_sed() { # value label
   case "$1" in
     *'|'* | *'&'* | *'\'*) die "$2 里不能含 | & \\ 这几个字符（会被 sed 渲染进 systemd 单元）: $1" ;;
   esac
+  # 换行更狠：systemd 单元是逐行解析的，一个 \n 就能在 ExecStart 后面接上任意指令
+  case "$1" in
+    *$'\n'* | *$'\r'*) die "$2 里不能含换行" ;;
+  esac
 }
 
 # 版本号会被拼进下载 URL 和 $TMP 下的文件名，必须先卡住格式

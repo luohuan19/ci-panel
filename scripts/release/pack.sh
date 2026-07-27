@@ -175,20 +175,42 @@ if [ "$SKIP_LIB" -eq 0 ]; then
   find "$LIB_CACHE" -type f -empty -delete # 上次下载中断留下的 0 字节文件，-nc 不会重下
   wget -q -nc --tries=3 --timeout=60 --input-file="$ROOT/lib-urls.txt" \
     --directory-prefix="$LIB_CACHE"
-  cp -f "$LIB_CACHE"/* "$STAGE/daemon/lib/"
-  chmod a+x "$STAGE/daemon/lib"/*
-
   # 这些二进制会在每台 daemon 主机上以真实权限运行，而上游既不签名也不发布校验和。
   # lib-checksums.txt 是我们自己钉下来的一份，能挡住上游被改、传输被劫、本地缓存被
   # 投毒这几种情况 —— 首次信任仍然是盲的（TOFU），但之后的任何变动都会在这里暴露。
   if [ "$REFRESH_LIB" -eq 1 ]; then
-    (cd "$STAGE/daemon/lib" && sha256sum $(ls | sort) >"$ROOT/lib-checksums.txt")
+    cp -f "$LIB_CACHE"/* "$STAGE/daemon/lib/"
+    # 文件名走 find -print0 而不是 $(ls)：缓存里要是有个叫 --status 的文件，
+    # 展开后会被 sha256sum 当成选项；带空格的名字也会被词分割拆散。
+    (
+      cd "$STAGE/daemon/lib"
+      find . -maxdepth 1 -mindepth 1 -type f -printf '%f\0' |
+        LC_ALL=C sort -z | xargs -0r sha256sum -- >"$ROOT/lib-checksums.txt"
+    )
     echo "      已刷新 lib-checksums.txt —— 提交前请人工核对 git diff"
   else
     if [ ! -f "$ROOT/lib-checksums.txt" ]; then
       echo "缺少 lib-checksums.txt。确认来源可信后用 --refresh-lib-checksums 生成一份" >&2
       exit 1
     fi
+    # 条目数要和 URL 数对得上：清单被截断或清空时，下面的 sha256sum -c 只会"没什么可查"，
+    # 不会报错，校验就悄悄失效了。
+    url_count="$(grep -cE '^https?://' "$ROOT/lib-urls.txt")"
+    sum_count="$(grep -c . "$ROOT/lib-checksums.txt")"
+    if [ "$sum_count" -ne "$url_count" ]; then
+      echo "lib-checksums.txt 有 $sum_count 条，lib-urls.txt 有 $url_count 个 URL —— 对不上，清单可能被改过" >&2
+      exit 1
+    fi
+    # 只拷清单里列出的文件。`cp "$LIB_CACHE"/*` 会把缓存里多出来的任何东西一并带进
+    # 发布包，而 sha256sum -c 只核对清单内的条目，那个多出来的文件不会被任何一步发现。
+    while IFS= read -r libname; do
+      if [ -z "$libname" ]; then continue; fi
+      if [ ! -f "$LIB_CACHE/$libname" ]; then
+        echo "缓存里没有 $libname（lib-checksums.txt 里列着它）" >&2
+        exit 1
+      fi
+      cp -f "$LIB_CACHE/$libname" "$STAGE/daemon/lib/$libname"
+    done < <(sed 's/^[0-9a-f]\{64\}[[:space:]][[:space:]]*//' "$ROOT/lib-checksums.txt")
     if ! (cd "$STAGE/daemon/lib" && sha256sum -c --quiet "$ROOT/lib-checksums.txt"); then
       echo "" >&2
       echo "lib 二进制的校验和对不上（上面列出了具体文件）。" >&2
@@ -197,8 +219,9 @@ if [ "$SKIP_LIB" -eq 0 ]; then
       echo "然后人工 review lib-checksums.txt 的 diff 再提交。" >&2
       exit 1
     fi
-    echo "      lib 二进制校验和通过（$(wc -l <"$ROOT/lib-checksums.txt") 个文件）"
+    echo "      lib 二进制校验和通过（$sum_count 个文件）"
   fi
+  chmod a+x "$STAGE/daemon/lib"/*
 else
   echo "[4/8] 跳过 lib 二进制下载 —— 这个包不能部署（daemon 启动会因缺 file_zip 直接退出），仅用于验证打包流程"
 fi

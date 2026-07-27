@@ -87,6 +87,10 @@ parse_args() {
   # 和 install.sh 同一道检查：INSTALL_ROOT 会被 sed 渲染进 systemd 单元和 ci-panel-ctl
   validate_path_for_sed "$INSTALL_ROOT" "--root"
   INSTALL_ROOT="$(readlink -m "$INSTALL_ROOT")"
+  # 再验一遍：readlink -m 会跟随符号链接，解析出来的真实路径可能含有上面那次
+  # 校验时根本看不到的元字符（/tmp/link → /tmp/unsafe|root 这种）。
+  validate_path_for_sed "$INSTALL_ROOT" "--root（解析软链后）"
+
 }
 
 cleanup() {
