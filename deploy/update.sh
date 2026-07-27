@@ -102,12 +102,19 @@ cleanup() {
   # 会让一个写错或被改写的变量删掉任意路径。形状不对就宁可留着不删。
   local inherited="${CIP_UPDATE_INHERITED_TMP:-}"
   if [ -n "$inherited" ]; then
-    case "$inherited" in
-      /tmp/tmp.??????????)
-        if [ -d "$inherited" ]; then rm -rf "$inherited"; fi
-        ;;
-      *) warn "继承的临时目录形状可疑，不予删除: $inherited" ;;
-    esac
+    # 用 [[ =~ ]] 整串锚定，不能用 case 的通配: case 里的 ? 和 * 会匹配 /，
+    # 于是 /tmp/tmp.abc/defghi 这种嵌套路径也能蒙混过 /tmp/tmp.?????????? 那样的模式。
+    # 目录名必须正好是 mktemp -d 造出来的形状，且父目录是临时目录本身。
+    local parent base
+    parent="$(dirname "$inherited")"
+    base="$(basename "$inherited")"
+    if [[ "$base" =~ ^tmp\.[[:alnum:]]{10}$ ]] &&
+      { [ "$parent" = "/tmp" ] || { [ -n "${TMPDIR:-}" ] && [ "$parent" = "${TMPDIR%/}" ]; }; } &&
+      [ -d "$inherited" ]; then
+      rm -rf "$inherited"
+    else
+      warn "继承的临时目录形状可疑，不予删除: $inherited"
+    fi
   fi
 }
 
