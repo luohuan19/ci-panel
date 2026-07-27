@@ -278,7 +278,7 @@ ensure_node() {
       log "用之前装好的运行时: $NODE_BIN"
       return
     fi
-    die "没有 $RUN_USER 能用的 node >= v$NODE_MIN_MAJOR。装一个系统级的，或者加 --install-node 把官方运行时放到 $INSTALL_ROOT/runtime/"
+    die "没有 $RUN_USER 能用的 node >= v$NODE_MIN_MAJOR$(node_link_hint "$(command -v node 2>/dev/null || true)")。装一个系统级的，或者加 --install-node 把官方运行时放到 $INSTALL_ROOT/runtime/"
   fi
 
   if [ -x "$pinned_dir/bin/node" ] && node_usable_by_user "$pinned_dir/bin/node"; then
@@ -302,7 +302,7 @@ ensure_node() {
   chown -R root:root "$INSTALL_ROOT/runtime"
   if [ ! -x "$pinned_dir/bin/node" ]; then die "node 解包后没找到 $pinned_dir/bin/node"; fi
   if ! node_usable_by_user "$pinned_dir/bin/node"; then
-    die "装好的运行时 $pinned_dir/bin/node 仍然不能被 $RUN_USER 执行（$INSTALL_ROOT 的权限？）"
+    die "装好的运行时 $pinned_dir/bin/node$(node_link_hint "$pinned_dir/bin/node") 仍然不能被 $RUN_USER 执行（$INSTALL_ROOT 的权限？）"
   fi
   NODE_BIN="$pinned_dir/bin/node"
   log "运行时就绪: $NODE_BIN"

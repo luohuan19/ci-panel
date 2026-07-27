@@ -3,13 +3,17 @@
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOGDIR="$ROOT/.run"
 
-# 和 start-cipanel.sh 一样从配置读端口。写死会有真实后果：这台机器上若还跑着
-# systemd 托管的生产 daemon(24444)，端口写错就是一条命令把线上节点停掉。
+# 和 start-cipanel.sh 一样从配置读端口，并且同样绝不回退到 24444：
+# 这台机器上 24444 很可能是 systemd 托管的生产节点，猜错就是一条命令把线上停掉。
 daemon_port() {
-  node -e 'try {
+  local cfg="$ROOT/daemon/data/Config/global.json" port
+  [ -f "$cfg" ] || return 1
+  port="$(node -e '
     const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    process.stdout.write(String(c.port || 24444));
-  } catch { process.stdout.write("24444"); }' "$ROOT/daemon/data/Config/global.json" 2>/dev/null || echo 24444
+    if (Number.isInteger(c.port) && c.port > 0 && c.port < 65536) process.stdout.write(String(c.port));
+  ' "$cfg" 2>/dev/null)" || return 1
+  [ -n "$port" ] || return 1
+  printf '%s' "$port"
 }
 
 kill_port() { # name port
@@ -25,5 +29,9 @@ kill_port() { # name port
 
 kill_port frontend 5173
 kill_port panel    23333
-kill_port daemon   "$(daemon_port)"
+if dport="$(daemon_port)"; then
+  kill_port daemon "$dport"
+else
+  echo "[skip] daemon 读不到端口配置，跳过（不拿 24444 去猜，那可能是生产节点）"
+fi
 echo "已停止。"
