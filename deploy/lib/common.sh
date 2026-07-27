@@ -244,15 +244,15 @@ try {
 ' "$1" "$2"
 }
 
-wait_tcp() { # port timeout_seconds
+wait_tcp() { # addr port timeout_seconds
   local waited=0
-  while [ "$waited" -lt "$2" ]; do
+  while [ "$waited" -lt "$3" ]; do
     if "$NODE_BIN" -e '
-const socket = require("net").connect(Number(process.argv[1]), "127.0.0.1");
+const socket = require("net").connect(Number(process.argv[2]), process.argv[1]);
 socket.on("connect", () => { socket.destroy(); process.exit(0); });
 socket.on("error", () => process.exit(1));
 socket.setTimeout(2000, () => { socket.destroy(); process.exit(1); });
-' "$1" 2>/dev/null; then
+' "$1" "$2" 2>/dev/null; then
       return 0
     fi
     sleep 1
@@ -261,20 +261,33 @@ socket.setTimeout(2000, () => { socket.destroy(); process.exit(1); });
   return 1
 }
 
+# 探活要连服务真正监听的地址。写死 127.0.0.1 会在绑定了具体网卡的部署上
+# 把健康的服务判成失败 —— 而那正是推荐做法（把面板绑到内网地址，不暴露公网）。
+# 后果不只是误报：update 会据此回滚一次本来成功的升级，回滚后同样探不到，
+# 最后报"回滚也失败，需要人工介入"，而服务自始至终是好的。
+#
+# 配置为空 / 0.0.0.0 / :: 表示监听所有接口，这时连回环最稳妥。
+probe_addr() { # configured_ip
+  case "${1:-}" in
+    "" | "0.0.0.0" | "::") printf '127.0.0.1' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 # 成功返回 0，失败返回 1 并把日志打出来 —— 由调用方决定是 die 还是回滚
-probe_service() { # unit port label
-  local unit="$1" port="$2" label="$3"
+probe_service() { # unit port label [addr]
+  local unit="$1" port="$2" label="$3" addr="${4:-127.0.0.1}"
   if ! systemctl is-active --quiet "$unit"; then
     warn "$unit 不是 active 状态"
     systemctl status "$unit" --no-pager --lines 20 >&2 || true
     return 1
   fi
-  if ! wait_tcp "$port" 30; then
-    warn "$label 30 秒内没有监听 $port"
+  if ! wait_tcp "$addr" "$port" 30; then
+    warn "$label 30 秒内没有监听 $addr:$port"
     journalctl -u "$unit" -n 30 --no-pager >&2 || true
     return 1
   fi
-  log "$label 已就绪（:$port）"
+  log "$label 已就绪（$addr:$port）"
   return 0
 }
 
@@ -290,6 +303,18 @@ web_port() {
   if [ -f "$cfg" ]; then port="$(read_json_field "$cfg" httpPort)"; fi
   if [ -z "$port" ]; then port="23333"; fi
   printf '%s' "$port"
+}
+
+daemon_addr() {
+  local cfg="$INSTALL_ROOT/shared/daemon/data/Config/global.json" ip=""
+  if [ -f "$cfg" ]; then ip="$(read_json_field "$cfg" ip)"; fi
+  probe_addr "$ip"
+}
+
+web_addr() {
+  local cfg="$INSTALL_ROOT/shared/web/data/SystemConfig/config.json" ip=""
+  if [ -f "$cfg" ]; then ip="$(read_json_field "$cfg" httpIp)"; fi
+  probe_addr "$ip"
 }
 
 detect_ip() {
