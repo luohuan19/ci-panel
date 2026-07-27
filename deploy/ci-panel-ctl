@@ -57,14 +57,17 @@ unit_of() {
 }
 
 # 只取数字/字符串字段，用不着把 node 拉进来
+# 锚到行首：不锚定的 .*"key" 是贪婪的，任何以该名结尾的键（比如 "backup_port" 之于
+# port）都会被吃进来，单行 JSON 下还会选中最后一个匹配。这些配置是
+# JSON.stringify(obj, null, 4) 写出来的，每行一个字段，行首锚定是安全的。
 json_num() { # file field
   if [ ! -f "$1" ]; then return 0; fi
-  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p" "$1" | head -n1
+  sed -n "s/^[[:space:]]*\"$2\"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p" "$1" | head -n1
 }
 
 json_str() { # file field
   if [ ! -f "$1" ]; then return 0; fi
-  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1
+  sed -n "s/^[[:space:]]*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1
 }
 
 version_of() { # release dir

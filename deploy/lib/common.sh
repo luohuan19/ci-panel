@@ -47,6 +47,11 @@ need_root() {
 verify_checksum() { # tarball
   local f="$1"
   if [ -f "$f.sha256" ]; then
+    # 先确认工具在: 少了 sha256sum 的话 `sha256sum -c` 以 127 退出，
+    # 会被下面当成校验不通过，把"环境缺工具"报成"包被动过手脚"
+    if ! command -v sha256sum >/dev/null 2>&1; then
+      die "没有 sha256sum，无法校验 $(basename "$f")（装上 coreutils，或自行确认来源后重试）"
+    fi
     log "校验 sha256 …"
     if ! (cd "$(dirname "$f")" && sha256sum -c "$(basename "$f").sha256" >/dev/null 2>&1); then
       die "sha256 校验失败: $f"
@@ -64,6 +69,15 @@ unpack() { # tarball → 设置 SRC
   tar --no-same-owner -C "$TMP/unpack" -xzf "$1"
   SRC="$(find "$TMP/unpack" -mindepth 1 -maxdepth 1 -type d -name 'ci-panel-*' | head -n1)"
   if [ -z "$SRC" ]; then die "包结构不对：里面没有 ci-panel-<version>/ 顶层目录"; fi
+}
+
+# 这些值会被 render_unit 用 sed 塞进 systemd 单元和 ci-panel-ctl。
+# & 在 sed 替换串里代表整个匹配，| 是这里用的分隔符，反斜杠转义 —— 任何一个都会
+# 渲染出一个坏单元，而错误要等 systemctl 拉起服务时才暴露。
+validate_path_for_sed() { # value label
+  case "$1" in
+    *'|'* | *'&'* | *'\'*) die "$2 里不能含 | & \\ 这几个字符（会被 sed 渲染进 systemd 单元）: $1" ;;
+  esac
 }
 
 # 版本号会被拼进下载 URL 和 $TMP 下的文件名，必须先卡住格式
@@ -152,8 +166,14 @@ user_from_unit() {
 # 覆盖已有目录时先把旧的挪到一边而不是直接 rm -rf ——否则 cp 中途失败（磁盘满、包损坏）
 # 就把线上正在跑的代码删没了，且没有任何可回退的东西。
 deploy_release_dir() {
+  # 两个方向都要拦，各自会坏在不同地方：
+  #   目标在源里面 → 下面的 cp 等于把自己拷进自己
+  #   源在目标里面 → 下面把旧目录整个挪走时，源会跟着一起消失，cp 随即失败
   case "$RELEASE_DIR/" in
-    "$SRC/"*) die "包所在目录 ($SRC) 在安装目标 ($RELEASE_DIR) 里面，换个地方解包再跑" ;;
+    "$SRC/"*) die "安装目标 ($RELEASE_DIR) 在包所在目录 ($SRC) 里面，换个地方解包再跑" ;;
+  esac
+  case "$SRC/" in
+    "$RELEASE_DIR/"*) die "包所在目录 ($SRC) 在安装目标 ($RELEASE_DIR) 里面，换个地方解包再跑" ;;
   esac
   local stash=""
   if [ -d "$RELEASE_DIR" ]; then

@@ -39,8 +39,8 @@ For how the pieces fit together, see [ARCHITECTURE.md](ARCHITECTURE.md)
 
 Runs on Linux and Windows; no database required.
 
-> Requires **[Node.js 16.20.2](https://nodejs.org/en)** or higher. The latest LTS
-> release is recommended.
+> Requires **[Node.js 20](https://nodejs.org/en)** or higher. CI builds on 20, and
+> the installer refuses anything older.
 
 The daemon needs two binary helpers from upstream — `pty` and the zip tools — in
 `daemon/lib/`. See `lib-urls.txt` for the download URLs, or run

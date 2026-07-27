@@ -21,7 +21,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # persist-credentials: false —— checkout 默认把 GITHUB_TOKEN 写进 .git/config，
+      # 而这个 job 持有 contents:write，随后还要跑 npm install 和 npx playwright install
+      # （两处第三方代码执行面）。发布用的是 gh release create，走 GH_TOKEN 环境变量，
+      # 不需要 git 凭据留在工作区里。
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:

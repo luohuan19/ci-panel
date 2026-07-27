@@ -35,16 +35,21 @@ usage() {
   --skip-build   复用上一次的 production-code/（迭代脚本时省时间）
   --skip-lib     跳过 daemon/lib 二进制下载。注意这样的包不能部署也过不了 smoke test：
                  daemon 启动时 checkDependencies() 找不到 file_zip 会直接抛错退出
+  --refresh-lib-checksums
+                 重新生成 lib-checksums.txt 而不是校验它。上游发布新二进制后才用，
+                 生成完必须人工 review diff —— 这是唯一一道防线
 EOF
 }
 
 VERSION=""
 SKIP_BUILD=0
 SKIP_LIB=0
+REFRESH_LIB=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
     --skip-lib) SKIP_LIB=1 ;;
+    --refresh-lib-checksums) REFRESH_LIB=1 ;;
     -h | --help)
       usage
       exit 0
@@ -172,6 +177,28 @@ if [ "$SKIP_LIB" -eq 0 ]; then
     --directory-prefix="$LIB_CACHE"
   cp -f "$LIB_CACHE"/* "$STAGE/daemon/lib/"
   chmod a+x "$STAGE/daemon/lib"/*
+
+  # 这些二进制会在每台 daemon 主机上以真实权限运行，而上游既不签名也不发布校验和。
+  # lib-checksums.txt 是我们自己钉下来的一份，能挡住上游被改、传输被劫、本地缓存被
+  # 投毒这几种情况 —— 首次信任仍然是盲的（TOFU），但之后的任何变动都会在这里暴露。
+  if [ "$REFRESH_LIB" -eq 1 ]; then
+    (cd "$STAGE/daemon/lib" && sha256sum $(ls | sort) >"$ROOT/lib-checksums.txt")
+    echo "      已刷新 lib-checksums.txt —— 提交前请人工核对 git diff"
+  else
+    if [ ! -f "$ROOT/lib-checksums.txt" ]; then
+      echo "缺少 lib-checksums.txt。确认来源可信后用 --refresh-lib-checksums 生成一份" >&2
+      exit 1
+    fi
+    if ! (cd "$STAGE/daemon/lib" && sha256sum -c --quiet "$ROOT/lib-checksums.txt"); then
+      echo "" >&2
+      echo "lib 二进制的校验和对不上（上面列出了具体文件）。" >&2
+      echo "可能是上游发了新版本，也可能内容被动过手脚 —— 别直接跳过。" >&2
+      echo "核实无误后：bash scripts/release/pack.sh <版本> --refresh-lib-checksums" >&2
+      echo "然后人工 review lib-checksums.txt 的 diff 再提交。" >&2
+      exit 1
+    fi
+    echo "      lib 二进制校验和通过（$(wc -l <"$ROOT/lib-checksums.txt") 个文件）"
+  fi
 else
   echo "[4/8] 跳过 lib 二进制下载 —— 这个包不能部署（daemon 启动会因缺 file_zip 直接退出），仅用于验证打包流程"
 fi

@@ -84,6 +84,8 @@ parse_args() {
     die "--keep 要是正整数: $KEEP"
   fi
   if [ -n "$WANT_VERSION" ]; then validate_version "$WANT_VERSION"; fi
+  # 和 install.sh 同一道检查：INSTALL_ROOT 会被 sed 渲染进 systemd 单元和 ci-panel-ctl
+  validate_path_for_sed "$INSTALL_ROOT" "--root"
   INSTALL_ROOT="$(readlink -m "$INSTALL_ROOT")"
 }
 
@@ -159,11 +161,18 @@ backup_data() {
     warn "shared/ 下没有数据目录，跳过备份"
     return
   fi
+  # 归档里有 Config/global.json，也就是这个节点的准入密钥。默认 umask 下
+  # 目录是 0755、tar 出来的文件是 0644，到下面 chmod 之前的这段时间里
+  # 本机任何用户都能读走它 —— 所以在创建之前就把权限收紧。
+  local old_umask
+  old_umask="$(umask)"
+  umask 077
   mkdir -p "$dir"
   tar -C "$INSTALL_ROOT/shared" -czf "$dir/data.tar.gz" \
     --exclude='InstanceData' --exclude='runner-pkg' --exclude='InstanceLog' \
     "${items[@]}"
-  chmod 600 "$dir/data.tar.gz"
+  umask "$old_umask"
+  chmod 600 "$dir/data.tar.gz" # umask 已经保证了，这里是显式兜底
   log "已备份数据: $dir/data.tar.gz"
 }
 

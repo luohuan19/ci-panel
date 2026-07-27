@@ -144,10 +144,8 @@ parse_args() {
     esac
   fi
 
-  # 这几个值会被 sed 塞进 systemd 单元模板，含 sed 的元字符会渲染出坏单元
-  case "$INSTALL_ROOT$RUN_USER" in
-    *'|'* | *'&'* | *'\'*) die "--root / --user 里不能含 | & \\ 这几个字符" ;;
-  esac
+  validate_path_for_sed "$INSTALL_ROOT" "--root"
+  validate_path_for_sed "$RUN_USER" "--user"
 
   INSTALL_ROOT="$(readlink -m "$INSTALL_ROOT")"
   case "$INSTALL_ROOT" in
@@ -296,8 +294,13 @@ check_node_usable_by_user() {
 }
 
 ensure_user() {
+  # root 的检查必须排在"用户是否已存在"前面: root 永远存在，放在后面这一句就永远执行不到，
+  # --user root 会一路装出 User=root 的单元 —— 而特权助手那套设计的前提正是 daemon 不是
+  # root（见 prod-scripts/README.md）。以 root 跑 daemon 等于把整个授权边界作废。
+  if [ "$RUN_USER" = "root" ]; then
+    die "daemon 不能以 root 运行：特权助手的整套边界都建立在它是普通用户之上（见 prod-scripts/README.md）"
+  fi
   if id "$RUN_USER" >/dev/null 2>&1; then return; fi
-  if [ "$RUN_USER" = "root" ]; then die "daemon 不能以 root 运行（特权助手的前提就是它是普通用户）"; fi
   if ! confirm "用户 $RUN_USER 不存在，创建它？"; then die "已取消"; fi
   useradd --create-home --shell /bin/bash "$RUN_USER"
   log "已创建用户 $RUN_USER"
