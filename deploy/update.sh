@@ -34,7 +34,7 @@ INSTALL_ROOT="/opt/ci-panel"
 WANT_VERSION=""
 TARBALL=""
 KEEP=3
-SRC_OVERRIDE=""
+DOWNLOADED_TARBALL=""
 ORIGINAL_ARGS=()
 DO_CHECK=0
 DO_ROLLBACK=0
@@ -73,14 +73,6 @@ parse_args() {
       --version) WANT_VERSION="${2:?--version 需要参数}" && shift 2 ;;
       --file) TARBALL="${2:?--file 需要参数}" && shift 2 ;;
       --keep) KEEP="${2:?--keep 需要参数}" && shift 2 ;;
-      --src)
-        # 内部参数：交接时由上一棒把已校验、已解包的目录传过来，省掉重复下载。
-        # 只在交接场景接受 —— 否则它等于一条绕过 sha256 校验的近路。
-        if [ -z "${CIP_UPDATE_HANDOFF:-}" ]; then
-          die "--src 是交接时的内部参数，不要手工使用"
-        fi
-        SRC_OVERRIDE="${2:?--src 需要参数}" && shift 2
-        ;;
       --root) INSTALL_ROOT="${2:?--root 需要参数}" && shift 2 ;;
       --yes | -y) ASSUME_YES=1 && shift ;;
       -h | --help)
@@ -105,8 +97,18 @@ parse_args() {
 
 cleanup() {
   if [ -n "$TMP" ]; then rm -rf "$TMP"; fi
-  # 交接过来的话，上一棒 exec 之后它自己的 trap 不会再跑，由我们收尾
-  if [ -n "${CIP_UPDATE_INHERITED_TMP:-}" ]; then rm -rf "$CIP_UPDATE_INHERITED_TMP"; fi
+  # 交接过来的临时目录由我们收尾（上一棒 exec 之后它自己的 trap 不再跑）。
+  # 这个值来自环境变量，所以只认 mktemp 造出来的那种形状 —— 不加限制的 rm -rf
+  # 会让一个写错或被改写的变量删掉任意路径。形状不对就宁可留着不删。
+  local inherited="${CIP_UPDATE_INHERITED_TMP:-}"
+  if [ -n "$inherited" ]; then
+    case "$inherited" in
+      /tmp/tmp.??????????)
+        if [ -d "$inherited" ]; then rm -rf "$inherited"; fi
+        ;;
+      *) warn "继承的临时目录形状可疑，不予删除: $inherited" ;;
+    esac
+  fi
 }
 
 # 从已装好的环境里把上下文读出来，而不是让用户再传一遍
@@ -378,22 +380,26 @@ maybe_handoff() {
     return 0
   fi
 
+  # 交出去的是包本身，不是已经解开的目录：新版会照常 verify_checksum + unpack，
+  # 走和平时完全一样的路径。省掉的是下载（慢的那部分），重做的是校验和解包（快），
+  # 这样交接就不需要任何"请信任我给你的目录"的后门。
+  local pkg="${TARBALL:-$DOWNLOADED_TARBALL}"
+  if [ -z "$pkg" ] || [ ! -f "$pkg" ]; then
+    warn "找不到本次的包文件，继续用当前脚本执行"
+    return 0
+  fi
+
   log "新版本的更新脚本与当前不同，交给它来执行这次升级"
-  # 把已解包的目录一并交过去：新版直接用，不重复下载；临时目录也归它清理，
-  # 因为 exec 之后本进程的 trap 不会再执行。
+  # 临时目录归新版清理：exec 之后本进程的 trap 不会再跑，而包还在里面等它读。
   CIP_UPDATE_HANDOFF=1 CIP_UPDATE_INHERITED_TMP="$TMP" \
-    exec bash "$new_update" "${ORIGINAL_ARGS[@]}" --src "$SRC"
+    exec bash "$new_update" "${ORIGINAL_ARGS[@]}" --file "$pkg"
 }
 
 do_update() {
   local from
   from="$(current_version)"
 
-  if [ -n "$SRC_OVERRIDE" ]; then
-    # 交接过来的：包已由上一棒校验并解开，直接用
-    SRC="$SRC_OVERRIDE"
-    if [ ! -d "$SRC" ]; then die "--src 指向的目录不存在: $SRC"; fi
-  elif [ -n "$TARBALL" ]; then
+  if [ -n "$TARBALL" ]; then
     if [ ! -f "$TARBALL" ]; then die "找不到包文件: $TARBALL"; fi
     TARBALL="$(readlink -m "$TARBALL")"
     verify_checksum "$TARBALL"

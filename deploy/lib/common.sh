@@ -111,6 +111,8 @@ download_release() { # version → 下载 + 校验 + 解包
     rm -f "$TMP/$name.sha256" # 校验和缺失不致命，verify_checksum 会 warn
   fi
   verify_checksum "$TMP/$name"
+  # 记下包的落地路径：交接给新版更新脚本时要把它交过去，让新版自己重新校验解包
+  DOWNLOADED_TARBALL="$TMP/$name"
   unpack "$TMP/$name"
 }
 
