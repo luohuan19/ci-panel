@@ -236,16 +236,18 @@ daemon 认得出"已被纳管"，但它自己没有对应的实例记录，于�
 
 把旧实例配置搬过去即可，它们只认 `cwd` 里的绝对路径，不跟任何 daemon 绑定：
 
+整段都要 root —— 要写 `/opt/ci-panel` 下的文件并改属主：
+
 ```bash
 OLD=<旧 daemon>/data/InstanceConfig
 NEW=/opt/ci-panel/shared/daemon/data/InstanceConfig
-cp -a "$NEW" /tmp/instconf-backup                      # 先留个底
+sudo cp -a "$NEW" /tmp/instconf-backup                 # 先留个底
 for f in "$OLD"/*.json; do
   # global0001 是 daemon 内建的全局实例，新 daemon 自己有一份，别覆盖
   [ "$(basename "$f")" = global0001.json ] && continue
-  cp -p "$f" "$NEW/"
+  sudo cp -p "$f" "$NEW/"
 done
-chown -R <运行用户>: "$NEW"
+sudo chown -R <运行用户>: "$NEW"
 sudo systemctl restart ci-panel-daemon
 ```
 
@@ -265,7 +267,7 @@ marker 里记的 group 和注册标签会丢。
 | 创建 runner 失败，GitHub 上留下不上线的 runner | 特权没配好：`sudo bash <root>/current/prod-scripts/install-runner-privileges.sh --check` |
 | 拉 runner 安装包很慢或失败 | `.env` 里设 `CIP_RUNNER_PROXY`，或用 `--runner-pkg` 预置 |
 | 更新后服务异常 | `sudo ci-panel-ctl rollback`；数据快照在 `backups/` |
-| 面板上 runner 显示"已纳管"却加不进列表 | 这台机器的 runner 曾被另一个 daemon 纳管过，实例记录没跟过来。见下方"接管已被纳管的 runner" |
+| 面板上 runner 显示"已纳管"却加不进列表 | 这台机器的 runner 曾被另一个 daemon 纳管过，实例记录没跟过来。见上方"接管已被纳管的 runner" |
 
 `ci-panel-ctl` 的完整命令见 `ci-panel-ctl --help`。特权助手的授权边界、为什么启停也要走
 助手，见 [prod-scripts/README.md](prod-scripts/README.md)。

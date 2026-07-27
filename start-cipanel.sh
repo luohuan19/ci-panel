@@ -67,10 +67,21 @@ start_node() { # name port dir   （port 为空则跳过"已在运行"检测，�
 }
 
 # 1) daemon 与 panel（用已构建的 production/app.js；改了后端源码需先 npm run build）
-# 端口读不到（首次启动，配置还没生成）时传空：此时开发 daemon 必然没在跑，
-# 不做检测直接起。端口真被占的话 daemon 自己会退出并在日志里说明，
-# 这比拿 24444 去猜、然后把生产节点当成自己要安全得多。
-start_node daemon "$(daemon_port || true)" "$ROOT/daemon"
+# 配置压根不存在 = 首次启动，这时开发 daemon 必然没在跑，传空端口跳过"已在运行"检测
+# 直接起（端口真被占的话 daemon 自己会退出并在日志里说明）。
+#
+# 但"配置存在却读不出合法端口"是另一回事：那是异常状态，不能一并当成首次启动 ——
+# 跳过检测意味着可能拉起第二个 daemon 并覆盖 PID 文件。这种情况直接拒绝，让人先去看配置。
+daemon_cfg="$ROOT/daemon/data/Config/global.json"
+if [ -e "$daemon_cfg" ] || [ -L "$daemon_cfg" ]; then
+  if ! dport="$(daemon_port)"; then
+    echo "[error] $daemon_cfg 存在但读不出合法端口，拒绝启动（先修配置，别让它盲目再起一个 daemon）" >&2
+    exit 1
+  fi
+else
+  dport="" # 首次启动，还没有配置
+fi
+start_node daemon "$dport" "$ROOT/daemon"
 start_node panel  23333 "$ROOT/panel"
 
 # 2) frontend 开发服务器（vite，热重载）
