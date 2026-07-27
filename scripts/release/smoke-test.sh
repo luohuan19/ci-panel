@@ -18,6 +18,8 @@
 # 扫描不写任何东西，但这也是为什么正式发包应该在 CI 的干净环境里跑。
 set -euo pipefail
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 TARBALL="${1:-}"
 if [ -z "$TARBALL" ] || [ ! -f "$TARBALL" ]; then
   echo "用法: bash scripts/release/smoke-test.sh <tarball>" >&2
@@ -93,7 +95,7 @@ dump_log() { # name
   fi
 }
 
-echo "[1/6] 解包到 $WORK …"
+echo "[1/7] 解包到 $WORK …"
 tar -C "$WORK" -xzf "$TARBALL"
 APP="$(find "$WORK" -mindepth 1 -maxdepth 1 -type d -name 'ci-panel-*' | head -n 1)"
 if [ -z "$APP" ]; then
@@ -110,7 +112,7 @@ fi
 DAEMON_PORT="$(free_port)"
 WEB_PORT="$(free_port)"
 
-echo "[2/6] 写隔离配置（只监听 127.0.0.1，daemon=$DAEMON_PORT web=$WEB_PORT）…"
+echo "[2/7] 写隔离配置（只监听 127.0.0.1，daemon=$DAEMON_PORT web=$WEB_PORT）…"
 # 只写这几个字段就够: StorageSubsystem.load 会把 JSON 深合并到类默认值上
 # (common/src/system_storage.ts)。关掉 soft shutdown 是为了收尾不用等 30 秒。
 mkdir -p "$APP/daemon/data/Config" "$APP/web/data/SystemConfig"
@@ -135,7 +137,7 @@ export CIP_SCAN_ROOTS="$WORK/scan-root"
 mkdir -p "$CIP_SCAN_ROOTS"
 unset CIP_GITHUB_REPOS CIP_GITHUB_TOKEN CIP_RUNNER_PROXY
 
-echo "[3/6] 启动 daemon 与 web …"
+echo "[3/7] 启动 daemon 与 web …"
 (cd "$APP/daemon" && exec node --enable-source-maps app.js) >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 (cd "$APP/web" && exec node --enable-source-maps app.js) >"$WORK/web.log" 2>&1 &
@@ -155,7 +157,7 @@ if ! wait_tcp 127.0.0.1 "$WEB_PORT" 30; then
 fi
 echo "      web 已监听 $WEB_PORT"
 
-echo "[4/6] 取首页，确认前端产物与静态服务都在位…"
+echo "[4/7] 取首页，确认前端产物与静态服务都在位…"
 if ! html="$(http_get "http://127.0.0.1:$WEB_PORT/")"; then
   echo "首页请求失败" >&2
   dump_log web
@@ -167,7 +169,7 @@ if ! printf '%s' "$html" | grep -q 'id="app-mount-point"'; then
 fi
 echo "      首页 200，挂载点在"
 
-echo "[5/6] 确认 panel 找到了同级的 daemon …"
+echo "[5/7] 确认 panel 找到了同级的 daemon …"
 # initConnectLocalhost 读的是 cwd/../daemon/data/Config/global.json
 # (panel/src/app/service/remote_service.ts)，注册成功后会落一份 RemoteServiceConfig。
 # 这条断言同时守住了"web 与 daemon 必须同级"这个布局约束。
@@ -188,7 +190,7 @@ if [ "$found_remote" -ne 1 ]; then
 fi
 echo "      已注册本机 daemon 节点"
 
-echo "[6/6] 扫日志里的致命错误…"
+echo "[6/7] 扫日志里的致命错误…"
 for name in daemon web; do
   if grep -nE "uncaughtException|unhandledRejection|Cannot find module|MODULE_NOT_FOUND" "$WORK/$name.log"; then
     echo "$name 日志里有致命错误（见上）" >&2
@@ -204,6 +206,32 @@ for pid_name in "daemon:$DAEMON_PID" "web:$WEB_PID"; do
     exit 1
   fi
 done
+
+echo "[7/7] 用无头浏览器确认前端真的能挂载…"
+# 前面那些 HTTP 检查只能证明资源在位。这一步才真的把 JS 跑起来 ——
+# echarts/zrender 那次就是首页 200、挂载点也在，但 initApp 一执行就死，
+# 而当时的 smoke test 全程亮绿灯。
+browser_rc=0
+node "$SELF_DIR/browser-check.mjs" "http://127.0.0.1:$WEB_PORT" || browser_rc=$?
+case "$browser_rc" in
+  0) ;;
+  3)
+    # 3 = 没装 playwright。本地图快可以这样，但别让人以为验过了。
+    # 发布流程设 REQUIRE_BROWSER_CHECK=1，这样即便浏览器装挂了也是硬失败，
+    # 不会悄悄退化成"跳过"然后照样发包。
+    if [ "${REQUIRE_BROWSER_CHECK:-0}" = "1" ]; then
+      echo "REQUIRE_BROWSER_CHECK=1，但 playwright 用不了（见上），拒绝在没验过前端的情况下放行" >&2
+      exit 1
+    fi
+    echo "      跳过：这台机器上没有 playwright（装它要连浏览器一起下）。"
+    echo "      本地快速验证可以跳过，发布流程不行 —— release.yml 里会装上并强制要求。"
+    ;;
+  *)
+    # 这里不 dump web.log：前端挂了跟后端日志无关，40 行启动横幅只会把上面的诊断挤走
+    echo "前端启动检查未通过（详情见上）" >&2
+    exit 1
+    ;;
+esac
 
 echo
 echo "smoke test 通过: $(basename "$TARBALL")"

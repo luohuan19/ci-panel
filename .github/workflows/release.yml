@@ -72,9 +72,20 @@ jobs:
       - name: Pack release tarball
         run: bash scripts/release/pack.sh "${{ steps.ver.outputs.version }}"
 
+      # smoke test 的最后一步要真开一次浏览器，确认前端不是只"下得下来"而是真能挂载。
+      # playwright 不放进仓库依赖（装它要连浏览器一起下，不该压在每个开发者头上），
+      # 发布流程在这里临时装上。--no-save 保证不会脏了 package.json。
+      - name: Install a browser for the frontend boot check
+        run: |
+          npm i --no-save playwright
+          npx playwright install --with-deps chromium
+
       # 真的把 web + daemon 跑起来。panel 的 main().catch 是 process.exit(0)，
-      # 启动失败也返回 0，所以这一步看的是端口、首页和日志，不是退出码。
+      # 启动失败也返回 0，所以这一步看的是端口、首页、日志和浏览器，不是退出码。
+      # REQUIRE_BROWSER_CHECK=1: 浏览器用不了就直接失败，不允许静默跳过前端检查。
       - name: Smoke-test the packed tarball
+        env:
+          REQUIRE_BROWSER_CHECK: "1"
         run: bash scripts/release/smoke-test.sh "${{ steps.ver.outputs.tarball }}"
 
       - name: Publish GitHub Release
