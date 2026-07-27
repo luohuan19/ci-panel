@@ -244,17 +244,20 @@ try {
 ' "$1" "$2"
 }
 
-wait_tcp() { # addr port timeout_seconds
-  local waited=0
+# addrs 是空格分隔的候选列表（见 probe_addr）：任一个连得上就算就绪。
+wait_tcp() { # addrs port timeout_seconds
+  local waited=0 addr
   while [ "$waited" -lt "$3" ]; do
-    if "$NODE_BIN" -e '
+    for addr in $1; do
+      if "$NODE_BIN" -e '
 const socket = require("net").connect(Number(process.argv[2]), process.argv[1]);
 socket.on("connect", () => { socket.destroy(); process.exit(0); });
 socket.on("error", () => process.exit(1));
 socket.setTimeout(2000, () => { socket.destroy(); process.exit(1); });
-' "$1" "$2" 2>/dev/null; then
-      return 0
-    fi
+' "$addr" "$2" 2>/dev/null; then
+        return 0
+      fi
+    done
     sleep 1
     waited=$((waited + 1))
   done
@@ -266,16 +269,21 @@ socket.setTimeout(2000, () => { socket.destroy(); process.exit(1); });
 # 后果不只是误报：update 会据此回滚一次本来成功的升级，回滚后同样探不到，
 # 最后报"回滚也失败，需要人工介入"，而服务自始至终是好的。
 #
-# 配置为空 / 0.0.0.0 / :: 表示监听所有接口，这时连回环最稳妥。
-probe_addr() { # configured_ip
+# 绑定了具体地址就连它；通配地址则给出候选列表，由 wait_tcp 逐个试。
+# 通配不能只赌一个协议族：`::` 上的 IPv6-only 监听不收 127.0.0.1 的连接，
+# 而在没开 IPv6 的机器上 ::1 又连不通。探错地址的代价是把健康服务判成失败、
+# 回滚掉一次本来成功的升级，所以这里宁可多试一个。
+probe_addr() { # configured_ip → 一个或多个候选，空格分隔
   case "${1:-}" in
-    "" | "0.0.0.0" | "::") printf '127.0.0.1' ;;
+    "") printf '127.0.0.1 ::1' ;;   # 未指定：Node 按双栈监听，两族都可能
+    "0.0.0.0") printf '127.0.0.1' ;;
+    "::") printf '::1 127.0.0.1' ;; # IPv6 通配；双栈下 IPv4 映射也收
     *) printf '%s' "$1" ;;
   esac
 }
 
 # 成功返回 0，失败返回 1 并把日志打出来 —— 由调用方决定是 die 还是回滚
-probe_service() { # unit port label [addr]
+probe_service() { # unit port label [addrs]
   local unit="$1" port="$2" label="$3" addr="${4:-127.0.0.1}"
   if ! systemctl is-active --quiet "$unit"; then
     warn "$unit 不是 active 状态"
@@ -283,11 +291,11 @@ probe_service() { # unit port label [addr]
     return 1
   fi
   if ! wait_tcp "$addr" "$port" 30; then
-    warn "$label 30 秒内没有监听 $addr:$port"
+    warn "$label 30 秒内没有监听 $port（试过: $addr）"
     journalctl -u "$unit" -n 30 --no-pager >&2 || true
     return 1
   fi
-  log "$label 已就绪（$addr:$port）"
+  log "$label 已就绪（:$port）"
   return 0
 }
 
