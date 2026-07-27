@@ -557,10 +557,10 @@ main() {
   install_ctl
   activate
 
-  if wants_daemon && ! probe_service "$DAEMON_UNIT" "$(daemon_port)" daemon; then
+  if wants_daemon && ! probe_service "$DAEMON_UNIT" "$(daemon_port)" daemon "$(daemon_addr)"; then
     die "daemon 起不来。日志: journalctl -u $DAEMON_UNIT -n 50"
   fi
-  if wants_web && ! probe_service "$WEB_UNIT" "$(web_port)" web; then
+  if wants_web && ! probe_service "$WEB_UNIT" "$(web_port)" web "$(web_addr)"; then
     die "web 起不来。日志: journalctl -u $WEB_UNIT -n 50"
   fi
   print_summary

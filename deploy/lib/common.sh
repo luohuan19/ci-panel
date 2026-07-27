@@ -244,33 +244,54 @@ try {
 ' "$1" "$2"
 }
 
-wait_tcp() { # port timeout_seconds
-  local waited=0
-  while [ "$waited" -lt "$2" ]; do
-    if "$NODE_BIN" -e '
-const socket = require("net").connect(Number(process.argv[1]), "127.0.0.1");
+# addrs 是空格分隔的候选列表（见 probe_addr）：任一个连得上就算就绪。
+wait_tcp() { # addrs port timeout_seconds
+  local waited=0 addr
+  while [ "$waited" -lt "$3" ]; do
+    for addr in $1; do
+      if "$NODE_BIN" -e '
+const socket = require("net").connect(Number(process.argv[2]), process.argv[1]);
 socket.on("connect", () => { socket.destroy(); process.exit(0); });
 socket.on("error", () => process.exit(1));
 socket.setTimeout(2000, () => { socket.destroy(); process.exit(1); });
-' "$1" 2>/dev/null; then
-      return 0
-    fi
+' "$addr" "$2" 2>/dev/null; then
+        return 0
+      fi
+    done
     sleep 1
     waited=$((waited + 1))
   done
   return 1
 }
 
+# 探活要连服务真正监听的地址。写死 127.0.0.1 会在绑定了具体网卡的部署上
+# 把健康的服务判成失败 —— 而那正是推荐做法（把面板绑到内网地址，不暴露公网）。
+# 后果不只是误报：update 会据此回滚一次本来成功的升级，回滚后同样探不到，
+# 最后报"回滚也失败，需要人工介入"，而服务自始至终是好的。
+#
+# 绑定了具体地址就连它；通配地址则给出候选列表，由 wait_tcp 逐个试。
+# 通配不能只赌一个协议族：`::` 上的 IPv6-only 监听不收 127.0.0.1 的连接，
+# 而在没开 IPv6 的机器上 ::1 又连不通。探错地址的代价是把健康服务判成失败、
+# 回滚掉一次本来成功的升级，所以这里宁可多试一个。
+probe_addr() { # configured_ip → 一个或多个候选，空格分隔
+  case "${1:-}" in
+    "") printf '127.0.0.1 ::1' ;;   # 未指定：Node 按双栈监听，两族都可能
+    "0.0.0.0") printf '127.0.0.1' ;;
+    "::") printf '::1 127.0.0.1' ;; # IPv6 通配；双栈下 IPv4 映射也收
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 # 成功返回 0，失败返回 1 并把日志打出来 —— 由调用方决定是 die 还是回滚
-probe_service() { # unit port label
-  local unit="$1" port="$2" label="$3"
+probe_service() { # unit port label [addrs]
+  local unit="$1" port="$2" label="$3" addr="${4:-127.0.0.1}"
   if ! systemctl is-active --quiet "$unit"; then
     warn "$unit 不是 active 状态"
     systemctl status "$unit" --no-pager --lines 20 >&2 || true
     return 1
   fi
-  if ! wait_tcp "$port" 30; then
-    warn "$label 30 秒内没有监听 $port"
+  if ! wait_tcp "$addr" "$port" 30; then
+    warn "$label 30 秒内没有监听 $port（试过: $addr）"
     journalctl -u "$unit" -n 30 --no-pager >&2 || true
     return 1
   fi
@@ -290,6 +311,18 @@ web_port() {
   if [ -f "$cfg" ]; then port="$(read_json_field "$cfg" httpPort)"; fi
   if [ -z "$port" ]; then port="23333"; fi
   printf '%s' "$port"
+}
+
+daemon_addr() {
+  local cfg="$INSTALL_ROOT/shared/daemon/data/Config/global.json" ip=""
+  if [ -f "$cfg" ]; then ip="$(read_json_field "$cfg" ip)"; fi
+  probe_addr "$ip"
+}
+
+web_addr() {
+  local cfg="$INSTALL_ROOT/shared/web/data/SystemConfig/config.json" ip=""
+  if [ -f "$cfg" ]; then ip="$(read_json_field "$cfg" httpIp)"; fi
+  probe_addr "$ip"
 }
 
 detect_ip() {

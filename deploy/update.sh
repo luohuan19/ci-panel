@@ -128,6 +128,14 @@ port_of() { # role
   esac
 }
 
+addr_of() { # role —— 服务实际绑定的地址，探活要连它而不是想当然的回环
+  case "$1" in
+    daemon) daemon_addr ;;
+    web) web_addr ;;
+    *) die "未知角色: $1" ;;
+  esac
+}
+
 current_version() {
   read_version_file "$INSTALL_ROOT/current" 2>/dev/null || printf 'unknown'
 }
@@ -190,7 +198,7 @@ restart_all() {
 probe_all() { # 全部起来才算成功
   local role
   for role in $ROLES; do
-    if ! probe_service "$(unit_of "$role")" "$(port_of "$role")" "$role"; then
+    if ! probe_service "$(unit_of "$role")" "$(port_of "$role")" "$role" "$(addr_of "$role")"; then
       return 1
     fi
   done
