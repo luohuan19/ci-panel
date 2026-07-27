@@ -27,7 +27,14 @@ try {
 
 // 未登录时这些是预期的：面板还没走安装向导，或者只是没登录，
 // 前端照样会去拉一次用户信息然后拿到 403。它们不代表前端坏了。
-const EXPECTED_ERRORS = [/\/api\/auth\/?\b.*\b403\b/, /403 \(Forbidden\)/, /Insufficient Permissions/];
+// 中文面板下同一条消息会被 i18n 成"权限不足"，两种都要认 —— 只写英文的话，
+// 在 locale=zh-CN 下跑就会把正常的未登录状态报成失败。
+const EXPECTED_ERRORS = [
+  /\/api\/auth\/?\b.*\b403\b/,
+  /403 \(Forbidden\)/,
+  /Insufficient Permissions/,
+  /权限不足/
+];
 const isExpected = (text) => EXPECTED_ERRORS.some((re) => re.test(text));
 
 const browser = await chromium.launch();

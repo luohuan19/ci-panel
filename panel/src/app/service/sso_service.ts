@@ -239,8 +239,19 @@ export function getCallbackUrl(ctx?: Koa.ParameterizedContext): string {
 }
 
 export function getPublicSsoConfig() {
-  if (!systemConfig) return null;
-  if (!systemConfig.ssoEnabled) return null;
+  // 没配 SSO 是正常状态，不是错误。这里以前返回 null，而路由把它直接赋给 ctx.body，
+  // 协议中间件会把空 body 当成服务端故障包成 {"status":500}，于是每次打开登录页
+  // 都在浏览器控制台留一条 500，接了 HTTP 监控还会误报。
+  // 返回一个形状完整的 disabled 配置：前端一律走 ssoInfo?.enabled 判断，行为不变。
+  if (!systemConfig?.ssoEnabled) {
+    return {
+      enabled: false,
+      onlyMode: false,
+      autoRedirect: false,
+      providerName: "",
+      iconUrl: ""
+    };
+  }
   return {
     enabled: systemConfig.ssoEnabled,
     onlyMode: systemConfig.ssoOnlyMode,
