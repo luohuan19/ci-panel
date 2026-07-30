@@ -4,7 +4,7 @@ If you discover a security vulnerability in ci-panel and believe it may harm oth
 users, please report it privately rather than opening a public issue.
 
 **Please use GitHub's private vulnerability reporting:
-<https://github.com/luohuan19/ci-panel/security/advisories/new>.**
+<https://github.com/better-ci/ci-panel/security/advisories/new>.**
 
 Include detailed steps to reproduce the vulnerability and its impact. We will
 acknowledge the report and follow up with a fix.

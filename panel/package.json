@@ -7,12 +7,12 @@
     "dev": "nodemon --watch src --ext ts,js --exec \"npm run build && node --enable-source-maps production/app.js\"",
     "build": "webpack --config webpack.config.js"
   },
-  "homepage": "https://github.com/luohuan19/ci-panel",
+  "homepage": "https://github.com/better-ci/ci-panel",
   "author": "https://github.com/yumao233",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/luohuan19/ci-panel"
+    "url": "https://github.com/better-ci/ci-panel"
   },
   "_moduleAliases": {
     "@languages": "../languages"

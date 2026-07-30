@@ -9,23 +9,19 @@ description: Create a GitHub pull request after committing, rebasing, and pushin
 
 - **`gh` CLI lives at `~/.local/bin/gh`** and is NOT on the default PATH. Either
   call it by full path or `export PATH="$HOME/.local/bin:$PATH"` first.
-- **`gh` is authenticated** as `luohuan19` (scopes: `repo`, `read:org`, `gist`,
-  `admin:public_key`). If `gh auth status` ever fails, stop and tell the user —
-  do not attempt manual API calls with curl.
+- **`gh` is authenticated** with write access to `better-ci/ci-panel` (scopes:
+  `repo`, `read:org`, `gist`, `admin:public_key`). If `gh auth status` ever fails,
+  stop and tell the user — do not attempt manual API calls with curl.
 - **No GitHub Project board, by design.** Never add `--project` to `gh pr create`
   or introduce project-field steps.
 
-## ⚠️ Remote topology — read before rebasing
+## Remote topology
 
 ```text
-origin    git@…:luohuan19/ci-panel.git      ← OUR repo. PR target. Default branch: master
-upstream  git@github.com:MCSManager/MCSManager.git  ← third-party project we forked
+origin    https://github.com/better-ci/ci-panel.git   ← the only remote. Default branch: master
 ```
 
-- **Always PR into `origin` (`luohuan19/ci-panel`), branch `master`.**
-- **NEVER open a PR against `upstream` (MCSManager) and NEVER rebase onto it.**
-  It is an unrelated third-party project; rebasing onto it would rewrite history
-  against a foreign tree.
+- **Always PR into `origin` (`better-ci/ci-panel`), branch `master`.**
 - Base ref for every operation in this skill is `origin/master`.
 
 ## Task Tracking
@@ -46,7 +42,7 @@ Create tasks to track progress through this workflow:
 ```bash
 BRANCH_NAME=$(git branch --show-current)
 git status --porcelain          # Check for uncommitted changes
-git fetch origin                # NEVER `git fetch upstream` for PR work
+git fetch origin
 BASE_REF=origin/master
 git rev-list HEAD --not "$BASE_REF" --count   # Commits ahead of base
 ```
@@ -93,9 +89,6 @@ gh pr list --head "$BRANCH_NAME" --state open
 git fetch origin
 ```
 
-Do not add or fetch a PR base from `upstream`. The `upstream` remote already
-exists and points at MCSManager — leave it alone.
-
 ## Step 4: Rebase
 
 ```bash
@@ -136,13 +129,13 @@ gh auth status
 ```
 
 **If gh is unavailable or unauthenticated**: report it and give the manual URL:
-`https://github.com/luohuan19/ci-panel/compare/master...BRANCH_NAME`
+`https://github.com/better-ci/ci-panel/compare/master...BRANCH_NAME`
 
 **If gh available:**
 
 ```bash
 gh pr create \
-  --repo luohuan19/ci-panel \
+  --repo better-ci/ci-panel \
   --base master \
   --title "Brief description of changes" \
   --body "$(cat <<'EOF'
@@ -162,8 +155,7 @@ EOF
 )"
 ```
 
-`--repo` and `--base` are explicit on purpose: without them `gh` may infer the
-`upstream` (MCSManager) remote as the PR base.
+`--repo` and `--base` are explicit on purpose — never rely on `gh` inferring them.
 
 **PR Title/Body**: auto-extracted from commit messages since `origin/master`.
 This repo has **no test suite** — never write "all tests pass" in a PR body.
@@ -178,7 +170,7 @@ This repo has **no test suite** — never write "all tests pass" in a PR body.
 | Issue | Solution |
 | ----- | -------- |
 | PR already exists | `gh pr view` then exit |
-| PR opened against MCSManager | Close it. Re-create with `--repo luohuan19/ci-panel --base master` |
+| PR opened against the wrong repo | Close it. Re-create with `--repo better-ci/ci-panel --base master` |
 | Merge conflicts | Resolve, `git add`, `git rebase --continue` |
 | Push rejected | `git push --force-with-lease` |
 | `gh: command not found` | Use `~/.local/bin/gh` |
@@ -189,7 +181,7 @@ This repo has **no test suite** — never write "all tests pass" in a PR body.
 - [ ] Branch prepared (created off `origin/master` if needed)
 - [ ] Changes committed via `/git-commit`
 - [ ] No existing PR for branch
-- [ ] Fetched `origin` and rebased onto `origin/master` (never `upstream`)
+- [ ] Fetched `origin` and rebased onto `origin/master`
 - [ ] Conflicts resolved, `verify` re-run if sources changed
 - [ ] Pushed with `--force-with-lease`
-- [ ] PR created against `luohuan19/ci-panel` base `master`
+- [ ] PR created against `better-ci/ci-panel` base `master`

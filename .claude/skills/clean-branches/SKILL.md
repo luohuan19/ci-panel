@@ -9,21 +9,20 @@ description: Remove stale local and remote git branches that have been merged in
 
 Identifies and removes branches whose work is already in `master` — both local
 branches and remote branches on `origin`. Detects squash-merged branches that
-`git branch --merged` cannot detect. Never touches the `upstream` remote.
+`git branch --merged` cannot detect.
 
 ## Prerequisites
 
 - **`gh` CLI lives at `~/.local/bin/gh`**, not on the default PATH. Export
   `PATH="$HOME/.local/bin:$PATH"` or call it by full path.
-- **`gh` is authenticated** as `luohuan19` — squash-merge detection needs it. If
-  `gh auth status` ever fails, fall back to `git branch --merged` detection only
-  and flag the reduced coverage to the user.
+- **`gh` is authenticated** with write access to `better-ci/ci-panel` — squash-merge
+  detection needs it. If `gh auth status` ever fails, fall back to
+  `git branch --merged` detection only and flag the reduced coverage to the user.
 
-## ⚠️ Remote topology
+## Remote topology
 
 ```text
-origin    luohuan19/ci-panel            ← OUR repo. Branches here MAY be deleted.
-upstream  MCSManager/MCSManager         ← third-party. NEVER delete anything here.
+origin    better-ci/ci-panel            ← the only remote. Branches here MAY be deleted.
 ```
 
 The default branch is **`master`**, not `main`.
@@ -34,8 +33,8 @@ The default branch is **`master`**, not `main`.
 git remote -v
 ```
 
-Confirm `origin` is `luohuan19/ci-panel`. **Only `origin` branches are candidates
-for deletion.** If `origin` does not point at `luohuan19/ci-panel`, stop and ask
+Confirm `origin` is `better-ci/ci-panel`. **Only `origin` branches are candidates
+for deletion.** If `origin` does not point at `better-ci/ci-panel`, stop and ask
 the user — do not guess.
 
 ## Step 2: Gather Branch Information
@@ -64,7 +63,7 @@ git remote prune origin --dry-run
 For each branch (local or remote-only) NOT in the `--merged` list, check GitHub:
 
 ```bash
-gh pr list --repo luohuan19/ci-panel --head "<branch-name>" \
+gh pr list --repo better-ci/ci-panel --head "<branch-name>" \
   --state merged --json number,title,headRefOid --limit 1
 ```
 
@@ -132,13 +131,11 @@ done
 git remote prune origin
 ```
 
-Never run `git push upstream --delete` — `upstream` is MCSManager's repo.
-
 Report results: local branches deleted, remote branches deleted, refs pruned.
 
 ## Important Constraints
 
-- **Never delete anything on `upstream`** (MCSManager) — only on `origin`
+- **Only delete on `origin`** — if another remote is ever added, leave it alone
 - **Never delete `master` or `HEAD`** on any remote
 - **Current branch**: warn the user if the current branch is not `master`; it
   cannot be deleted while checked out
@@ -148,7 +145,7 @@ Report results: local branches deleted, remote branches deleted, refs pruned.
 
 ## Checklist
 
-- [ ] `origin` confirmed as `luohuan19/ci-panel`; `upstream` untouched
+- [ ] `origin` confirmed as `better-ci/ci-panel`
 - [ ] All local and remote branches categorized against `master`
 - [ ] Summary table presented (local/remote status per branch)
 - [ ] User approved the deletion list

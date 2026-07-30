@@ -11,11 +11,10 @@ Fix PR issues (review comments, CI failures) in a loop until the PR is fully cle
 ## Prerequisites
 
 - **`gh` CLI lives at `~/.local/bin/gh`** (not on the default PATH) and is
-  **authenticated** as `luohuan19`. If `gh auth status` fails, stop and tell the
-  user.
-- **Repo is `luohuan19/ci-panel`, default branch `master`.** The `upstream` remote
-  points at MCSManager/MCSManager — a third-party project. All PR operations here
-  target `origin` only. Never push to or query PRs on `upstream`.
+  **authenticated** with write access to `better-ci/ci-panel`. If `gh auth status`
+  fails, stop and tell the user.
+- **Repo is `better-ci/ci-panel`, default branch `master`.** `origin` is the only
+  remote; all PR operations target it.
 - **No GitHub Project board, by design.** Never add project-field updates.
 
 ## Task Tracking
@@ -31,16 +30,16 @@ Loop Steps 1→7, repeating until clean or max 5 iterations.
 ### Step 1: Match Input to PR
 
 ```bash
-gh pr view <number> --repo luohuan19/ci-panel --json number,title,headRefName,state
+gh pr view <number> --repo better-ci/ci-panel --json number,title,headRefName,state
 # Or by branch:
 BRANCH=$(git branch --show-current)
-gh pr list --repo luohuan19/ci-panel --head "$BRANCH" --json number,title,state
+gh pr list --repo better-ci/ci-panel --head "$BRANCH" --json number,title,state
 ```
 
 ### Step 2: Detect Issues (run in parallel)
 
 ```bash
-OWNER=luohuan19
+OWNER=better-ci
 NAME=ci-panel
 
 # Fetch review threads — save to file, then grep (see pitfalls below)
@@ -106,14 +105,10 @@ Treat bot reviewers (CodeRabbit, Copilot, Gemini) same as human — classify by 
 
 **Out-of-diff findings** (from `/tmp/reviews.json`) — present alongside inline threads as pseudo-threads (path + line range + body). They have NO thread ID, so Step 6's `resolveReviewThread` mutation cannot apply; address by fixing the code and noting the fix in the next commit message.
 
-### CI failures — FIRST check whether the workflow is inherited MCSManager cruft
+### CI failures
 
-`.github/workflows/` currently holds four workflows inherited from the MCSManager
-fork: `codeql.yml`, `docker.yml`, `release.yml`, `webpack.yml`. **They were written
-for the upstream project and are expected to fail here.** If the failing job is one
-of those four, do NOT try to make it pass — report it and recommend deleting or
-disabling the workflow. Only fix it if the user explicitly asks. Anything else is
-a real check for this project; fix it normally.
+Every workflow in `.github/workflows/` is written for this project, so every
+failing check is real — fix it normally.
 
 ```bash
 # List failed checks to get the link for each failed job
@@ -144,13 +139,11 @@ Review Comments:
   2. [B] frontend/src/views/Login.vue:15 — Style suggestion (reviewer: coderabbitai)
 CI Failures:
   3. [CI] build — TS2339: Property 'foo' does not exist on type 'Bar'
-  4. [CI-legacy] codeql — inherited MCSManager workflow, recommend disabling
 ```
 
-Ask which to address/skip. Recommend A + real CI items; recommend *disabling*
-rather than fixing `[CI-legacy]` items. On subsequent iterations reuse the prior
-"address all" policy for the same categories. When unsure about a comment's
-category, default to B.
+Ask which to address/skip. Recommend A + all CI items. On subsequent iterations
+reuse the prior "address all" policy for the same categories. When unsure about a
+comment's category, default to B.
 
 ### Step 5: Fix Issues
 
@@ -158,11 +151,11 @@ category, default to B.
 2. For CI: analyze logs online first; reproduce locally with the `verify` skill only as a fallback
 3. Commit using the `/git-commit` skill (it decides whether to run `code-review`/`verify`).
    Message: `fix(pr): resolve issues for #<number>` with a bullet list of fixes
-4. Push: `git push` (to `origin` — never `upstream`)
+4. Push: `git push` (to `origin`)
 
 ### Step 6: Resolve Comment Threads
 
-Reply with `gh api repos/luohuan19/ci-panel/pulls/<number>/comments/<comment_id>/replies -f body="..."` then resolve with the GraphQL `resolveReviewThread` mutation.
+Reply with `gh api repos/better-ci/ci-panel/pulls/<number>/comments/<comment_id>/replies -f body="..."` then resolve with the GraphQL `resolveReviewThread` mutation.
 Templates: Fixed → "Fixed in `<commit>` - description" | Skip → "Follows `.claude/rules/<file>`" | Ack → "Acknowledged!"
 
 **Out-of-diff findings** (no thread ID): nothing to resolve via GraphQL — note the fix in the commit message; CodeRabbit re-scans on the next push and won't re-emit fixed findings.
@@ -182,16 +175,15 @@ Then loop back to Step 2. **Loop safeguards:** max 5 iterations; flag stuck issu
 | Error | Action |
 | ----- | ------ |
 | `gh: command not found` / not authenticated | Use `~/.local/bin/gh`; stop and ask for `gh auth login` / `GH_TOKEN` |
-| PR not found | `gh pr list --repo luohuan19/ci-panel`; ask user |
+| PR not found | `gh pr list --repo better-ci/ci-panel`; ask user |
 | CI logs unavailable / run in progress | Wait for completion, then retry |
 | CI logs too large | `grep -iE "error\|ERR!\|FAILED\|fatal"` |
 | Max iterations reached / same failure persists | Stop, report remaining issues; do not retry |
 
 ## Checklist
 
-- [ ] `gh` authenticated and on PATH; PR matched on `origin` (not `upstream`)
+- [ ] `gh` authenticated and on PATH; PR matched on `origin`
 - [ ] Review comments and CI status fetched
-- [ ] Legacy MCSManager workflow failures reported, not "fixed"
 - [ ] ALL issues presented to user for selection
 - [ ] Changes committed via `/git-commit` and pushed to `origin`
 - [ ] Review comment threads replied to and resolved

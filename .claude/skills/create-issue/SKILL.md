@@ -1,6 +1,6 @@
 ---
 name: create-issue
-description: Create a GitHub issue on luohuan19/ci-panel following the repository's issue templates. Classifies the issue type, fills required fields per template, creates it via gh CLI, and applies labels. Use when the user wants to file a bug, request a feature, or create any GitHub issue.
+description: Create a GitHub issue on better-ci/ci-panel following the repository's issue templates. Classifies the issue type, fills required fields per template, creates it via gh CLI, and applies labels. Use when the user wants to file a bug, request a feature, or create any GitHub issue.
 ---
 
 # Create GitHub Issue (ci-panel)
@@ -9,19 +9,16 @@ description: Create a GitHub issue on luohuan19/ci-panel following the repositor
 
 - **`gh` CLI lives at `~/.local/bin/gh`** and is NOT on the default PATH. Either
   call it by full path or `export PATH="$HOME/.local/bin:$PATH"` first.
-- **`gh` is authenticated** as `luohuan19` (scopes: `repo`, `read:org`, `gist`,
-  `admin:public_key`).
-- **File issues against `origin` (`luohuan19/ci-panel`) only.** The `upstream`
-  remote is `MCSManager/MCSManager` — a third-party project. **Never** open an
-  issue or PR there.
+- **`gh` is authenticated** with write access to `better-ci/ci-panel` (scopes:
+  `repo`, `read:org`, `gist`, `admin:public_key`).
+- **File issues against `origin` (`better-ci/ci-panel`) only.**
 - **No project board, by design.** Track with labels and assignees only. Never
   add project-field steps or `--project` flags.
 
 ## Templates
 
 `.github/ISSUE_TEMPLATE/` holds `bug-report.yml` (label `bug`) and `feature.yml`
-(label `enhancement`), both written for ci-panel. `config.yml` allows blank
-issues and links to upstream MCSManager for problems that are not ci-panel's.
+(label `enhancement`), both written for ci-panel. `config.yml` allows blank issues.
 
 **Never hardcode a template list** — always `ls .github/ISSUE_TEMPLATE/` at run
 time and read the files you find. Templates change; this note may go stale.
@@ -53,7 +50,7 @@ instructions:
 > **Step A** — scan open issue titles:
 >
 > ```bash
-> gh issue list --repo luohuan19/ci-panel --state open --limit 200 \
+> gh issue list --repo better-ci/ci-panel --state open --limit 200 \
 >   --json number,title,labels \
 >   --jq '.[] | "\(.number)\t\(.title)\t\(.labels | map(.name) | join(","))"'
 > ```
@@ -62,7 +59,7 @@ instructions:
 > `--comments` unless the body is ambiguous:
 >
 > ```bash
-> gh issue view NUMBER --repo luohuan19/ci-panel
+> gh issue view NUMBER --repo better-ci/ci-panel
 > ```
 >
 > Return EXACTLY one of: `DUPLICATE #N` (same root cause/request),
@@ -125,7 +122,7 @@ For dropdown fields, state the selected value as plain text.
 ## Step 6: Create the Issue
 
 ```bash
-gh issue create --repo luohuan19/ci-panel \
+gh issue create --repo better-ci/ci-panel \
   --title "[Bug] Short description" \
   --label "bug" \
   --body "$(cat <<'EOF'
@@ -154,7 +151,7 @@ EOF
 ```
 
 Capture the issue number from the output URL
-(`https://github.com/luohuan19/ci-panel/issues/123` → `ISSUE_NUMBER=123`) and
+(`https://github.com/better-ci/ci-panel/issues/123` → `ISSUE_NUMBER=123`) and
 show the URL to the user.
 
 ## Step 7: Apply Labels
@@ -169,13 +166,13 @@ The templates already apply their own label (`bug-report.yml` → `bug`,
 GitHub's defaults only — read the real list before adding anything:
 
 ```bash
-gh label list --repo luohuan19/ci-panel
-gh issue edit <number> --repo luohuan19/ci-panel --add-label "documentation"
+gh label list --repo better-ci/ci-panel
+gh issue edit <number> --repo better-ci/ci-panel --add-label "documentation"
 ```
 
 Useful extras from the defaults: `documentation`, `question`, `help wanted`,
 `good first issue`. If the user wants a label that does not exist, offer to
-create it (`gh label create <name> --repo luohuan19/ci-panel`) rather than
+create it (`gh label create <name> --repo better-ci/ci-panel`) rather than
 silently substituting a different one.
 
 ## Checklist
@@ -184,5 +181,5 @@ silently substituting a different one.
 - [ ] `.github/ISSUE_TEMPLATE/` read at run time, not assumed from this file
 - [ ] Searched for existing issues (no duplicate)
 - [ ] Issue classified, all required fields filled
-- [ ] Issue created on `luohuan19/ci-panel` (never `upstream`)
+- [ ] Issue created on `better-ci/ci-panel`
 - [ ] Labels applied (no project board — labels and assignees are the tracking)

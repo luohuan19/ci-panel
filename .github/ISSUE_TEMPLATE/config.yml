@@ -1,5 +1,1 @@
 blank_issues_enabled: true
-contact_links:
-  - name: Upstream MCSManager
-    url: https://github.com/MCSManager/MCSManager/issues
-    about: ci-panel is a fork of MCSManager. If the problem also occurs in upstream MCSManager and is unrelated to CI runner management, report it there instead.
