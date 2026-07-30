@@ -9,7 +9,7 @@
 #   NODE_BIN      node 的绝对路径（read_json_field / wait_tcp 用）
 # unpack 会设置 SRC，指向解包出来的 ci-panel-<version>/ 目录。
 
-REPO="luohuan19/ci-panel"
+REPO="better-ci/ci-panel"
 TAG_PREFIX="cip-v"
 DAEMON_UNIT="ci-panel-daemon.service"
 WEB_UNIT="ci-panel-web.service"

@@ -148,7 +148,7 @@ const aboutLinks = arrayFilter([
   {
     title: "GitHub",
     icon: GithubOutlined,
-    url: "https://github.com/luohuan19/ci-panel"
+    url: "https://github.com/better-ci/ci-panel"
   }
 ]);
 
@@ -156,7 +156,7 @@ const contacts = arrayFilter([
   {
     title: t("TXT_CODE_26407d1f"),
     icon: BugOutlined,
-    url: "https://github.com/luohuan19/ci-panel/issues"
+    url: "https://github.com/better-ci/ci-panel/issues"
   }
 ]);
 

@@ -15,15 +15,14 @@ excluded by default.
 
 ## Prerequisites
 
-- Runs on the local git history of `luohuan19/ci-panel`; the default branch is
+- Runs on the local git history of `better-ci/ci-panel`; the default branch is
   `master`.
 - Only the optional `gh pr view` lookups need the `gh` CLI. It lives at
-  `~/.local/bin/gh` (not on the default PATH) and is authenticated as
-  `luohuan19`. If `gh` is unavailable, fall back to commit messages and diffs
-  alone and say so in the report.
-- **Ignore the `upstream` remote** (`MCSManager/MCSManager`). Only summarize
-  commits authored for ci-panel; do not report upstream merge history as
-  ci-panel work.
+  `~/.local/bin/gh` (not on the default PATH) and is authenticated with access to
+  `better-ci/ci-panel`. If `gh` is unavailable, fall back to commit messages and
+  diffs alone and say so in the report.
+- Only summarize commits authored for ci-panel; do not report inherited fork
+  history as ci-panel work.
 - The repository currently has very few ci-panel commits. An empty or one-entry
   report is a valid result — say so rather than padding it.
 
@@ -179,7 +178,7 @@ count, commit count covered, deprecation count.
 - **Never invent anything** — commits, PR numbers, and code examples must come
   from what `git log`, `gh pr view`, and the diff actually return. For a pure
   addition write `None (new)`; do not fabricate a "before".
-- **Never report upstream MCSManager commits** as ci-panel changes.
+- **Never report inherited fork commits** as ci-panel changes.
 - **Author names** come from `git log` (`%an`), not `Co-Authored-By` lines.
 - **Language**: produce the entire file in the chosen language; do not mix.
 - **Mark deprecations explicitly** — the migration table is the deliverable
@@ -191,7 +190,7 @@ count, commit count covered, deprecation count.
 ## Checklist
 
 - [ ] Date range, output path, language, scope captured
-- [ ] All commits in range listed with author; upstream (MCSManager) excluded
+- [ ] All commits in range listed with author; inherited fork history excluded
 - [ ] Public-surface pre-pass (3a) run over EVERY commit, not just `feat` ones
 - [ ] Each commit classified external vs internal (prefix never overrides a 3a hit)
 - [ ] Before/after TypeScript example, author, and theme bucket per entry

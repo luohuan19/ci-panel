@@ -59,11 +59,11 @@ bash scripts/release/smoke-test.sh dist-release/ci-panel-1.0.0-linux.tar.gz
 ### 1. 取包
 
 ```bash
-TAG=$(curl -fsSL https://api.github.com/repos/luohuan19/ci-panel/releases/latest \
+TAG=$(curl -fsSL https://api.github.com/repos/better-ci/ci-panel/releases/latest \
       | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
 VER=${TAG#cip-v}
-curl -fLO "https://github.com/luohuan19/ci-panel/releases/download/$TAG/ci-panel-$VER-linux.tar.gz"
-curl -fLO "https://github.com/luohuan19/ci-panel/releases/download/$TAG/ci-panel-$VER-linux.tar.gz.sha256"
+curl -fLO "https://github.com/better-ci/ci-panel/releases/download/$TAG/ci-panel-$VER-linux.tar.gz"
+curl -fLO "https://github.com/better-ci/ci-panel/releases/download/$TAG/ci-panel-$VER-linux.tar.gz.sha256"
 sha256sum -c "ci-panel-$VER-linux.tar.gz.sha256"
 tar xzf "ci-panel-$VER-linux.tar.gz" && cd "ci-panel-$VER"
 ```

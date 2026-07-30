@@ -65,8 +65,6 @@ files exist and no package defines a `test` script. The real gate is
 `lint` nor a `type-check` script — their type errors surface only via `build`.
 Never invent a test command or report "tests passed".
 
-**Remotes are asymmetric.** `origin` is `luohuan19/ci-panel` (public, default
-branch `master`) — all PRs and issues go here. `upstream` is
-`MCSManager/MCSManager`, a third-party project — never open a PR or issue
-against it. Because the repo is public, treat internal IPs, hostnames, and
-private repo names as secrets.
+**There is one remote.** `origin` is `better-ci/ci-panel` (public, default branch
+`master`) — all PRs and issues go here. Because the repo is public, treat
+internal IPs, hostnames, and private repo names as secrets.

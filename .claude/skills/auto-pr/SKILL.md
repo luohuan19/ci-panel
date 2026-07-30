@@ -20,12 +20,10 @@ never pauses to ask which issues to address.
 ## Prerequisites
 
 - **`gh` CLI lives at `~/.local/bin/gh`**, not on the default PATH.
-- **`gh` is authenticated** as `luohuan19`. This skill is fully autonomous and
-  cannot prompt mid-loop — still verify `gh auth status` succeeds *before*
-  starting, and stop immediately if it does not.
-- **PR target is always `origin` = `luohuan19/ci-panel`, base branch `master`.**
-  The `upstream` remote points at MCSManager/MCSManager, a third-party project —
-  **never** PR into it, never rebase onto it.
+- **`gh` is authenticated** with write access to `better-ci/ci-panel`. This skill
+  is fully autonomous and cannot prompt mid-loop — still verify `gh auth status`
+  succeeds *before* starting, and stop immediately if it does not.
+- **PR target is always `origin` = `better-ci/ci-panel`, base branch `master`.**
 - **No GitHub Project board, by design.** Never pass `--project` or add
   project-field steps.
 - **No test suite exists.** Verification = the `verify` skill (type-check, lint,
@@ -51,7 +49,7 @@ never pauses to ask which issues to address.
 
 Follow `github-pr` Steps 1–6 (prepare branch & commit, check existing PR, fetch
 `origin`, rebase onto `origin/master`, push with `--force-with-lease`, create PR
-with `--repo luohuan19/ci-panel --base master`), **with one override:**
+with `--repo better-ci/ci-panel --base master`), **with one override:**
 
 - `github-pr` Step 2 says "if a PR already exists, display it and exit."
   Here, **do not exit** — record the PR number and proceed to Phase B.
@@ -74,8 +72,7 @@ Classify each item:
 
 | Class | Definition | Loop action |
 | ----- | ---------- | ----------- |
-| **CI** | Failed/errored GitHub check for real project code | Auto-fix |
-| **CI-legacy** | Failure in an inherited MCSManager workflow (`codeql`, `docker`, `release`, `webpack`) | **Do not fix** — report in Final Report, recommend deleting/disabling |
+| **CI** | Failed/errored GitHub check | Auto-fix |
 | **A — Actionable** | Clear bug, missing check, security/correctness issue | Auto-fix |
 | **B — Style nit** | Pure formatting/naming/style preference | Auto-skip, cite `.claude/rules/<file>` |
 | **C — Informational** | Ack, "optional", non-request | Resolve, no code change |
@@ -91,13 +88,11 @@ This skill runs **fully automatically** — never pause to ask which issues to a
 
 - **CI + Class A:** Read affected files, make minimal edits. For CI, analyze logs
   online first; reproduce locally via the `verify` skill only as a last resort.
-- **CI-legacy:** No code change. These workflows target MCSManager, not this repo —
-  editing them to go green would be busywork. Collect for the Final Report.
 - **Class B / C:** No code change.
 - **Class D:** Skip — collect into the deferred list for the Final Report.
 
-If an iteration produces zero code changes and issues remain (all D/CI-legacy, or
-a CI failure with no actionable fix), do not loop pointlessly — go to Final Report.
+If an iteration produces zero code changes and issues remain (all D, or a CI
+failure with no actionable fix), do not loop pointlessly — go to Final Report.
 
 ### Step 3: Commit & Push
 
@@ -137,8 +132,8 @@ checks there is no run ID; open the `link` URL directly. Then loop back to Step 
 
 Exit the loop when **any** of:
 
-- All non-legacy checks green AND no unresolved Class A/B/C comments
-  (Class D and CI-legacy may remain), OR
+- All checks green AND no unresolved Class A/B/C comments
+  (Class D may remain), OR
 - Iteration cap (8) reached, OR
 - An item is **stuck** — same CI failure or comment unfixed after 2 consecutive
   iterations. Stop retrying it; report it.
@@ -148,8 +143,6 @@ Exit the loop when **any** of:
 Report to the user:
 
 - ✅ / ❌ final CI status per check.
-- **Legacy workflow failures** — list `codeql`/`docker`/`release`/`webpack` jobs
-  that failed, with the recommendation to delete or disable them.
 - **Deferred Class D comments** — list each with `path:line`, reviewer, and a
   one-line summary so the user can decide. These threads were intentionally left open.
 - **Stuck issues** — anything retried without success; suggest manual follow-up.
@@ -161,7 +154,7 @@ Report to the user:
 | --------- | ------ |
 | `gh` unauthenticated | Stop before Phase A — the loop cannot prompt mid-run |
 | PR already exists (Phase A) | Reuse it — do not exit, proceed to Phase B |
-| PR base resolved to MCSManager | Abort; re-run with `--repo luohuan19/ci-panel --base master` |
+| PR base resolved to the wrong repo | Abort; re-run with `--repo better-ci/ci-panel --base master` |
 | Same failure 2× in a row | Mark stuck, stop retrying it |
 | Iteration cap (8) hit | Stop, report remaining issues |
 | Zero-change iteration with issues left | Stop — nothing more to automate |
@@ -171,10 +164,10 @@ Report to the user:
 ## Checklist
 
 - [ ] `gh` authenticated before starting
-- [ ] PR created or located on `luohuan19/ci-panel` base `master`
-- [ ] Issues classified CI / CI-legacy / A / B / C / D each iteration
-- [ ] CI + Class A auto-fixed; CI-legacy and Class D left alone
+- [ ] PR created or located on `better-ci/ci-panel` base `master`
+- [ ] Issues classified CI / A / B / C / D each iteration
+- [ ] CI + Class A auto-fixed; Class D left alone
 - [ ] Fixes committed via `/git-commit` and pushed to `origin`
 - [ ] Resolved threads replied to and closed (except deferred D)
 - [ ] Loop exited: green, stuck, or cap reached
-- [ ] Final report lists CI status, legacy workflows, deferred comments, stuck issues, PR URL
+- [ ] Final report lists CI status, deferred comments, stuck issues, PR URL
