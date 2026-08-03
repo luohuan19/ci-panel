@@ -362,8 +362,11 @@ export function ensureHandleInstance(dir: string, repo: string, agentName: strin
         try {
           inst.parameters({ tag: [repo] }, true);
           logger.info(`[runner] 对齐句柄实例的仓库标签 ${inst.instanceUuid} → ${repo}`);
-        } catch (err: any) {
-          logger.warn(`[runner] 对齐仓库标签失败 ${dir}: ${err?.message || err}`);
+        } catch (err: unknown) {
+          // 刻意不往上抛：此刻 .cipanel 已经写好，runner 确实被纳管了，为一个标签把整条
+          // 纳管报成失败反而更误导。标签只用于实例列表的分组显示，仓库注册表认的是
+          // RegisterResult.repo、归堆认的是 .runner，都不读它。记 error 便于事后发现。
+          logger.error(`[runner] 对齐仓库标签失败（标签仍是旧值）${dir}: ${errText(err)}`);
         }
       }
       return inst.instanceUuid;

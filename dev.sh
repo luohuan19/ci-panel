@@ -63,9 +63,15 @@ fetch_lib() { # filename
   # 或修一个错的校验和），跑过本脚本的机器会一直留着那个旧的、没核对过的二进制。
   if [ -f "daemon/lib/$name" ]; then
     if [ -n "$sum" ] && echo "$sum  daemon/lib/$name" | sha256sum -c - >/dev/null 2>&1; then
+      # 校验和只保证内容，不保证权限：可执行位掉了（换机器 copy、解压丢权限）的话
+      # 这里放行、daemon 启动时才炸。顺手补上。
+      chmod +x "daemon/lib/$name" || die "无法给 daemon/lib/$name 加可执行权限"
       return 0
     fi
-    echo "[warn] daemon/lib/$name 与 lib-checksums.txt 不符（或无对应条目），重新下载"
+    # 校验不过的旧文件必须当场删掉：留着的话，万一下面 lib-urls.txt 里查不到 URL 而提前
+    # 返回，daemon 启动时用的就是这个没核对过的二进制。
+    echo "[warn] daemon/lib/$name 与 lib-checksums.txt 不符（或无对应条目），删除并重新下载"
+    rm -f "daemon/lib/$name"
   fi
   url="$(grep -m1 "/$name\$" lib-urls.txt)" ||
     { echo "[warn] lib-urls.txt 里没有 $name，请按 DEVELOPMENT.md 手动下载到 daemon/lib/"; return 0; }
