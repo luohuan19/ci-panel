@@ -95,6 +95,11 @@ How it differs from `npm run dev`:
   host that is also a managed runner node, sharing one runner root between two daemons
   means a misclick in the dev panel stops a runner serving CI. Logs land in `.run/*.log`
 
+Whenever the frontend runs under the vite dev server (`npm run dev` or `bash dev.sh`),
+the browser tab title is prefixed with `[dev] ` so a dev tab is never mistaken for a
+production one. Production builds (`vite build`) carry no prefix and need no
+configuration — the check is `import.meta.env.DEV`, see `frontend/src/tools/devTitle.ts`.
+
 <br />
 
 ### Internationalizing Your Code

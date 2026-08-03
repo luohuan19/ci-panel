@@ -93,6 +93,10 @@ bash stop-cipanel.sh     # 停止
   runner 节点时，两个 daemon 共用一个 runner 根意味着开发面板上误点一次停止/删除，
   动的就是生产 runner。日志统一在 `.run/*.log`
 
+只要前端跑在 vite dev server 上（`npm run dev` 或 `bash dev.sh`），浏览器标签页标题都会
+带上 `[dev] ` 前缀，免得和生产面板的标签页点混。生产构建（`vite build`）不带前缀，
+也不需要任何配置 —— 判据是 `import.meta.env.DEV`，见 `frontend/src/tools/devTitle.ts`。
+
 <br />
 
 ### 国际化你的代码
