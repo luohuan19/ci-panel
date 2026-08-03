@@ -9,7 +9,7 @@ description: Create a GitHub pull request after committing, rebasing, and pushin
 
 - **`gh` CLI lives at `~/.local/bin/gh`** and is NOT on the default PATH. Either
   call it by full path or `export PATH="$HOME/.local/bin:$PATH"` first.
-- **`gh` is authenticated** with write access to `better-ci/ci-panel` (scopes:
+- **`gh` is authenticated** with write access to `pypto-tools/ci-panel` (scopes:
   `repo`, `read:org`, `gist`, `admin:public_key`). If `gh auth status` ever fails,
   stop and tell the user — do not attempt manual API calls with curl.
 - **No GitHub Project board, by design.** Never add `--project` to `gh pr create`
@@ -18,10 +18,10 @@ description: Create a GitHub pull request after committing, rebasing, and pushin
 ## Remote topology
 
 ```text
-origin    https://github.com/better-ci/ci-panel.git   ← the only remote. Default branch: master
+origin    https://github.com/pypto-tools/ci-panel.git   ← the only remote. Default branch: master
 ```
 
-- **Always PR into `origin` (`better-ci/ci-panel`), branch `master`.**
+- **Always PR into `origin` (`pypto-tools/ci-panel`), branch `master`.**
 - Base ref for every operation in this skill is `origin/master`.
 
 ## Task Tracking
@@ -129,13 +129,13 @@ gh auth status
 ```
 
 **If gh is unavailable or unauthenticated**: report it and give the manual URL:
-`https://github.com/better-ci/ci-panel/compare/master...BRANCH_NAME`
+`https://github.com/pypto-tools/ci-panel/compare/master...BRANCH_NAME`
 
 **If gh available:**
 
 ```bash
 gh pr create \
-  --repo better-ci/ci-panel \
+  --repo pypto-tools/ci-panel \
   --base master \
   --title "Brief description of changes" \
   --body "$(cat <<'EOF'
@@ -170,7 +170,7 @@ This repo has **no test suite** — never write "all tests pass" in a PR body.
 | Issue | Solution |
 | ----- | -------- |
 | PR already exists | `gh pr view` then exit |
-| PR opened against the wrong repo | Close it. Re-create with `--repo better-ci/ci-panel --base master` |
+| PR opened against the wrong repo | Close it. Re-create with `--repo pypto-tools/ci-panel --base master` |
 | Merge conflicts | Resolve, `git add`, `git rebase --continue` |
 | Push rejected | `git push --force-with-lease` |
 | `gh: command not found` | Use `~/.local/bin/gh` |
@@ -184,4 +184,4 @@ This repo has **no test suite** — never write "all tests pass" in a PR body.
 - [ ] Fetched `origin` and rebased onto `origin/master`
 - [ ] Conflicts resolved, `verify` re-run if sources changed
 - [ ] Pushed with `--force-with-lease`
-- [ ] PR created against `better-ci/ci-panel` base `master`
+- [ ] PR created against `pypto-tools/ci-panel` base `master`

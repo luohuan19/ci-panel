@@ -11,9 +11,9 @@ Fix PR issues (review comments, CI failures) in a loop until the PR is fully cle
 ## Prerequisites
 
 - **`gh` CLI lives at `~/.local/bin/gh`** (not on the default PATH) and is
-  **authenticated** with write access to `better-ci/ci-panel`. If `gh auth status`
+  **authenticated** with write access to `pypto-tools/ci-panel`. If `gh auth status`
   fails, stop and tell the user.
-- **Repo is `better-ci/ci-panel`, default branch `master`.** `origin` is the only
+- **Repo is `pypto-tools/ci-panel`, default branch `master`.** `origin` is the only
   remote; all PR operations target it.
 - **No GitHub Project board, by design.** Never add project-field updates.
 
@@ -30,16 +30,16 @@ Loop Steps 1→7, repeating until clean or max 5 iterations.
 ### Step 1: Match Input to PR
 
 ```bash
-gh pr view <number> --repo better-ci/ci-panel --json number,title,headRefName,state
+gh pr view <number> --repo pypto-tools/ci-panel --json number,title,headRefName,state
 # Or by branch:
 BRANCH=$(git branch --show-current)
-gh pr list --repo better-ci/ci-panel --head "$BRANCH" --json number,title,state
+gh pr list --repo pypto-tools/ci-panel --head "$BRANCH" --json number,title,state
 ```
 
 ### Step 2: Detect Issues (run in parallel)
 
 ```bash
-OWNER=better-ci
+OWNER=pypto-tools
 NAME=ci-panel
 
 # Fetch review threads — save to file, then grep (see pitfalls below)
@@ -155,7 +155,7 @@ comment's category, default to B.
 
 ### Step 6: Resolve Comment Threads
 
-Reply with `gh api repos/better-ci/ci-panel/pulls/<number>/comments/<comment_id>/replies -f body="..."` then resolve with the GraphQL `resolveReviewThread` mutation.
+Reply with `gh api repos/pypto-tools/ci-panel/pulls/<number>/comments/<comment_id>/replies -f body="..."` then resolve with the GraphQL `resolveReviewThread` mutation.
 Templates: Fixed → "Fixed in `<commit>` - description" | Skip → "Follows `.claude/rules/<file>`" | Ack → "Acknowledged!"
 
 **Out-of-diff findings** (no thread ID): nothing to resolve via GraphQL — note the fix in the commit message; CodeRabbit re-scans on the next push and won't re-emit fixed findings.
@@ -175,7 +175,7 @@ Then loop back to Step 2. **Loop safeguards:** max 5 iterations; flag stuck issu
 | Error | Action |
 | ----- | ------ |
 | `gh: command not found` / not authenticated | Use `~/.local/bin/gh`; stop and ask for `gh auth login` / `GH_TOKEN` |
-| PR not found | `gh pr list --repo better-ci/ci-panel`; ask user |
+| PR not found | `gh pr list --repo pypto-tools/ci-panel`; ask user |
 | CI logs unavailable / run in progress | Wait for completion, then retry |
 | CI logs too large | `grep -iE "error\|ERR!\|FAILED\|fatal"` |
 | Max iterations reached / same failure persists | Stop, report remaining issues; do not retry |

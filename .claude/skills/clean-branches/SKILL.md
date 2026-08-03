@@ -15,14 +15,14 @@ branches and remote branches on `origin`. Detects squash-merged branches that
 
 - **`gh` CLI lives at `~/.local/bin/gh`**, not on the default PATH. Export
   `PATH="$HOME/.local/bin:$PATH"` or call it by full path.
-- **`gh` is authenticated** with write access to `better-ci/ci-panel` — squash-merge
+- **`gh` is authenticated** with write access to `pypto-tools/ci-panel` — squash-merge
   detection needs it. If `gh auth status` ever fails, fall back to
   `git branch --merged` detection only and flag the reduced coverage to the user.
 
 ## Remote topology
 
 ```text
-origin    better-ci/ci-panel            ← the only remote. Branches here MAY be deleted.
+origin    pypto-tools/ci-panel            ← the only remote. Branches here MAY be deleted.
 ```
 
 The default branch is **`master`**, not `main`.
@@ -33,8 +33,8 @@ The default branch is **`master`**, not `main`.
 git remote -v
 ```
 
-Confirm `origin` is `better-ci/ci-panel`. **Only `origin` branches are candidates
-for deletion.** If `origin` does not point at `better-ci/ci-panel`, stop and ask
+Confirm `origin` is `pypto-tools/ci-panel`. **Only `origin` branches are candidates
+for deletion.** If `origin` does not point at `pypto-tools/ci-panel`, stop and ask
 the user — do not guess.
 
 ## Step 2: Gather Branch Information
@@ -63,7 +63,7 @@ git remote prune origin --dry-run
 For each branch (local or remote-only) NOT in the `--merged` list, check GitHub:
 
 ```bash
-gh pr list --repo better-ci/ci-panel --head "<branch-name>" \
+gh pr list --repo pypto-tools/ci-panel --head "<branch-name>" \
   --state merged --json number,title,headRefOid --limit 1
 ```
 
@@ -145,7 +145,7 @@ Report results: local branches deleted, remote branches deleted, refs pruned.
 
 ## Checklist
 
-- [ ] `origin` confirmed as `better-ci/ci-panel`
+- [ ] `origin` confirmed as `pypto-tools/ci-panel`
 - [ ] All local and remote branches categorized against `master`
 - [ ] Summary table presented (local/remote status per branch)
 - [ ] User approved the deletion list

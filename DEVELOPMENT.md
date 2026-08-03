@@ -20,7 +20,7 @@ We use `Visual Studio Code` to develop ci-panel, we **highly recommend** these p
 #### 1. Download the Source Code
 
 ```bash
-git clone https://github.com/better-ci/ci-panel.git
+git clone https://github.com/pypto-tools/ci-panel.git
 cd ci-panel
 ```
 

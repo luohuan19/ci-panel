@@ -15,11 +15,11 @@ excluded by default.
 
 ## Prerequisites
 
-- Runs on the local git history of `better-ci/ci-panel`; the default branch is
+- Runs on the local git history of `pypto-tools/ci-panel`; the default branch is
   `master`.
 - Only the optional `gh pr view` lookups need the `gh` CLI. It lives at
   `~/.local/bin/gh` (not on the default PATH) and is authenticated with access to
-  `better-ci/ci-panel`. If `gh` is unavailable, fall back to commit messages and
+  `pypto-tools/ci-panel`. If `gh` is unavailable, fall back to commit messages and
   diffs alone and say so in the report.
 - Only summarize commits authored for ci-panel; do not report inherited fork
   history as ci-panel work.
