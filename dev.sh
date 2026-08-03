@@ -58,7 +58,15 @@ echo "node $(node -v) / npm $(npm -v)"
 # 这里用 node 自己算，免得手写 uname → arch 的映射对不上。
 fetch_lib() { # filename
   local name="$1" url sum
-  [ -f "daemon/lib/$name" ] && return 0
+  sum="$(grep -m1 " $name\$" lib-checksums.txt | awk '{print $1}')"
+  # 已存在的文件也要核对：只在缺失时下载的话，lib-checksums.txt 之后更新（换版本、
+  # 或修一个错的校验和），跑过本脚本的机器会一直留着那个旧的、没核对过的二进制。
+  if [ -f "daemon/lib/$name" ]; then
+    if [ -n "$sum" ] && echo "$sum  daemon/lib/$name" | sha256sum -c - >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "[warn] daemon/lib/$name 与 lib-checksums.txt 不符（或无对应条目），重新下载"
+  fi
   url="$(grep -m1 "/$name\$" lib-urls.txt)" ||
     { echo "[warn] lib-urls.txt 里没有 $name，请按 DEVELOPMENT.md 手动下载到 daemon/lib/"; return 0; }
   echo "下载 $name"
@@ -67,7 +75,6 @@ fetch_lib() { # filename
   # 校验不过就删掉，绝不留一个来源不明的可执行文件在 lib 里。
   # 没有校验和条目同样算校验不过 —— 那说明 lib-urls.txt 和 lib-checksums.txt 已经漂移，
   # 这种时候更不该把一个没核对过的二进制 chmod +x 留在那里。
-  sum="$(grep -m1 " $name\$" lib-checksums.txt | awk '{print $1}')"
   [ -n "$sum" ] ||
     { rm -f "daemon/lib/$name"; die "lib-checksums.txt 里没有 $name 的校验和条目，已删除下载的文件"; }
   echo "$sum  daemon/lib/$name" | sha256sum -c - >/dev/null 2>&1 ||

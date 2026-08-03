@@ -19,6 +19,8 @@ import {
 import { logger } from "./log";
 import RemoteRequest from "./remote_command";
 import RemoteServiceSubsystem from "./remote_service";
+import { $t } from "../i18n";
+import { errMessage } from "../utils/error";
 
 const CATEGORY = "RepoConfig";
 
@@ -165,11 +167,20 @@ class RepoService {
     if (!isValidSlug(slug)) throw new Error(`非法的仓库标识：${slug}`);
     if (!this.repos.has(slug)) throw new Error(`仓库 ${slug} 未纳管`);
     const index = await this.collectRunners();
+    // 有节点扫不到就不能判断——它上面可能正有该仓库的 runner。这时删掉，等节点恢复后
+    // backfillRegistry 又会把仓库补回来，就成了"删完过一会自己回来了"。
+    if (index.failedNodes.length > 0) {
+      throw new Error(
+        $t("TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE", {
+          slug,
+          nodes: index.failedNodes.map((n) => n.nodeName).join("、")
+        })
+      );
+    }
     const runners = index.bySlug.get(slug) || [];
     if (runners.length > 0) {
       throw new Error(
-        `仓库 ${slug} 名下还有 ${runners.length} 个已纳管 runner，无法取消纳管。` +
-          `请先在 runner 列表里取消它们的纳管，再删除仓库。`
+        $t("TXT_CODE_REPO_REMOVE_HAS_RUNNERS", { slug, count: runners.length })
       );
     }
     StorageSubsystem.delete(CATEGORY, slugToFileId(slug));
@@ -221,10 +232,10 @@ class RepoService {
     for (const slug of slugs) {
       if (!isValidSlug(slug) || this.repos.has(slug)) continue;
       try {
-        this.add(slug, "", "已有纳管 runner，自动补登记");
-      } catch (err: any) {
+        this.add(slug, "", $t("TXT_CODE_REPO_AUTO_REGISTER_BACKFILL"));
+      } catch (err: unknown) {
         // 补登记失败不该让仓库列表整个挂掉
-        logger.warn(`仓库自动补登记失败 (${slug}): ${err?.message || err}`);
+        logger.warn(`仓库自动补登记失败 (${slug}): ${errMessage(err)}`);
       }
     }
   }

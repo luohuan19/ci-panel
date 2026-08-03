@@ -23,6 +23,14 @@ export {
 
 export { arrayUnique } from "./array";
 
+// runner 纳管协议（纯类型，前端用 import type 引，不会带进浏览器 bundle）
+export type {
+  RegisterRunnerItem,
+  RegisterRunnerResult,
+  RegisterRunnersResponse,
+  RunnerSource
+} from "./runner_protocol";
+
 export { removeTrail } from "./string_utils";
 
 export {

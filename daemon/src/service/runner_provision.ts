@@ -355,6 +355,17 @@ export function ensureHandleInstance(dir: string, repo: string, agentName: strin
           logger.warn(`[runner] 收启动命令失败 ${dir}: ${err?.message || err}`);
         }
       }
+      // 仓库标签只在新建实例时设过，复用这条路径从不更新。于是重新纳管、改分组，
+      // 或者当初建实例时 .runner 还读不出仓库的那些，标签会一直停在旧值/空值。
+      // repo 为空时不动（读不出来不代表原来的就是错的）。
+      if (repo && inst.config.tag?.[0] !== repo) {
+        try {
+          inst.parameters({ tag: [repo] }, true);
+          logger.info(`[runner] 对齐句柄实例的仓库标签 ${inst.instanceUuid} → ${repo}`);
+        } catch (err: any) {
+          logger.warn(`[runner] 对齐仓库标签失败 ${dir}: ${err?.message || err}`);
+        }
+      }
       return inst.instanceUuid;
     }
   }

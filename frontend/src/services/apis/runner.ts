@@ -1,5 +1,10 @@
 // 一键添加 Runner 接口（自研补充，对应 panel 的 /api/runner 路由）
 import { useDefineApi } from "@/stores/useDefineApi";
+import type {
+  RegisterRunnerItem,
+  RegisterRunnersResponse,
+  RunnerSource
+} from "mcsmanager-common";
 
 export interface ProvisionRunnerResult {
   instanceUuid: string;
@@ -263,29 +268,24 @@ export const scanRunners = useDefineApi<
 });
 
 // ---- 纳管 / 取消纳管：写、删 .cipanel 标记 ----
-export interface RegisterRunnerItem {
-  dir: string;
-  repo?: string;
-  group?: string;
-}
-
-export interface RegisterRunnerResult {
-  dir: string;
-  ok: boolean;
-  markerId?: string;
-  instanceUuid?: string; // 句柄实例 uuid
-  repo?: string; // daemon 从 .runner 读出的仓库 slug
-  error?: string;
-}
+// 协议类型来自 common，与 daemon / panel 同一份声明（common/src/runner_protocol.ts）。
+// 只用 import type：common 的入口还导出 fs / child_process 那些 node 侧代码，
+// 类型导入在编译期就被擦除，不会进浏览器 bundle。
+export type {
+  RegisterRunnerItem,
+  RegisterRunnerResult,
+  RegisterRunnersResponse,
+  RunnerSource
+} from "mcsmanager-common";
 
 // 纳管选中的 runner（只写标记，不建实例）。source 缺省为 import
 // registeredRepos：本次顺带纳管进仓库注册表的仓库（此前不在表里的那些）
 export const registerRunners = useDefineApi<
   {
     params: { daemonId: string };
-    data: { items: RegisterRunnerItem[]; source?: "provision" | "import" };
+    data: { items: RegisterRunnerItem[]; source?: RunnerSource };
   },
-  { results: RegisterRunnerResult[]; registeredRepos?: string[] }
+  RegisterRunnersResponse
 >({
   url: "/api/runner/register",
   method: "POST"

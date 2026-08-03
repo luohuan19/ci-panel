@@ -15,11 +15,18 @@ mkdir -p "$CIP_LOGDIR"
 # 某端口是否已在 LISTEN
 port_up() { (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":$1 "; }
 
-# 监听某端口的进程号。这是识别「我们的服务」的唯一可靠办法：见 start_svc 的注释，
-# .run/*.pid 历史上记错过，按端口查才是权威。
+# 监听某端口的进程号。
+# ss 与 netstat 的进程列格式不同（ss 是 users:(("node",pid=123,fd=21))，netstat 是 123/node），
+# 两种都要认：只按 ss 的格式解析的话，没装 ss 的机器上会一直取不到 pid，
+# stop_svc 于是谎报「未运行」，而端口其实还占着。
 pid_on_port() {
-  (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) |
-    grep ":$1 " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2
+  local line
+  if line="$(ss -tlnp 2>/dev/null | grep ":$1 ")" && [ -n "$line" ]; then
+    printf '%s' "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2
+    return 0
+  fi
+  line="$(netstat -tlnp 2>/dev/null | grep ":$1 ")" || return 0
+  printf '%s' "$line" | grep -oE '[0-9]+/' | head -1 | tr -d '/'
 }
 
 # daemon 端口以配置为准，读不出来就返回非 0 让调用方决定 —— 绝不回退到 24444。
@@ -81,15 +88,28 @@ start_svc() { # name port dir cmd...
   echo "[start] $name → :${port:-?} (pid $pid)"
 }
 
-# 按端口停一个服务
+# 停一个服务。
+#
+# 只按端口找到进程就 kill 是不够的：23333 / 5173 是写死的端口，机器上完全可能是别的东西
+# 占着，那就成了一条命令把无关服务停掉。所以要求端口上的进程与 start_svc 记下的 pid 一致，
+# 对不上就保留并说明——现在 pid 文件记的是真进程了（见 start_svc），这个比对才有意义。
 stop_svc() { # name port
-  local name="$1" port="$2" pid
+  local name="$1" port="$2" pid recorded
   pid="$(pid_on_port "$port")"
-  if [ -n "$pid" ]; then
-    kill "$pid" 2>/dev/null && echo "[stop] $name (pid $pid, :$port)"
-  else
+  if [ -z "$pid" ]; then
     echo "[skip] $name 未运行 (:$port)"
+    return 0
   fi
+  recorded="$(cat "$CIP_LOGDIR/$name.pid" 2>/dev/null)"
+  if [ -z "$recorded" ]; then
+    echo "[skip] :$port 上的 pid $pid 不是本脚本启动的（没有 $CIP_LOGDIR/$name.pid 记录），不动它" >&2
+    return 1
+  fi
+  if [ "$recorded" != "$pid" ]; then
+    echo "[skip] :$port 被 pid $pid 占用，但记录的 $name 是 pid $recorded，不动它" >&2
+    return 1
+  fi
+  kill "$pid" 2>/dev/null && echo "[stop] $name (pid $pid, :$port)"
 }
 
 # ---- 开发实例隔离 ----

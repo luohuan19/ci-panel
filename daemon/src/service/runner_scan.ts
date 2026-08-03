@@ -33,6 +33,7 @@ import {
   RUNNER_SVC_HELPER,
   uninstallSystemdService
 } from "./runner_provision";
+import type { RegisterRunnerItem, RegisterRunnerResult } from "mcsmanager-common";
 
 const SYSTEMCTL = "/usr/bin/systemctl";
 
@@ -472,18 +473,16 @@ export async function scanOneRunner(dirRaw: string): Promise<ScannedRunner | nul
 
 // ---- 纳管 / 取消纳管：写、删 .cipanel 标记 ----
 
-export interface RegisterItem {
-  dir: string;
-  repo?: string;
-  group?: string;
-}
-export interface RegisterResult {
-  dir: string;
-  ok: boolean;
-  markerId?: string;
-  instanceUuid?: string; // 句柄实例 uuid（文件管理/配置/详情页要用）
-  repo?: string; // 从 .runner 读出的仓库 slug，面板据此自动纳管仓库
-  error?: string;
+// 协议类型来自 common，daemon / panel / frontend 共用一份，见 common/src/runner_protocol.ts
+export type RegisterItem = RegisterRunnerItem;
+export type RegisterResult = RegisterRunnerResult;
+
+// owner/repo 的形状校验，与面板 entity/repo.ts 的 SLUG_REGEX 对齐。
+// 必须校验：repoSlug() 解析不出 URL 时会把输入原样返回（见其实现），那种垃圾值非空，
+// 会让下面的兜底判断失效，还会以一个不可能被注册表接受的 slug 进到 RegisterResult.repo。
+const SLUG_SHAPE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+function isRepoSlug(s: string): boolean {
+  return SLUG_SHAPE.test(s) && !s.includes("..");
 }
 
 // 纳管：给指定目录写 .cipanel（默认来源 import——手动导入既有 runner），并确保有个「句柄实例」，
@@ -498,6 +497,10 @@ export function registerRunners(
     const dir = path.normalize(String(it?.dir || ""));
     try {
       if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
+      // 边界校验：dir 来自前端。新纳管一律限制在扫描根之下，和 scan 保持一致。
+      // 已经带 .cipanel 的目录放行——被管理的 runner 允许落在扫描根之外（见 managedRunnerDirs
+      // 的说明），而改分组标签走的也是这个入口，一刀切会把它们挡在门外。
+      if (!hasMarker(dir)) assertUnderRoots(dir);
       if (!fs.existsSync(path.join(dir, ".runner")))
         throw new Error("不是 runner 目录（缺 .runner）");
       const marker = writeMarker(dir, { source, repo: it.repo, group: it.group });
@@ -509,13 +512,20 @@ export function registerRunners(
       let repo = "";
       try {
         const raw = fs.readFileSync(path.join(dir, ".runner"), "utf8").replace(/^﻿/, "");
-        const j = JSON.parse(raw);
-        if (j.agentName) agentName = String(j.agentName);
-        if (j.gitHubUrl) repo = repoSlug(String(j.gitHubUrl));
+        const j = JSON.parse(raw) as { agentName?: unknown; gitHubUrl?: unknown };
+        if (typeof j.agentName === "string" && j.agentName) agentName = j.agentName;
+        if (typeof j.gitHubUrl === "string" && j.gitHubUrl) {
+          const slug = repoSlug(j.gitHubUrl);
+          if (isRepoSlug(slug)) repo = slug;
+        }
       } catch {
         /* .runner 解析失败也不挡纳管，用目录名兜底 */
       }
-      if (!repo) repo = it.repo || marker.repo || "";
+      // 兜底同样要过校验，否则等于把一个无效 slug 塞进句柄实例标签和返回值
+      if (!repo) {
+        const fallback = String(it.repo || marker.repo || "");
+        if (isRepoSlug(fallback)) repo = fallback;
+      }
       const instanceUuid = ensureHandleInstance(dir, repo, agentName);
       logger.info(
         `[runner-register] 纳管 ${dir} (id=${marker.id}, source=${marker.source}, 实例=${instanceUuid})`
@@ -566,8 +576,20 @@ const scanRoots = () => [...runnerRoots];
 
 export function assertUnderRoots(target: string) {
   if (!path.isAbsolute(target)) throw new Error("路径必须是绝对路径");
+  // 比较真实路径：只做字符串前缀判断的话，扫描根下的一个符号链接（<root>/x → /etc）
+  // 就能把这道边界绕过去。路径还不存在时（listDirs/createDir 会传新建目录）realpath 失败，
+  // 退回按原路径比较，行为与从前一致。
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.normalize(p);
+    }
+  };
+  const resolved = real(target);
   const roots = scanRoots();
-  if (!roots.some((r) => target === r || target.startsWith(r + path.sep)))
+  const realRoots = roots.map(real);
+  if (!realRoots.some((r) => resolved === r || resolved.startsWith(r + path.sep)))
     throw new Error(`只允许在扫描根下操作：${roots.join(", ")}`);
 }
 
