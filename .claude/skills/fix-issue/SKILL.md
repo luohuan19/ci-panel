@@ -1,6 +1,6 @@
 ---
 name: fix-issue
-description: Fix a GitHub issue on better-ci/ci-panel by fetching content, creating a branch, planning the fix, and implementing it. Use when the user asks to fix a specific issue number or work on a GitHub issue.
+description: Fix a GitHub issue on pypto-tools/ci-panel by fetching content, creating a branch, planning the fix, and implementing it. Use when the user asks to fix a specific issue number or work on a GitHub issue.
 argument-hint: [issue-number]
 ---
 
@@ -12,9 +12,9 @@ Fetch a GitHub issue, create a branch, plan, and implement the fix.
 
 - **`gh` CLI lives at `~/.local/bin/gh`** and is NOT on the default PATH. Either
   call it by full path or `export PATH="$HOME/.local/bin:$PATH"` first.
-- **`gh` is authenticated** with write access to `better-ci/ci-panel` (scopes:
+- **`gh` is authenticated** with write access to `pypto-tools/ci-panel` (scopes:
   `repo`, `read:org`, `gist`, `admin:public_key`).
-- **Work against `origin` (`better-ci/ci-panel`) only.**
+- **Work against `origin` (`pypto-tools/ci-panel`) only.**
 - **Default branch is `master`.**
 - **No project board, by design.** Track with labels and assignees only. Never
   add project-field steps or `--project` flags.
@@ -49,9 +49,9 @@ gh CLI is not authenticated. Please run: gh auth login
 ## Step 2: Fetch Issue Content and Check Ownership
 
 ```bash
-gh issue view ISSUE_NUMBER --repo better-ci/ci-panel \
+gh issue view ISSUE_NUMBER --repo pypto-tools/ci-panel \
   --json number,title,body,state,labels,assignees
-gh issue view ISSUE_NUMBER --repo better-ci/ci-panel --comments
+gh issue view ISSUE_NUMBER --repo pypto-tools/ci-panel --comments
 ```
 
 **Parse** number, title, description, state, labels, assignees, and all
@@ -100,7 +100,7 @@ code snippets, file paths, and before/after comparisons.
 **Do this immediately after plan approval, before writing any code.**
 
 ```bash
-gh issue edit ISSUE_NUMBER --repo better-ci/ci-panel --add-assignee @me
+gh issue edit ISSUE_NUMBER --repo pypto-tools/ci-panel --add-assignee @me
 ```
 
 Assigning yourself is the whole ownership signal here — there is no board to
@@ -148,7 +148,7 @@ Use the affected package as the scope: `panel`, `daemon`, `frontend`, `common`.
 /github-pr
 ```
 
-The PR must target **`better-ci/ci-panel` `master`** and reference the issue:
+The PR must target **`pypto-tools/ci-panel` `master`** and reference the issue:
 "Fixes #ISSUE_NUMBER".
 
 ## Common Issue Types
@@ -163,7 +163,7 @@ The PR must target **`better-ci/ci-panel` `master`** and reference the issue:
 ## Checklist
 
 - [ ] gh CLI authenticated
-- [ ] Issue fetched from `better-ci/ci-panel` and understood
+- [ ] Issue fetched from `pypto-tools/ci-panel` and understood
 - [ ] Checked for existing assignees
 - [ ] Issue branch created from latest `origin/master`
 - [ ] Plan created and approved

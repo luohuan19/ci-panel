@@ -80,7 +80,7 @@ export function useHeaderMenus() {
   };
 
   const onClickIcon = () => {
-    window.open("https://github.com/better-ci/ci-panel", "_blank");
+    window.open("https://github.com/pypto-tools/ci-panel", "_blank");
   };
 
   const menus = computed(() => {

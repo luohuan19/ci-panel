@@ -65,6 +65,6 @@ files exist and no package defines a `test` script. The real gate is
 `lint` nor a `type-check` script — their type errors surface only via `build`.
 Never invent a test command or report "tests passed".
 
-**There is one remote.** `origin` is `better-ci/ci-panel` (public, default branch
+**There is one remote.** `origin` is `pypto-tools/ci-panel` (public, default branch
 `master`) — all PRs and issues go here. Because the repo is public, treat
 internal IPs, hostnames, and private repo names as secrets.

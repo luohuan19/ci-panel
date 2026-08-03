@@ -20,10 +20,10 @@ never pauses to ask which issues to address.
 ## Prerequisites
 
 - **`gh` CLI lives at `~/.local/bin/gh`**, not on the default PATH.
-- **`gh` is authenticated** with write access to `better-ci/ci-panel`. This skill
+- **`gh` is authenticated** with write access to `pypto-tools/ci-panel`. This skill
   is fully autonomous and cannot prompt mid-loop — still verify `gh auth status`
   succeeds *before* starting, and stop immediately if it does not.
-- **PR target is always `origin` = `better-ci/ci-panel`, base branch `master`.**
+- **PR target is always `origin` = `pypto-tools/ci-panel`, base branch `master`.**
 - **No GitHub Project board, by design.** Never pass `--project` or add
   project-field steps.
 - **No test suite exists.** Verification = the `verify` skill (type-check, lint,
@@ -49,7 +49,7 @@ never pauses to ask which issues to address.
 
 Follow `github-pr` Steps 1–6 (prepare branch & commit, check existing PR, fetch
 `origin`, rebase onto `origin/master`, push with `--force-with-lease`, create PR
-with `--repo better-ci/ci-panel --base master`), **with one override:**
+with `--repo pypto-tools/ci-panel --base master`), **with one override:**
 
 - `github-pr` Step 2 says "if a PR already exists, display it and exit."
   Here, **do not exit** — record the PR number and proceed to Phase B.
@@ -154,7 +154,7 @@ Report to the user:
 | --------- | ------ |
 | `gh` unauthenticated | Stop before Phase A — the loop cannot prompt mid-run |
 | PR already exists (Phase A) | Reuse it — do not exit, proceed to Phase B |
-| PR base resolved to the wrong repo | Abort; re-run with `--repo better-ci/ci-panel --base master` |
+| PR base resolved to the wrong repo | Abort; re-run with `--repo pypto-tools/ci-panel --base master` |
 | Same failure 2× in a row | Mark stuck, stop retrying it |
 | Iteration cap (8) hit | Stop, report remaining issues |
 | Zero-change iteration with issues left | Stop — nothing more to automate |
@@ -164,7 +164,7 @@ Report to the user:
 ## Checklist
 
 - [ ] `gh` authenticated before starting
-- [ ] PR created or located on `better-ci/ci-panel` base `master`
+- [ ] PR created or located on `pypto-tools/ci-panel` base `master`
 - [ ] Issues classified CI / A / B / C / D each iteration
 - [ ] CI + Class A auto-fixed; Class D left alone
 - [ ] Fixes committed via `/git-commit` and pushed to `origin`

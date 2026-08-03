@@ -27,7 +27,7 @@ _self="${BASH_SOURCE[0]:-}"
 if [ -z "$_self" ] || [ ! -f "$_self" ]; then
   echo "错误: 本脚本需要同级的 lib/common.sh，没法用 'curl ... | bash' 的方式跑。" >&2
   echo "请下载完整包后再执行：" >&2
-  echo "  1) 到 https://github.com/better-ci/ci-panel/releases/latest 取 ci-panel-<版本>-linux.tar.gz" >&2
+  echo "  1) 到 https://github.com/pypto-tools/ci-panel/releases/latest 取 ci-panel-<版本>-linux.tar.gz" >&2
   echo "  2) tar xzf ci-panel-<版本>-linux.tar.gz && cd ci-panel-<版本>" >&2
   echo "  3) sudo bash install.sh" >&2
   exit 1

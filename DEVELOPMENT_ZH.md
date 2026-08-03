@@ -20,7 +20,7 @@
 #### 1. 下载源代码
 
 ```bash
-git clone https://github.com/better-ci/ci-panel.git
+git clone https://github.com/pypto-tools/ci-panel.git
 cd ci-panel
 ```
 
