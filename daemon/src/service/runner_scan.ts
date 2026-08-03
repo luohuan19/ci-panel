@@ -482,6 +482,7 @@ export interface RegisterResult {
   ok: boolean;
   markerId?: string;
   instanceUuid?: string; // 句柄实例 uuid（文件管理/配置/详情页要用）
+  repo?: string; // 从 .runner 读出的仓库 slug，面板据此自动纳管仓库
   error?: string;
 }
 
@@ -500,22 +501,26 @@ export function registerRunners(
       if (!fs.existsSync(path.join(dir, ".runner")))
         throw new Error("不是 runner 目录（缺 .runner）");
       const marker = writeMarker(dir, { source, repo: it.repo, group: it.group });
-      // 从 .runner 读 agentName / repo，作句柄实例的昵称与分组标签
+      // 从 .runner 读 agentName / repo，作句柄实例的昵称与分组标签。
+      // repo 以 .runner 为准、调用方传的只作兜底：面板拿这个返回值去纳管仓库，而
+      // 之后 managed_list 归堆用的也是 .runner 里的 slug（见 buildRunners）。两边同源
+      // 才能保证注册表的 key 对得上，否则仓库列表里照样显示"未纳管"。
       let agentName = path.basename(dir);
-      let repo = it.repo || marker.repo || "";
+      let repo = "";
       try {
         const raw = fs.readFileSync(path.join(dir, ".runner"), "utf8").replace(/^﻿/, "");
         const j = JSON.parse(raw);
         if (j.agentName) agentName = String(j.agentName);
-        if (!repo && j.gitHubUrl) repo = repoSlug(String(j.gitHubUrl));
+        if (j.gitHubUrl) repo = repoSlug(String(j.gitHubUrl));
       } catch {
         /* .runner 解析失败也不挡纳管，用目录名兜底 */
       }
+      if (!repo) repo = it.repo || marker.repo || "";
       const instanceUuid = ensureHandleInstance(dir, repo, agentName);
       logger.info(
         `[runner-register] 纳管 ${dir} (id=${marker.id}, source=${marker.source}, 实例=${instanceUuid})`
       );
-      return { dir, ok: true, markerId: marker.id, instanceUuid };
+      return { dir, ok: true, markerId: marker.id, instanceUuid, repo };
     } catch (err: any) {
       return { dir, ok: false, error: err?.message || String(err) };
     }

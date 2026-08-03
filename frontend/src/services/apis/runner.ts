@@ -274,16 +274,18 @@ export interface RegisterRunnerResult {
   ok: boolean;
   markerId?: string;
   instanceUuid?: string; // 句柄实例 uuid
+  repo?: string; // daemon 从 .runner 读出的仓库 slug
   error?: string;
 }
 
 // 纳管选中的 runner（只写标记，不建实例）。source 缺省为 import
+// registeredRepos：本次顺带纳管进仓库注册表的仓库（此前不在表里的那些）
 export const registerRunners = useDefineApi<
   {
     params: { daemonId: string };
     data: { items: RegisterRunnerItem[]; source?: "provision" | "import" };
   },
-  { results: RegisterRunnerResult[] }
+  { results: RegisterRunnerResult[]; registeredRepos?: string[] }
 >({
   url: "/api/runner/register",
   method: "POST"

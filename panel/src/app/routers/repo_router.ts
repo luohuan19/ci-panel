@@ -83,7 +83,7 @@ router.delete(
   validator({ query: { slug: String } }),
   async (ctx) => {
     try {
-      RepoService.remove(String(ctx.query.slug));
+      await RepoService.remove(String(ctx.query.slug));
       ctx.body = true;
     } catch (err) {
       ctx.body = err;

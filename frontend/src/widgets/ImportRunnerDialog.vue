@@ -112,11 +112,14 @@ async function submit() {
     const results = state.value?.results || [];
     const ok = results.filter((r) => r.ok).length;
     const fail = results.filter((r) => !r.ok);
+    // 面板顺带把这些 runner 的仓库登记进了注册表，说一声，免得用户以为哪里多了东西
+    const repos = state.value?.registeredRepos || [];
+    const repoNote = repos.length ? `，并纳管仓库 ${repos.join("、")}` : "";
     if (ok) emit("imported");
     if (fail.length) {
       message.warning(`纳管 ${ok} 个，失败 ${fail.length} 个：${fail.map((f) => f.error).join("；")}`);
     } else {
-      message.success(`已纳管 ${ok} 个 runner`);
+      message.success(`已纳管 ${ok} 个 runner${repoNote}`);
     }
     await doScan(); // 刷新，把刚纳管的置灰
   } catch (err: any) {
