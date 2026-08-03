@@ -355,6 +355,20 @@ export function ensureHandleInstance(dir: string, repo: string, agentName: strin
           logger.warn(`[runner] 收启动命令失败 ${dir}: ${err?.message || err}`);
         }
       }
+      // 仓库标签只在新建实例时设过，复用这条路径从不更新。于是重新纳管、改分组，
+      // 或者当初建实例时 .runner 还读不出仓库的那些，标签会一直停在旧值/空值。
+      // repo 为空时不动（读不出来不代表原来的就是错的）。
+      if (repo && inst.config.tag?.[0] !== repo) {
+        try {
+          inst.parameters({ tag: [repo] }, true);
+          logger.info(`[runner] 对齐句柄实例的仓库标签 ${inst.instanceUuid} → ${repo}`);
+        } catch (err: unknown) {
+          // 刻意不往上抛：此刻 .cipanel 已经写好，runner 确实被纳管了，为一个标签把整条
+          // 纳管报成失败反而更误导。标签只用于实例列表的分组显示，仓库注册表认的是
+          // RegisterResult.repo、归堆认的是 .runner，都不读它。记 error 便于事后发现。
+          logger.error(`[runner] 对齐仓库标签失败（标签仍是旧值）${dir}: ${errText(err)}`);
+        }
+      }
       return inst.instanceUuid;
     }
   }

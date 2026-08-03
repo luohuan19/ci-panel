@@ -9,20 +9,27 @@ import RemoteServiceSubsystem from "../service/remote_service";
 import RepoService from "../service/repo_service";
 import { parseRepoSlug } from "../entity/repo";
 import { logger } from "../service/log";
+import { $t } from "../i18n";
+import { errMessage } from "../utils/error";
+import type { RegisterRunnerResult } from "mcsmanager-common";
 
-// 创建 runner 时自动把其仓库纳管进注册表（若还没有）。不带 PAT——回退全局 token，用户之后可补填。
-// 用面板给某仓库建 runner，显然是要管它，仓库就该自动登记，免得列表里显示误导性的"未纳管"。
-function ensureRepoRegistered(repoUrl: string) {
+// 创建/导入 runner 时自动把其仓库纳管进注册表（若还没有）。不带 PAT——回退全局 token，用户之后可补填。
+// 用面板给某仓库建 runner、或把它的 runner 导进来，显然是要管它，仓库就该自动登记，
+// 免得列表里显示误导性的"未纳管"。返回 true 表示这次新增了注册表条目。
+function ensureRepoRegistered(repoUrl: string, remark?: string): boolean {
+  const note = remark || $t("TXT_CODE_REPO_AUTO_REGISTER_PROVISION");
   try {
     const slug = parseRepoSlug(String(repoUrl || ""));
     if (slug && !RepoService.has(slug)) {
-      RepoService.add(slug, "", "创建 runner 时自动纳管");
-      logger.info(`创建 runner 时自动纳管仓库：${slug}`);
+      RepoService.add(slug, "", note);
+      logger.info(`自动纳管仓库：${slug}（${note}）`);
+      return true;
     }
-  } catch (err: any) {
-    // 自动纳管失败不该阻断建 runner
-    logger.warn(`自动纳管仓库失败：${err?.message || err}`);
+  } catch (err: unknown) {
+    // 自动纳管失败不该阻断建 runner / 导入
+    logger.warn(`自动纳管仓库失败：${errMessage(err)}`);
   }
+  return false;
 }
 
 const router = new Router({ prefix: "/runner" });
@@ -340,7 +347,17 @@ router.post(
         ctx.request.body,
         30000
       );
-      ctx.body = result;
+      // 导入即纳管其仓库，和 provision 路径一致。用 daemon 回传的 repo 而非请求体里的：
+      // 那是 daemon 从 .runner 读出来的，与之后 managed_list 归堆用的 slug 同源，
+      // 否则注册表的 key 可能对不上，仓库列表里照样显示"未纳管"。
+      const slugs = new Set<string>();
+      for (const r of (result as { results?: RegisterRunnerResult[] })?.results || []) {
+        if (r?.ok && r.repo) slugs.add(r.repo);
+      }
+      const registeredRepos = Array.from(slugs).filter((slug) =>
+        ensureRepoRegistered(slug, $t("TXT_CODE_REPO_AUTO_REGISTER_IMPORT"))
+      );
+      ctx.body = { ...(result as object), registeredRepos };
     } catch (err) {
       ctx.body = err;
     }

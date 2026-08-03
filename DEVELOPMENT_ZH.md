@@ -71,6 +71,32 @@ wget https://github.com/MCSManager/Zip-Tools/releases/download/latest/7z_linux_x
 npm run dev
 ```
 
+`npm run dev` 用 `concurrently` 同时跑三个包的 `nodemon`，适合前台开发。
+
+如果你要的是一个后台常驻的开发实例（改后端要重新构建、想按端口访问、机器可能同时是
+CI 节点），用一键脚本：
+
+```bash
+bash dev.sh              # 预检 → 依赖 → 按需构建 → 启动 → 健康检查 → 打印后续操作
+bash dev.sh --rebuild    # 强制全量重新构建
+bash dev.sh --no-build   # 只把服务拉起来
+bash stop-cipanel.sh     # 停止
+```
+
+它和 `npm run dev` 的关键差别：
+
+- 缺失的 `node_modules` 与 `daemon/lib` 二进制依赖会自动补齐（二进制按
+  `lib-checksums.txt` 校验，不符即删）
+- `panel/` 与 `daemon/` 跑的是 webpack 产物 `production/app.js`，脚本会按源码改动
+  自动重新构建并**只重启被重建的那个服务**（前端交给 vite 热重载）
+- **把开发实例关进 `.run/dev-runner-root` 这个独立扫描根**。这台机器同时是受管
+  runner 节点时，两个 daemon 共用一个 runner 根意味着开发面板上误点一次停止/删除，
+  动的就是生产 runner。日志统一在 `.run/*.log`
+
+只要前端跑在 vite dev server 上（`npm run dev` 或 `bash dev.sh`），浏览器标签页标题都会
+带上 `[dev] ` 前缀，免得和生产面板的标签页点混。生产构建（`vite build`）不带前缀，
+也不需要任何配置 —— 判据是 `import.meta.env.DEV`，见 `frontend/src/tools/devTitle.ts`。
+
 <br />
 
 ### 国际化你的代码

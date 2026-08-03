@@ -1340,5 +1340,12 @@
   "TXT_CODE_9d2e6d5e": "设备写入速率限制 (BPS)",
   "TXT_CODE_2b2ff3ff": "限制容器对特定块设备的写入速率。格式如: /dev/sda:5MB。多个设备用逗号分隔。",
   "TXT_CODE_f0dc9eca": "例如: /dev/sda:5MB",
-  "TXT_CODE_ungrouped": "未分组"
+  "TXT_CODE_ungrouped": "未分组",
+  "TXT_CODE_REPO_AUTO_REGISTER_PROVISION": "创建 runner 时自动纳管",
+  "TXT_CODE_REPO_AUTO_REGISTER_IMPORT": "导入 runner 时自动纳管",
+  "TXT_CODE_REPO_AUTO_REGISTER_BACKFILL": "已有纳管 runner，自动补登记",
+  "TXT_CODE_REPO_REMOVE_HAS_RUNNERS": "仓库 {{slug}} 名下还有 {{count}} 个已纳管 runner，无法取消纳管。请先取消这些 runner 的纳管，再删除仓库。",
+  "TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE": "无法取消纳管仓库 {{slug}}：节点 {{nodes}} 连不上，它们上面的 runner 数不进来。等节点恢复后重试。",
+  "TXT_CODE_RUNNER_IMPORT_OK": "已纳管 {count} 个 runner",
+  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "已纳管 {count} 个 runner，并纳管仓库 {repos}"
 }

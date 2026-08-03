@@ -1340,5 +1340,12 @@
   "TXT_CODE_9d2e6d5e": "Device Write Rate Limit (BPS)",
   "TXT_CODE_2b2ff3ff": "Limit the write rate of specific block devices for the container. Format: /dev/sda:5MB. Separate multiple devices with commas.",
   "TXT_CODE_f0dc9eca": "Example: /dev/sda:5MB",
-  "TXT_CODE_ungrouped": "Ungrouped"
+  "TXT_CODE_ungrouped": "Ungrouped",
+  "TXT_CODE_REPO_AUTO_REGISTER_PROVISION": "Auto-registered when a runner was created",
+  "TXT_CODE_REPO_AUTO_REGISTER_IMPORT": "Auto-registered when a runner was imported",
+  "TXT_CODE_REPO_AUTO_REGISTER_BACKFILL": "Auto-registered: already has managed runners",
+  "TXT_CODE_REPO_REMOVE_HAS_RUNNERS": "Repository {{slug}} still has {{count}} managed runner(s) and cannot be unregistered. Unregister those runners first, then remove the repository.",
+  "TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE": "Cannot unregister repository {{slug}}: node(s) {{nodes}} are unreachable, so their runners cannot be counted. Retry once every node is back online.",
+  "TXT_CODE_RUNNER_IMPORT_OK": "Imported {count} runner(s)",
+  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "Imported {count} runner(s), and registered repository {repos}"
 }

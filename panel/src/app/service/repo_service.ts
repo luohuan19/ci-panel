@@ -19,6 +19,8 @@ import {
 import { logger } from "./log";
 import RemoteRequest from "./remote_command";
 import RemoteServiceSubsystem from "./remote_service";
+import { $t } from "../i18n";
+import { errMessage } from "../utils/error";
 
 const CATEGORY = "RepoConfig";
 
@@ -155,10 +157,32 @@ class RepoService {
     return config;
   }
 
-  // 只摘掉纳管关系，不动任何 runner 实例——删仓库不该悄悄删机器上的东西
-  public remove(slug: string) {
+  // 只摘掉纳管关系，不动任何 runner 实例——删仓库不该悄悄删机器上的东西。
+  //
+  // 名下还有已纳管 runner 时直接拒绝：backfillRegistry 确立的不变量是「有已纳管 runner
+  // 的仓库必然在注册表里」，此时删掉的话，下一次 /api/repo/list 会立刻把它补回来 ——
+  // 删除看似成功、刷新一下又回来了，比明确报错难排查得多。要真的摘掉，先取消这些 runner
+  // 的纳管（删 .cipanel），仓库自然就没有归属它的 runner 了。
+  public async remove(slug: string) {
     if (!isValidSlug(slug)) throw new Error(`非法的仓库标识：${slug}`);
     if (!this.repos.has(slug)) throw new Error(`仓库 ${slug} 未纳管`);
+    const index = await this.collectRunners();
+    // 有节点扫不到就不能判断——它上面可能正有该仓库的 runner。这时删掉，等节点恢复后
+    // backfillRegistry 又会把仓库补回来，就成了"删完过一会自己回来了"。
+    if (index.failedNodes.length > 0) {
+      throw new Error(
+        $t("TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE", {
+          slug,
+          nodes: index.failedNodes.map((n) => n.nodeName).join("、")
+        })
+      );
+    }
+    const runners = index.bySlug.get(slug) || [];
+    if (runners.length > 0) {
+      throw new Error(
+        $t("TXT_CODE_REPO_REMOVE_HAS_RUNNERS", { slug, count: runners.length })
+      );
+    }
     StorageSubsystem.delete(CATEGORY, slugToFileId(slug));
     this.repos.delete(slug);
     logger.info(`仓库取消纳管：${slug}`);
@@ -197,9 +221,29 @@ class RepoService {
     return { bySlug, untagged, failedNodes };
   }
 
+  // 自愈：有已纳管 runner 的仓库必然是被管理的仓库，补登记历史遗漏的那些。
+  //
+  // 导入 / provision 现在都会在纳管 runner 时顺手登记仓库（见 runner_router 的
+  // ensureRepoRegistered），但更早导入的 runner 只写了 .cipanel、没碰注册表，
+  // 仓库列表里会一直挂着误导性的"未纳管"，而 UI 上又没有补登记的入口。
+  // 幂等：has() 挡住重复写盘，每个仓库只落一次。
+  // 非法 slug（.runner 坏了解析出怪字符串）跳过，仍会留在 unregistered 里，别写进文件名。
+  private backfillRegistry(slugs: Iterable<string>) {
+    for (const slug of slugs) {
+      if (!isValidSlug(slug) || this.repos.has(slug)) continue;
+      try {
+        this.add(slug, "", $t("TXT_CODE_REPO_AUTO_REGISTER_BACKFILL"));
+      } catch (err: unknown) {
+        // 补登记失败不该让仓库列表整个挂掉
+        logger.warn(`仓库自动补登记失败 (${slug}): ${errMessage(err)}`);
+      }
+    }
+  }
+
   // 注册表 + 实时 runner 分布。token 在这里就脱敏，绝不出 service。
   public async listWithRunners() {
     const index = await this.collectRunners();
+    this.backfillRegistry(index.bySlug.keys());
 
     const summarize = (runners: RepoRunnerRef[]) => ({
       runners,
@@ -221,7 +265,8 @@ class RepoService {
       ...summarize(index.bySlug.get(config.slug) || [])
     }));
 
-    // 磁盘上有 runner、但注册表里没有的仓库。前端可以提示一键纳管。
+    // 磁盘上有 runner、但注册表里没有的仓库。backfillRegistry 之后这里通常是空的，
+    // 只会剩下 slug 非法（.runner 坏了）而无法落盘的那些。
     const unregistered = Array.from(index.bySlug.entries())
       .filter(([slug]) => !this.repos.has(slug))
       .map(([slug, runners]) => ({

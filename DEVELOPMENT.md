@@ -71,6 +71,35 @@ wget https://github.com/MCSManager/Zip-Tools/releases/download/latest/7z_linux_x
 npm run dev
 ```
 
+`npm run dev` runs all three packages under `concurrently` in the foreground.
+
+For a long-lived background dev instance — where the backend has to be rebuilt after
+every edit, you want to reach it over a port, and the machine may also be a CI node —
+use the one-shot script instead:
+
+```bash
+bash dev.sh              # preflight → deps → build if stale → start → health check → next steps
+bash dev.sh --rebuild    # force a full rebuild
+bash dev.sh --no-build   # just start the services
+bash stop-cipanel.sh     # stop everything
+```
+
+How it differs from `npm run dev`:
+
+- Missing `node_modules` and `daemon/lib` binaries are installed automatically
+  (binaries are verified against `lib-checksums.txt` and deleted on mismatch)
+- `panel/` and `daemon/` run the webpack bundle `production/app.js`, so the script
+  rebuilds them when their sources change and **restarts only what it rebuilt**
+  (the frontend is left to vite's HMR)
+- **It confines the dev instance to its own scan root**, `.run/dev-runner-root`. On a
+  host that is also a managed runner node, sharing one runner root between two daemons
+  means a misclick in the dev panel stops a runner serving CI. Logs land in `.run/*.log`
+
+Whenever the frontend runs under the vite dev server (`npm run dev` or `bash dev.sh`),
+the browser tab title is prefixed with `[dev] ` so a dev tab is never mistaken for a
+production one. Production builds (`vite build`) carry no prefix and need no
+configuration — the check is `import.meta.env.DEV`, see `frontend/src/tools/devTitle.ts`.
+
 <br />
 
 ### Internationalizing Your Code

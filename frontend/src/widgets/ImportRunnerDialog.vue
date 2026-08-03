@@ -10,6 +10,7 @@ import { message } from "ant-design-vue";
 import { WarningOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import { scanRunners, registerRunners, type ScannedRunner } from "@/services/apis/runner";
+import { t } from "@/lang/i18n";
 import SelectDirDialog from "./SelectDirDialog.vue";
 
 const emit = defineEmits<{ (e: "imported"): void }>();
@@ -112,11 +113,17 @@ async function submit() {
     const results = state.value?.results || [];
     const ok = results.filter((r) => r.ok).length;
     const fail = results.filter((r) => !r.ok);
+    // 面板顺带把这些 runner 的仓库登记进了注册表，说一声，免得用户以为哪里多了东西
+    const repos = state.value?.registeredRepos || [];
     if (ok) emit("imported");
     if (fail.length) {
       message.warning(`纳管 ${ok} 个，失败 ${fail.length} 个：${fail.map((f) => f.error).join("；")}`);
     } else {
-      message.success(`已纳管 ${ok} 个 runner`);
+      message.success(
+        repos.length
+          ? t("TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS", { count: ok, repos: repos.join("、") })
+          : t("TXT_CODE_RUNNER_IMPORT_OK", { count: ok })
+      );
     }
     await doScan(); // 刷新，把刚纳管的置灰
   } catch (err: any) {

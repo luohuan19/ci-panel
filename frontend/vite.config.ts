@@ -5,7 +5,19 @@ import vueJsx from "@vitejs/plugin-vue-jsx";
 import { visualizer } from "rollup-plugin-visualizer";
 import { AntDesignVueResolver } from "unplugin-vue-components/resolvers";
 import Components from "unplugin-vue-components/vite";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+// 给开发实例的标签页标题加 [dev]，和生产面板区分开（见 src/tools/devTitle.ts 的说明）。
+// 这里改的是应用挂载之前的静态标题：挂载后 services/layout.ts 会用面板设置覆盖它，
+// 那边加了同样的前缀。两处都要 —— 登录/安装页面和接口失败时压根走不到覆盖那一步。
+// apply: "serve" 保证只在 dev server 生效，vite build 的产物不受影响。
+function devTitlePlugin(): Plugin {
+  return {
+    name: "cip-dev-title",
+    apply: "serve",
+    transformIndexHtml: (html) => html.replace(/<title>(?!\[dev\])/, "<title>[dev] ")
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -77,6 +89,7 @@ export default defineConfig({
   },
 
   plugins: [
+    devTitlePlugin(),
     vue(),
     vueJsx(),
     Components({
