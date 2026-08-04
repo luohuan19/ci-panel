@@ -788,8 +788,12 @@ export async function deleteRunner(
 // (systemctl 接受多个单元名)。glob 排不掉空白，sudo < 1.9.10 也没有锚定正则。所以校验放进
 // root 拥有的助手脚本里，sudoers 只放行助手本身。
 
-// satisfies 把它和 common 里的 SystemdAction 钉在一起：协议加了动作而这里忘了放行，编译期就报
-const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const satisfies readonly SystemdAction[];
+// 用 Record<SystemdAction, true> 而不是数组 + satisfies：数组只校验每个元素合法，协议里新增一个
+// 动作它照样编译得过，这里就会静默地不放行。记录型要求每个成员都显式列出，漏一个当场报错。
+const ALLOWED_ACTIONS = { start: true, stop: true, restart: true } as const satisfies Record<
+  SystemdAction,
+  true
+>;
 
 // 助手已经把 job 交给 systemd 之后，最多再等多久确认它跑到位。等不到不算失败——如实回
 // settled:false，让调用方去看状态轮询，绝不把请求挂在这里（见下方 controlService 的注释）。
@@ -819,7 +823,9 @@ export async function controlService(
   service: string,
   action: SystemdAction
 ): Promise<ServiceControlResult> {
-  if (!ALLOWED_ACTIONS.includes(action)) throw new Error(`不支持的操作: ${action}`);
+  // hasOwnProperty 而不是 in：action 来自请求体，别让 "toString" 这类原型链上的键蒙混过关
+  if (!Object.prototype.hasOwnProperty.call(ALLOWED_ACTIONS, action))
+    throw new Error(`不支持的操作: ${action}`);
   // 助手会再校验一次（那次才是有效的边界）；这里挡住明显非法值，省一次 sudo 往返
   if (!SERVICE_RE.test(service)) throw new Error(`非法的服务名: ${service}`);
 
