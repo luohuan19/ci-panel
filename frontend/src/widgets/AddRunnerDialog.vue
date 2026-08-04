@@ -6,6 +6,7 @@ import { ref, reactive, computed, watch } from "vue";
 import { message } from "ant-design-vue";
 import { PlusOutlined, DeleteOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { onUnmounted } from "vue";
+import { t } from "@/lang/i18n";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import SelectDirDialog from "./SelectDirDialog.vue";
 import {
@@ -291,8 +292,10 @@ const pollBatch = (batchId: string) => {
       // 断开的成因（节点掉线 / daemon 重启把内存里的批次丢了）在前端分不出来，
       // 所以只陈述事实、把两条出路都给出去，不去断言"后台仍在运行"
       message.error(
-        `进度查询连续失败 ${POLL_MAX_FAILS} 次：${err?.message || err}。节点可能掉线或重启过——` +
-          `可点"重新连接"续看进度；若批次已丢失，用"扫描并收集"把已装好的 runner 纳入看护`
+        t("TXT_CODE_RUNNER_BATCH_PROGRESS_LOST", {
+          count: POLL_MAX_FAILS,
+          message: String(err?.message || err)
+        })
       );
     }
   };
@@ -706,18 +709,20 @@ const statusColor = (s: string) =>
         </template>
         <!-- 退避重试期间窗口是锁死的，不出声用户只会对着转圈干等，如实报出重试进度 -->
         <span v-if="batchRunning && pollFails" class="fail" style="margin-left: auto">
-          连接不稳定，重试中 {{ pollFails }}/{{ POLL_MAX_FAILS }}
+          {{ t("TXT_CODE_RUNNER_BATCH_RETRYING", { count: pollFails, max: POLL_MAX_FAILS }) }}
         </span>
         <a-spin v-if="batchRunning" size="small" :style="pollFails ? {} : { marginLeft: 'auto' }" />
-        <span v-else-if="batchDone" class="ok" style="margin-left: auto">全部结束</span>
+        <span v-else-if="batchDone" class="ok" style="margin-left: auto">
+          {{ t("TXT_CODE_RUNNER_BATCH_ALL_DONE") }}
+        </span>
         <!-- 只有 batchDone 才配叫"全部结束"；通道断了要如实说，并给出两条出路 -->
         <span v-else-if="batchLost" class="fail" style="margin-left: auto">
-          进度已断开
+          {{ t("TXT_CODE_RUNNER_BATCH_PROGRESS_DISCONNECTED") }}
           <a-button type="link" size="small" style="padding: 0" @click="resumePolling">
-            重新连接
+            {{ t("TXT_CODE_RUNNER_BATCH_RECONNECT") }}
           </a-button>
           <a-button type="link" size="small" :loading="collecting" @click="collect">
-            扫描并收集
+            {{ t("TXT_CODE_RUNNER_SCAN_COLLECT") }}
           </a-button>
         </span>
       </div>
@@ -753,14 +758,16 @@ const statusColor = (s: string) =>
       <div v-if="batchDone && batchStat.failCount > 0" class="batch-retry">
         <a-input-password
           v-model:value="retryToken"
-          placeholder="重新填注册 token 后重试失败项"
+          :placeholder="t('TXT_CODE_RUNNER_BATCH_RETRY_TOKEN_PLACEHOLDER')"
           style="flex: 1"
           @press-enter="retryFailed"
         />
         <a-button type="primary" :loading="retrying" @click="retryFailed">
-          重试失败项（{{ batchStat.failCount }}）
+          {{ t("TXT_CODE_RUNNER_BATCH_RETRY_FAILED", { count: batchStat.failCount }) }}
         </a-button>
-        <a-button :loading="collecting" @click="collect">扫描并收集</a-button>
+        <a-button :loading="collecting" @click="collect">
+          {{ t("TXT_CODE_RUNNER_SCAN_COLLECT") }}
+        </a-button>
       </div>
     </div>
 
@@ -882,11 +889,10 @@ const statusColor = (s: string) =>
         >
           {{ checkText }}
         </span>
-        <a-tooltip
-          title="扫描基目录，把已注册(有 .runner)但面板还没建实例的 runner 纳入看护"
-          style="margin-left: auto"
-        >
-          <a-button size="small" :loading="collecting" @click="collect">扫描并收集</a-button>
+        <a-tooltip :title="t('TXT_CODE_RUNNER_SCAN_COLLECT_TIP')" style="margin-left: auto">
+          <a-button size="small" :loading="collecting" @click="collect">
+            {{ t("TXT_CODE_RUNNER_SCAN_COLLECT") }}
+          </a-button>
         </a-tooltip>
       </div>
 

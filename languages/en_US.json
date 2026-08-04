@@ -1347,5 +1347,14 @@
   "TXT_CODE_REPO_REMOVE_HAS_RUNNERS": "Repository {{slug}} still has {{count}} managed runner(s) and cannot be unregistered. Unregister those runners first, then remove the repository.",
   "TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE": "Cannot unregister repository {{slug}}: node(s) {{nodes}} are unreachable, so their runners cannot be counted. Retry once every node is back online.",
   "TXT_CODE_RUNNER_IMPORT_OK": "Imported {count} runner(s)",
-  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "Imported {count} runner(s), and registered repository {repos}"
+  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "Imported {count} runner(s), and registered repository {repos}",
+  "TXT_CODE_RUNNER_BATCH_RETRYING": "Connection unstable, retrying {count}/{max}",
+  "TXT_CODE_RUNNER_BATCH_PROGRESS_DISCONNECTED": "Progress disconnected",
+  "TXT_CODE_RUNNER_BATCH_RECONNECT": "Reconnect",
+  "TXT_CODE_RUNNER_SCAN_COLLECT": "Scan and collect",
+  "TXT_CODE_RUNNER_BATCH_PROGRESS_LOST": "Progress query failed {count} times in a row: {message}. The node may be offline or have restarted — click Reconnect to keep watching progress, or use Scan and collect to adopt runners that finished installing",
+  "TXT_CODE_RUNNER_BATCH_ALL_DONE": "All finished",
+  "TXT_CODE_RUNNER_BATCH_RETRY_FAILED": "Retry failed items ({count})",
+  "TXT_CODE_RUNNER_BATCH_RETRY_TOKEN_PLACEHOLDER": "Re-enter the registration token to retry the failed items",
+  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "Scan the base directory and adopt runners that are registered (have .runner) but have no panel instance yet"
 }
