@@ -12,6 +12,7 @@
 // 只在本进程内有效——这些入口都在同一个 daemon 里；下面「查表 + 占位」之间没有 await，
 // Node 单线程下不会被别的请求插进来，所以那一段是原子的。锁是内存态，daemon 重启即清空，
 // 不会残留死锁。
+import fs from "fs-extra";
 import path from "path";
 
 export type RunnerOp = "delete" | "provision" | "service" | "env";
@@ -27,10 +28,28 @@ const OP_LABEL: Record<RunnerOp, string> = {
 // （面板转发的就只有它），而 provision 只拿得到目录（单元名要等特权助手装完才定）。
 // 删除两边都占，才能同时挡住这两条路。前缀也保证目录名与单元名不会互相误撞。
 //
-// 用 resolve 而不是 normalize：normalize 保留结尾的分隔符（`/a/b/` 原样返回），于是同一个
-// runner 传 `/a/b/` 和 `/a/b` 会算出两个 key，互斥当场失效——而 dir 是调用方随便给的字符串，
-// deleteRunner 的存在性检查与 assertUnderRoots 都照收带结尾斜杠的写法。
-export const dirKey = (dir: string): string => `dir:${path.resolve(dir)}`;
+// 目录 key 必须是「同一个 runner 只有一种写法」。两层归一：
+//   1. resolve 而不是 normalize —— normalize 保留结尾分隔符（`/a/b/` 原样返回），于是同一个
+//      runner 传 `/a/b/` 和 `/a/b` 会算出两个 key，互斥当场失效。而 dir 是调用方随便给的
+//      字符串，deleteRunner 的存在性检查与 assertUnderRoots 都照收带结尾斜杠的写法。
+//   2. 再取 realpath —— 符号链接同样能让一个 runner 有两个路径（`<root>/alias` → `<root>/r1`），
+//      两边各算各的 key 就等于没锁。assertUnderRoots 里比较边界时也是取 realpath，同一个理由。
+// realpath 对不存在的叶子会整条路径失败（provision 的目标目录尚未创建就是这种情况）。这时
+// 不能直接退回 resolve：只要有哪一层祖先是符号链接（`/data` → `/mnt/data` 这种），删除那侧
+// 目录存在、走 realpath，置备这侧走 resolve，同一个 runner 就又算出两个 key。所以先把父目录
+// 归一、再拼回叶子名，让 key 与「目录此刻在不在」无关。父目录也不存在才退回 resolve。
+export const dirKey = (dir: string): string => {
+  const resolved = path.resolve(dir);
+  try {
+    return `dir:${fs.realpathSync(resolved)}`;
+  } catch {
+    try {
+      return `dir:${path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved))}`;
+    } catch {
+      return `dir:${resolved}`;
+    }
+  }
+};
 export const serviceKey = (service: string): string => `svc:${service}`;
 
 const holders = new Map<string, RunnerOp>();

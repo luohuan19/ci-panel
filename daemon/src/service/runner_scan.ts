@@ -137,17 +137,19 @@ function isRunnerDir(dir: string) {
   return fs.existsSync(path.join(dir, ".runner"));
 }
 
-// 读 <dir>/.service 拿 systemd 单元名；文件不存在 / 读不动都当「没装服务」，返回空串。
+// 读 <dir>/.service 拿 systemd 单元名。文件不存在（ENOENT）= 没装服务，返回空串；
+// 其余失败（权限、EIO 等）一律抛出——绝不能把「读不到」也当成「没装」：deleteRunner 正是
+// 靠这个返回值决定要不要占单元名那把锁，静默返回空串会让它在毫无保护的情况下往下删，
+// 而这恰恰是本模块要防的那个竞态。不先 existsSync 再读，也顺手去掉了那对 TOCTOU。
 // .service 是「目录 → 单元」的权威映射，目录名不可信：simpler-ci/npu-runner-1 这个目录，
 // runner 在 GitHub 上其实叫 runner-dev4-7，服务名也是按后者拼的。
 // 导出给 deleteRunner（取锁要用）与 runner_env（它在这之上再加一道单元名合法性校验）复用。
 export function readServiceName(dir: string): string {
   try {
-    const p = path.join(dir, ".service");
-    if (!fs.existsSync(p)) return "";
-    return fs.readFileSync(p, "utf8").trim();
-  } catch {
-    return "";
+    return fs.readFileSync(path.join(dir, ".service"), "utf8").trim();
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return "";
+    throw err;
   }
 }
 
@@ -343,7 +345,15 @@ async function buildRunners(dirs: string[]): Promise<ScannedRunner[]> {
     } catch (err: any) {
       draft.broken = `.runner 解析失败: ${err.message}`;
     }
-    draft.service = readServiceName(dir);
+    // readServiceName 现在对非 ENOENT 的失败会抛（删除路径必须 fail closed），但扫描是列表
+    // 视图：一个 runner 的 .service 读不动，不该让整份列表都拿不到。记在这一条的 broken 上，
+    // 其余照常列出。service 留空意味着查不到 systemd 状态，所以必须说出来，不能静默。
+    try {
+      draft.service = readServiceName(dir);
+    } catch (err: unknown) {
+      const msg = `.service 读取失败: ${errText(err)}`;
+      draft.broken = draft.broken ? `${draft.broken}；${msg}` : msg;
+    }
     return draft;
   });
 
@@ -683,7 +693,14 @@ export async function deleteRunner(
 
   // 单元名必须在动手之前读：uninstall 成功后助手会把 <dir>/.service 一并删掉，之后就取不到了。
   // 内容不合法就不占这个 key —— controlService 本来也会拒掉这种单元名，占了只是白占。
-  const service = readServiceName(dir);
+  // 读不出来（权限、EIO）就拒绝删除：拿不到单元名就占不上那把锁，等于在毫无保护的情况下开删。
+  // 和上面几道守卫一样，把原始 fs 错误包一层，说清楚是「因为这个」才不删的。
+  let service: string;
+  try {
+    service = readServiceName(dir);
+  } catch (err: unknown) {
+    throw new Error(`读取 .service 失败，无法确定 systemd 单元名，拒绝删除: ${errText(err)}`);
+  }
   const keys = [dirKey(dir)];
   if (SERVICE_RE.test(service)) keys.push(serviceKey(service));
   // 删除期间挡住同一个 runner 的置备与启停（原因见 runner_lock 顶部）。目录与单元名两个 key

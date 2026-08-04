@@ -123,6 +123,9 @@ export class ProvisionError extends Error {
   }
 }
 
+// SIGTERM 之后再等多久上 SIGKILL。给的是「体面退出」的窗口，不是等它慢慢跑完。
+const KILL_ESCALATE_MS = 10000;
+
 function run(
   cmd: string,
   args: string[],
@@ -130,20 +133,59 @@ function run(
 ): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     let output = "";
-    const p = spawn(cmd, args, {
-      cwd: opts.cwd,
-      env: opts.env,
-      shell: false,
-      timeout: opts.timeout
-    });
+    let settled = false;
+    // 只有要求超时的调用才 detached。detached 把子进程放进独立进程组，超时时才能连它派生的
+    // 孙子进程一起收掉——config.sh 只是个 bash 壳，SIGTERM 发给它不会自动传给底下的
+    // Runner.Listener，只杀直接子进程的话 stdio 仍被孙子占着，close 永远不来。
+    // 不带超时的调用（tar、curl -sIL）保持原样，免得顺手改掉既有路径的进程语义。
+    const detached = Boolean(opts.timeout);
+    const p = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, shell: false, detached });
+
+    let softTimer: NodeJS.Timeout | undefined;
+    let hardTimer: NodeJS.Timeout | undefined;
+    const done = (code: number, extra = "") => {
+      if (settled) return; // error / close / 硬超时三条路都可能先到，只认第一个
+      settled = true;
+      if (softTimer) clearTimeout(softTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      // 硬超时那条路是在 close 之前就落定的：管道可能还开着（SIGKILL 打不到已被重新挂靠的
+      // 孙子进程时就会这样）。不摘监听器，output 会在 promise 落定后继续无上限地涨；
+      // 不 unref，这个 ChildProcess 还会一直吊着事件循环。
+      p.stdout?.removeAllListeners("data");
+      p.stderr?.removeAllListeners("data");
+      p.unref();
+      resolve({ code, output: output + extra });
+    };
+
+    // 整组发信号。进程组 id 就是组长(直接子进程)的 pid，取负号即可。组可能已经没了——
+    // 这时 ESRCH 是正常的，忽略。
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (!detached || p.pid === undefined) return;
+      try {
+        process.kill(-p.pid, signal);
+      } catch {
+        /* 组已退出 */
+      }
+    };
+
+    if (opts.timeout) {
+      softTimer = setTimeout(() => {
+        killGroup("SIGTERM");
+        // SIGTERM 可能被忽略。到点仍没 close 就 SIGKILL，并且无论如何都把 promise 落定：
+        // 这个函数跑在 runner 锁里，挂着不返回等于把该 runner 的所有操作锁到 daemon 重启。
+        hardTimer = setTimeout(() => {
+          killGroup("SIGKILL");
+          done(-1, `\n超时 ${opts.timeout}ms 未结束，已 SIGTERM→SIGKILL 终止整个进程组`);
+        }, KILL_ESCALATE_MS);
+      }, opts.timeout);
+    }
+
     p.stdout.on("data", (d) => (output += d.toString()));
     p.stderr.on("data", (d) => (output += d.toString()));
-    p.on("error", (e) => resolve({ code: -1, output: `${output}\n${e.message}` }));
+    p.on("error", (e) => done(-1, `\n${e.message}`));
     p.on("close", (code, signal) => {
-      // 超时是发信号杀掉、退出码为 null，不点破的话调用方只看到一个没有任何解释的失败
-      if (signal)
-        output += `\n进程被信号 ${signal} 终止${opts.timeout ? `（超时 ${opts.timeout}ms）` : ""}`;
-      resolve({ code: code ?? -1, output });
+      // 被信号杀掉时退出码是 null，不点破的话调用方只看到一个没有任何解释的失败
+      done(code ?? -1, signal ? `\n进程被信号 ${signal} 终止` : "");
     });
   });
 }
