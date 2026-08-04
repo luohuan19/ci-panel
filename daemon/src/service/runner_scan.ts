@@ -182,14 +182,26 @@ function collectRunnerDirs(dir: string, depth: number, out: string[], errors: Sc
 // 一次 systemctl show 查完所有单元，省得 30 个 runner 调 30 次。异步执行，不阻塞事件循环。
 async function querySystemd(services: string[]): Promise<Map<string, SystemdState>> {
   const result = new Map<string, SystemdState>();
-  if (services.length === 0) return result;
+  // 单元名来自各 runner 目录下的 .service，而那个文件 runner 属主自己就能改写。不校验就直接
+  // 展开进 argv 的话，一份写着 `--property=…` 的 .service 就能改掉这次查询——下面那个
+  // --property 排在它们后面，而 systemctl 的选项不认位置。execFile 是数组传参、不起 shell，
+  // 所以够不成命令注入，但该拦的还是要拦：形状不合法的一律不查（照旧回 null 状态）。
+  const wanted = services.filter((s) => SERVICE_RE.test(s));
+  // 丢掉的要说出来。本文件对 .service 的一贯态度是「查不到状态必须让人知道」（见 buildRunners
+  // 里的 broken），静默过滤会让一个 .service 写坏的 runner 悄悄显示成「没装服务」。
+  if (wanted.length !== services.length)
+    logger.warn(
+      `[runner-scan] 忽略 ${services.length - wanted.length} 个形状非法的单元名，` +
+        `对应 runner 的 systemd 状态将显示为未知`
+    );
+  if (wanted.length === 0) return result;
   let out = "";
   try {
     const r = await execFileAsync(
       SYSTEMCTL,
       [
         "show",
-        ...services,
+        ...wanted,
         "--property=Id,LoadState,ActiveState,SubState,UnitFileState,ExecMainStartTimestamp"
       ],
       { encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 }
@@ -483,6 +495,16 @@ export async function getManagedRunnerCounts(): Promise<ManagedRunnerCounts> {
 export async function scanOneRunner(dirRaw: string): Promise<ScannedRunner | null> {
   const dir = path.normalize(String(dirRaw || ""));
   if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
+  // 边界校验：dir 来自前端（runner_router 的 runner/state 原样透传）。少了这一句，任意绝对
+  // 路径都能拿来读 <dir>/.runner、.service、.cipanel。
+  // 放行已纳管的目录，与 registerRunners 同一套判断：被管理的 runner 允许落在扫描根之外
+  // （见 managedRunnerDirs 的说明），一刀切会让那些 runner 的详情页直接打不开。
+  // 用 readMarker 而不是 hasMarker：后者只看文件在不在，一个空的 .cipanel 就能把闸放开；
+  // 前者要求 marker 真能解析出 id，与 buildRunners 判定 managed 用的是同一个来源。
+  // 说清这道闸的边界：它挡的是「没有合法 .cipanel 的任意路径」。已经被植入合法 .cipanel 的
+  // 路径仍会走到下面的 reconcileHandle → ensureHandleInstance（句柄实例的 cwd 就是文件管理
+  // 的根），那一层由本路由的 ROLE.ADMIN、以及植入 marker 本就需要目标目录写权限来兜底。
+  if (!readMarker(dir)) assertUnderRoots(dir);
   const runner = (await buildRunners([dir]))[0] || null;
   if (runner) reconcileHandle(runner); // 详情页直接进来时也补齐，保证文件管理可用
   return runner;
