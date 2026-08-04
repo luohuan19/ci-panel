@@ -201,14 +201,24 @@ const stopPolling = () => {
 const batchItems = ref<RunnerBatchProgressItem[]>([]);
 const batchRunning = ref(false); // 后台任务是否仍在跑
 const batchDone = ref(false); // 是否已全部结束
+const batchLost = ref(false); // 进度通道断了（后台多半还在跑）——与"全部结束"是两回事
 const batchStat = reactive({ total: 0, doneCount: 0, failCount: 0 });
 const currentBatchId = ref(""); // 当前批次 id，用于重试失败项
 const retryToken = ref(""); // 重试时重新填的注册 token
 const retrying = ref(false);
 const collecting = ref(false);
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
+// 进度查询连续失败多少次才判定通道断了。panel→daemon 是 socket 转发（15s 超时，且重连窗口内
+// 会直接抛"节点未连接"），单次失败不代表批量任务出事，退避重试即可自愈。
+const POLL_MAX_FAILS = 5;
+const pollFails = ref(0); // 当前连续失败次数，>0 时界面上如实显示"重试中"
+// 轮询代数：stopBatchPolling 递增它，在途请求回来后代数对不上就自行作废。
+// 清 timer 拦不住已经 await 出去的那一次请求，退避重试又把它的存活窗口拉长到了十几秒，
+// 没有这个的话 resetBatch / 组件卸载之后仍会冒出一次续排，把已经归零的进度改回去。
+let pollGen = 0;
 
 const stopBatchPolling = () => {
+  pollGen++;
   if (batchTimer) {
     clearTimeout(batchTimer);
     batchTimer = null;
@@ -220,6 +230,8 @@ const resetBatch = () => {
   batchItems.value = [];
   batchRunning.value = false;
   batchDone.value = false;
+  batchLost.value = false;
+  pollFails.value = 0;
   batchStat.total = 0;
   batchStat.doneCount = 0;
   batchStat.failCount = 0;
@@ -230,10 +242,22 @@ const resetBatch = () => {
 
 // 轮询某批进度，刷新每个 runner 的状态 + 当前步骤（submit / 重试共用）
 const pollBatch = (batchId: string) => {
+  const gen = ++pollGen;
   const poll = async () => {
     try {
       const { execute, state } = runnerBatchProgress();
-      await execute({ params: { daemonId: daemonId.value }, data: { batchId } });
+      await execute({
+        params: { daemonId: daemonId.value },
+        data: { batchId },
+        // apiService 有 2s 响应缓存，800ms 的轮询三次里两次会拿到旧快照，进度看着一跳一跳
+        forceRequest: true,
+        // forceRequest 分支不套用 apiService 的默认超时，这里显式给一个，
+        // 免得单个请求卡死后整轮轮询再也不往下走
+        timeout: 20000
+      });
+      if (gen !== pollGen) return; // 期间被 reset / 卸载 / 重连了，这次结果作废
+      pollFails.value = 0;
+      batchLost.value = false;
       const p: any = state.value || {};
       if (Array.isArray(p.items)) batchItems.value = p.items;
       batchStat.total = p.total ?? batchStat.total;
@@ -255,11 +279,35 @@ const pollBatch = (batchId: string) => {
       }
       batchTimer = setTimeout(poll, 800);
     } catch (err: any) {
+      if (gen !== pollGen) return;
+      // 后台任务在 daemon 里独立跑，查询失败只说明这条查询链路抖了一下：退避重试，
+      // 绝不能把它当成"全部结束"——那会让用户在 runner 还在装的时候就以为可以关窗了
+      if (++pollFails.value < POLL_MAX_FAILS) {
+        batchTimer = setTimeout(poll, Math.min(800 * 2 ** pollFails.value, 8000));
+        return;
+      }
       batchRunning.value = false;
-      message.error("进度查询失败：" + (err?.message || err));
+      batchLost.value = true;
+      // 断开的成因（节点掉线 / daemon 重启把内存里的批次丢了）在前端分不出来，
+      // 所以只陈述事实、把两条出路都给出去，不去断言"后台仍在运行"
+      message.error(
+        `进度查询连续失败 ${POLL_MAX_FAILS} 次：${err?.message || err}。节点可能掉线或重启过——` +
+          `可点"重新连接"续看进度；若批次已丢失，用"扫描并收集"把已装好的 runner 纳入看护`
+      );
     }
   };
+  pollFails.value = 0;
   poll();
+};
+
+// 进度通道断开后手动重连：批次若还在 daemon 内存里，重新轮询即可续上真实进度
+const resumePolling = () => {
+  if (!currentBatchId.value) return;
+  stopBatchPolling();
+  batchLost.value = false;
+  batchDone.value = false;
+  batchRunning.value = true;
+  pollBatch(currentBatchId.value);
 };
 
 // 重试失败项：用重新填的 token 对本批失败的 runner 重跑注册（--replace 幂等，会收编 GitHub 孤儿）
@@ -280,6 +328,7 @@ const retryFailed = async () => {
     const r: any = state.value || {};
     if (!r.batchId) throw new Error("重试启动失败");
     batchDone.value = false;
+    batchLost.value = false;
     batchRunning.value = true;
     retryToken.value = "";
     pollBatch(currentBatchId.value);
@@ -655,8 +704,22 @@ const statusColor = (s: string) =>
             下载
           </a-button>
         </template>
-        <a-spin v-if="batchRunning" size="small" style="margin-left: auto" />
-        <span v-else class="ok" style="margin-left: auto">全部结束</span>
+        <!-- 退避重试期间窗口是锁死的，不出声用户只会对着转圈干等，如实报出重试进度 -->
+        <span v-if="batchRunning && pollFails" class="fail" style="margin-left: auto">
+          连接不稳定，重试中 {{ pollFails }}/{{ POLL_MAX_FAILS }}
+        </span>
+        <a-spin v-if="batchRunning" size="small" :style="pollFails ? {} : { marginLeft: 'auto' }" />
+        <span v-else-if="batchDone" class="ok" style="margin-left: auto">全部结束</span>
+        <!-- 只有 batchDone 才配叫"全部结束"；通道断了要如实说，并给出两条出路 -->
+        <span v-else-if="batchLost" class="fail" style="margin-left: auto">
+          进度已断开
+          <a-button type="link" size="small" style="padding: 0" @click="resumePolling">
+            重新连接
+          </a-button>
+          <a-button type="link" size="small" :loading="collecting" @click="collect">
+            扫描并收集
+          </a-button>
+        </span>
       </div>
       <div class="batch-list">
         <div v-for="it in batchItems" :key="it.name" class="batch-row">
