@@ -53,7 +53,6 @@ const router = useRouter();
 
 const { execute: fetchRepos, state: repoData, isLoading } = repoList();
 const { execute: fetchNodes, state: nodes } = remoteNodeList();
-const { execute: control } = controlRunnerService();
 
 // 节点系统信息（CPU/内存用量 + 走势图）：复用概览接口，它自带 3 秒轮询与卸载清理。
 // remoteNodeList 只给 available/ip/port/remarks/uuid，没有系统指标，所以两边按 uuid 合并。
@@ -159,6 +158,28 @@ const currentNodeName = computed(
   () => nodes.value?.find((n) => n.uuid === daemonId.value)?.remarks || daemonId.value
 );
 
+// runner 表格分页：受控状态。传字面量给 :pagination 会把 pageSize 钉死，
+// 用户在"条/页"下拉里选完立刻被重置回 10，所以这里自己存并在 @change 里回写。
+const runnerPagination = ref({
+  current: 1,
+  pageSize: 10,
+  showSizeChanger: true,
+  showTotal: (total: number) => `共 ${total} 个`
+});
+
+function onRunnerTableChange(pag: { current?: number; pageSize?: number }) {
+  runnerPagination.value = {
+    ...runnerPagination.value,
+    current: pag.current ?? runnerPagination.value.current,
+    pageSize: pag.pageSize ?? runnerPagination.value.pageSize
+  };
+}
+
+// 换仓库后旧的页码可能超出新仓库的总页数，回到第一页
+watch(repoSlug, () => {
+  runnerPagination.value = { ...runnerPagination.value, current: 1 };
+});
+
 async function load(silent = false) {
   try {
     await Promise.all([fetchNodes(), fetchRepos()]);
@@ -201,8 +222,15 @@ async function doControl(r: RepoRunner, action: "start" | "stop" | "restart") {
   if (!r.service) return message.error("这个 runner 没有 systemd 服务，面板管不了它的启停");
   acting.value[r.dir] = true;
   try {
-    await control({ params: { daemonId: r.daemonId }, data: { service: r.service, action } });
-    message.success(`${r.agentName} ${action} 成功`);
+    const { execute, state } = controlRunnerService();
+    await execute({ params: { daemonId: r.daemonId }, data: { service: r.service, action } });
+    // settled=false：systemd 收下了 job 但还没跑到位（多半是这个 runner 停不下来）。
+    // 不能报"成功"——它可能几分钟后才真的动，10 秒一轮的刷新会把最终状态显示出来。
+    if (state.value?.settled === false) {
+      message.warning(`${r.agentName} ${action} 已提交，但还没跑到位，状态会在刷新后更新`);
+    } else {
+      message.success(`${r.agentName} ${action} 成功`);
+    }
     await load(true);
   } catch (err: any) {
     message.error(`${action} 失败：` + (err?.message || err));
@@ -306,8 +334,19 @@ async function doBatchControl(action: "stop" | "restart", withSvc: RepoRunner[],
     const results = state.value?.results || [];
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
-    if (fail === 0) {
+    // settled=false：systemd 已受理但还没跑到位。这些不算失败，但也不能混进"成功"里报——
+    // 它们多半就是停不下来的那几个，用户需要知道该去刷新盯着谁。
+    const pending = results.filter((r) => r.ok && r.settled === false);
+    if (fail === 0 && pending.length === 0) {
       message.success(`${label}完成：成功 ${ok} 个`);
+    } else if (fail === 0) {
+      const names = pending.map(
+        (r) => withSvc.find((x) => x.dir === r.dir)?.agentName || r.dir || r.service
+      );
+      message.warning(
+        `${label}已提交：${ok} 个，其中 ${pending.length} 个还没停下来（${names.join("、")}），` +
+          `状态会在刷新后更新`
+      );
     } else {
       const failNames = results
         .filter((r) => !r.ok)
@@ -736,13 +775,10 @@ const goRepo = (slug: string) =>
           row-key="dir"
           :loading="isLoading"
           :row-selection="batchMode ? rowSelection : undefined"
-          :pagination="{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total: number) => `共 ${total} 个`
-          }"
+          :pagination="runnerPagination"
           size="middle"
           :scroll="{ x: 900 }"
+          @change="onRunnerTableChange"
         >
           <a-table-column key="agentName" title="Runner" :width="170">
             <template #default="{ record }">

@@ -28,7 +28,10 @@ export type {
   RegisterRunnerItem,
   RegisterRunnerResult,
   RegisterRunnersResponse,
-  RunnerSource
+  RunnerSource,
+  ServiceControlResult,
+  SystemdAction,
+  SystemdState
 } from "./runner_protocol";
 
 export { removeTrail } from "./string_utils";

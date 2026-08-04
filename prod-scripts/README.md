@@ -88,6 +88,16 @@ $ echo $?
 它逐行匹配，输入含换行时 `^...$` 会匹配到其中一行而放行）。部署脚本会主动删除遗留的
 `/etc/sudoers.d/ci-panel-runner`，并在验证阶段确认它确实不在了。
 
+### 启停是非阻塞的（helper v3 起）
+
+助手跑的是 `systemctl --no-block`：systemd 收下 job 就返回，**不等它执行完**。因为 runner 单元是
+`KillMode=process` + `TimeoutStopSec=5min`，碰上不响应 SIGTERM 的 `Runner.Listener`，一个阻塞式
+`restart` 能挂满 5 分钟；批量重启时逐个叠加，会把面板请求拖到超时。
+
+代价是助手的退出码只代表「已入队」。「有没有真的起来」由 daemon 侧 `controlService` 轮询
+`systemctl show` 判定（最多等 8 秒），等不到就回 `settled: false`，面板显示「已提交」而不是「成功」。
+手动跑助手时同理：`restart queued: <单元>` 之后要自己 `systemctl status` 确认。
+
 ## 扫描根只有一处配置
 
 助手的 `ALLOWED_ROOT` 是唯一真相源——它是 root 侧真正的边界，daemon 声明得再宽也没用，

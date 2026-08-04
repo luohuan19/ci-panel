@@ -11,12 +11,12 @@
 #
 # 用法：ci-panel-runner-svc install|uninstall|status <runner 目录绝对路径>
 #      ci-panel-runner-svc set-env <runner 目录绝对路径> <base64(每行 KEY=VALUE)>
-#      ci-panel-runner-svc start|stop|restart <systemd 单元名>
+#      ci-panel-runner-svc start|stop|restart <systemd 单元名>   （非阻塞，见下方 --no-block）
 #      ci-panel-runner-svc preflight   （无副作用自检，回显版本与根目录）
 set -euo pipefail
 
 # 改动本脚本的行为时同步 +1，好让部署自检认出机器上装的是旧版本。
-VERSION=2
+VERSION=3
 
 # 单元名的唯一合法形状。与 daemon 侧 controlService 的正则一致。
 SERVICE_RE='^actions\.runner\.[A-Za-z0-9._@-]+\.service$'
@@ -59,9 +59,14 @@ case "$action" in
     svc_in="$dir_in" # 此处第二参数是单元名
     [ -n "$svc_in" ] || die "用法: $0 $action <单元名>"
     [[ "$svc_in" =~ $SERVICE_RE ]] || die "非法的单元名: $svc_in"
-    # set -e 会让 systemctl 的失败直接成为本脚本的退出码，daemon 据此报错
-    systemctl "$action" "$svc_in"
-    echo "$action ok: $svc_in"
+    # --no-block：systemd 收下 job 就返回，不等它跑完。默认(阻塞)的行为在这里是有害的——
+    # runner 单元是 KillMode=process + TimeoutStopSec=5min，碰上不响应 SIGTERM 的 Listener，
+    # 一个 restart 就能挂满 5 分钟；面板批量重启时逐个叠加，请求超时、节点被判掉线。
+    # 换成非阻塞后，"操作有没有生效"由 daemon 侧 controlService 轮询 systemctl show 判定。
+    # 注意这只放弃了「等 job 跑完」：单元不存在、单元名非法一类的错误 systemctl 仍会当场
+    # 非零退出，set -e 让它成为本脚本的退出码，daemon 照样报得出来。
+    systemctl --no-block "$action" "$svc_in"
+    echo "$action queued: $svc_in"
     exit 0
     ;;
 esac
