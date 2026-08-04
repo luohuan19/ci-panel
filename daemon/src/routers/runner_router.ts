@@ -127,7 +127,9 @@ routerApp.on("runner/state", async (ctx, data) => {
   }
 });
 
-// 启停 systemd 托管的 runner。需要 sudoers 免密白名单
+// 启停 systemd 托管的 runner。需要 sudoers 免密白名单。
+// 返回值带 settled：false 表示 systemd 已受理但还没跑到位（停不掉的单元很常见），
+// 不是失败——由前端的状态轮询继续收敛。
 routerApp.on("runner/service_control", async (ctx, data) => {
   try {
     const service = String(data?.service || "");

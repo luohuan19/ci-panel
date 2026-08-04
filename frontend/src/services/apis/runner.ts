@@ -399,10 +399,14 @@ export const runnerDiagLogs = useDefineApi<
   method: "POST"
 });
 
+// 启停结果同样来自 common（common/src/runner_protocol.ts），与 daemon 一份声明
+export type { ServiceControlResult, SystemdAction, SystemdState } from "mcsmanager-common";
+import type { ServiceControlResult } from "mcsmanager-common";
+
 // 启停 systemd 托管的 runner。依赖 daemon 侧的 sudoers 免密白名单
 export const controlRunnerService = useDefineApi<
   { params: { daemonId: string }; data: { service: string; action: "start" | "stop" | "restart" } },
-  { service: string; activeState: string; subState: string } | null
+  ServiceControlResult
 >({
   url: "/api/runner/service_control",
   method: "POST"
@@ -489,8 +493,17 @@ export const controlRunnerServiceBatch = useDefineApi<
       concurrency?: number;
     };
   },
-  { results: Array<{ dir: string; service: string; ok: boolean; error?: string }> }
+  {
+    results: Array<
+      { dir: string; service: string; ok: boolean; error?: string } & Partial<ServiceControlResult>
+    >;
+  }
 >({
   url: "/api/runner/service_control_batch",
-  method: "POST"
+  method: "POST",
+  // apiService 的默认超时是 30 秒，这里必须放宽：panel 侧以并发 5 扇出，每个 runner 最多花
+  // 8 秒等 systemd 落定，所以整批耗时约 ceil(N/5) × 9 秒 —— 20 个 runner 就顶到 30 秒了。
+  // 超时只会让浏览器这边报错，服务端该做的还在做，反而给人"失败了"的错觉。10 分钟够几十个
+  // runner 用，同时保留一个终点，不像 Number.MAX_SAFE_INTEGER 那样可能永远挂着。
+  timeout: 1000 * 600
 });

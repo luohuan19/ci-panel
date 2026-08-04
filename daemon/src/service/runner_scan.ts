@@ -8,12 +8,12 @@
 // 托管方式只认 systemd：面板实例一律只是「句柄」（不带启动命令、不跑 runner），
 // 所以 managedBy 只会是 systemd 或 none。日常展示只列带 .cipanel 的（scanManagedRunners），
 // 全盘发现（scanRunners）只给「导入」用。
-import { execFile, execFileSync } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs-extra";
 import path from "path";
 
-// 异步版 execFile：扫描热路径(每 10s 一次)用它，避免同步调用卡住 daemon 单线程事件循环——
+// 异步版 execFile：本模块调 systemctl 一律用它，避免同步调用卡住 daemon 单线程事件循环——
 // systemctl 走 dbus、机器一忙偶发能卡几秒，同步跑就会丢 WebSocket 心跳→面板判定掉线→刷新卡。
 const execFileAsync = promisify(execFile);
 import InstanceSubsystem from "./system_instance";
@@ -33,7 +33,15 @@ import {
   RUNNER_SVC_HELPER,
   uninstallSystemdService
 } from "./runner_provision";
-import type { RegisterRunnerItem, RegisterRunnerResult } from "mcsmanager-common";
+import type {
+  RegisterRunnerItem,
+  RegisterRunnerResult,
+  ServiceControlResult,
+  SystemdAction,
+  SystemdState
+} from "mcsmanager-common";
+// 三方共用的声明只在 common 里写一份；这里转出去，免得已有的 import 全要改路径
+export type { ServiceControlResult, SystemdAction, SystemdState };
 
 const SYSTEMCTL = "/usr/bin/systemctl";
 
@@ -94,15 +102,6 @@ export function initRunnerRoots(): void {
 
 // 布局是 <root>/<仓库目录>/<runner 目录>，两层足够；再深就是 runner 自己的 bin/_work 了
 const MAX_DEPTH = 2;
-
-export interface SystemdState {
-  service: string; // 单元名，来自 .service 文件
-  loaded: boolean; // systemd 认不认识它（false = 服务文件已被删）
-  activeState: string; // active / inactive / failed
-  subState: string; // running / dead / ...
-  enabled: string; // enabled / disabled / static
-  since: string; // 主进程启动时间
-}
 
 export interface ScannedRunner {
   dir: string;
@@ -676,7 +675,7 @@ export async function deleteRunner(
     throw new Error("该 runner 正在跑 job，删除会中断 CI；确认后加 force 重试");
 
   // 1) 停 + 卸 systemd
-  const uninstall = uninstallSystemdService(dir);
+  const uninstall = await uninstallSystemdService(dir);
   steps.push(
     uninstall.ok
       ? { key: "systemd", label: "停止并卸载 systemd 服务", status: "ok" }
@@ -688,6 +687,30 @@ export async function deleteRunner(
           hint: `sudo /usr/local/sbin/ci-panel-runner-svc uninstall ${dir}`
         }
   );
+
+  // 停不掉就到此为止。uninstall 里的 disable --now 最多等 60 秒，而 runner 单元的
+  // TimeoutStopSec 是 5 分钟——超时返回时 Runner.Listener 很可能还活着，这时候接着往下删目录
+  // 等于把文件从一个运行中的进程底下抽走：job 当场崩、_diag 里什么都留不下，而单元还在，
+  // systemd 会带着一个空目录反复重启它。宁可原样留着让人处置，也不留下这种半删状态。
+  // 刻意不看 opts.force：那个标志的含义是「中断正在跑的 job」，批量删除时只要选中的 runner
+  // 里有一个 busy 前端就会带上它，拿它给这里开口子等于在最该拦的场景下失效。
+  if (!uninstall.ok) {
+    for (const [key, label] of [
+      ["github", "从 GitHub 注销"],
+      ["panel", "清理面板句柄实例与纳管标记"],
+      ["dir", "删除 runner 目录"]
+    ] as const)
+      steps.push({
+        key,
+        label,
+        status: "skipped",
+        detail: "systemd 服务没能停下来，后续步骤全部跳过，避免删掉一个还在运行的 runner",
+        hint: `先手动停：sudo /usr/local/sbin/ci-panel-runner-svc uninstall ${dir}；确认 systemctl status 已停止后再重试删除`
+      });
+    const warnings = steps.filter((s) => s.status !== "ok").map((s) => `${s.label}：${s.detail}`);
+    logger.warn(`[runner-delete] ${dir} 中止：systemd 未能停止（${uninstall.error || "未知原因"}）`);
+    return { dir, ok: false, steps, warnings };
+  }
 
   // 2) 从 GitHub 注销（需删除 token；停服务后才做）
   if (opts.removeToken) {
@@ -765,15 +788,49 @@ export async function deleteRunner(
 // (systemctl 接受多个单元名)。glob 排不掉空白，sudo < 1.9.10 也没有锚定正则。所以校验放进
 // root 拥有的助手脚本里，sudoers 只放行助手本身。
 
-const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const;
-export type SystemdAction = (typeof ALLOWED_ACTIONS)[number];
+// satisfies 把它和 common 里的 SystemdAction 钉在一起：协议加了动作而这里忘了放行，编译期就报
+const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const satisfies readonly SystemdAction[];
 
-export async function controlService(service: string, action: SystemdAction) {
+// 助手已经把 job 交给 systemd 之后，最多再等多久确认它跑到位。等不到不算失败——如实回
+// settled:false，让调用方去看状态轮询，绝不把请求挂在这里（见下方 controlService 的注释）。
+const SETTLE_TIMEOUT_MS = 8000;
+const SETTLE_POLL_MS = 500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 这一轮 systemctl 的效果是否已经体现出来了。
+// restart/start 光看 activeState=active 不够：restart 一个本来就在跑的单元，头几百毫秒查到的
+// 还是「旧的 active」，会把没发生的事判成已完成。所以额外比对主进程启动时间(since)变没变。
+function isSettled(action: SystemdAction, before: SystemdState | null, now: SystemdState): boolean {
+  if (action === "stop") return now.activeState === "inactive" || now.activeState === "failed";
+  // 没有操作前的基准就没法区分「新起来的」和「本来就是这样的」——querySystemd 出错时会返回
+  // 空 map(见其 catch)，before 就是 null。这种时候一律按未落定处理：宁可回 settled:false 让
+  // 页面轮询去收敛，也不能凭一个旧状态报「成功」或「失败」。
+  if (!before) return false;
+  // failed 是终态，但必须是这一轮打出来的：单元本来就 failed 时，systemd 还没把 job 出队，
+  // 头几百毫秒查到的仍是那个旧 failed，会把一个随后就成功的 restart 当场判成失败。
+  if (now.activeState === "failed")
+    return before.activeState !== "failed" || now.since !== before.since;
+  if (now.activeState !== "active") return false;
+  return action === "start" || now.since !== before.since;
+}
+
+export async function controlService(
+  service: string,
+  action: SystemdAction
+): Promise<ServiceControlResult> {
   if (!ALLOWED_ACTIONS.includes(action)) throw new Error(`不支持的操作: ${action}`);
   // 助手会再校验一次（那次才是有效的边界）；这里挡住明显非法值，省一次 sudo 往返
   if (!SERVICE_RE.test(service)) throw new Error(`非法的服务名: ${service}`);
+
+  // 重启前的状态：下面判断「restart 是否真的发生了」要拿它的 since 做对比
+  const before = (await querySystemd([service])).get(service) || null;
+
   try {
-    execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, action, service], {
+    // 必须是异步 execFile。同步版会把 daemon 的单线程事件循环整个冻住，systemctl 慢多久就
+    // 冻多久，WebSocket 心跳(pingInterval 20s/pingTimeout 10s)一丢，面板就判这个节点掉线——
+    // 批量重启时每个 runner 冻一次，整台机器会不可达好几分钟。同文件顶部的扫描热路径同理。
+    await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, action, service], {
       encoding: "utf8",
       timeout: 60000
     });
@@ -786,6 +843,34 @@ export async function controlService(service: string, action: SystemdAction) {
       );
     throw new Error(`${action} ${service} 失败: ${detail}`);
   }
-  logger.info(`[runner-scan] ${action} ${service} 成功`);
-  return (await querySystemd([service])).get(service) || null;
+
+  // 助手用的是 systemctl --no-block：systemd 收下 job 就返回，不等它跑完。所以上面的成功
+  // 只代表「已受理」，真正的结果要自己轮询。为什么不让 systemctl 等：runner 单元是
+  // KillMode=process + TimeoutStopSec=5min，遇上不响应 SIGTERM 的 Listener 一等就是 5 分钟，
+  // 面板请求(90s)必然超时，批量重启更是逐个叠加。这里最多等 SETTLE_TIMEOUT_MS，超了就带
+  // settled:false 返回，剩下的交给 10s 一轮的状态扫描收敛。
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let status: SystemdState | null = null;
+  for (;;) {
+    await sleep(SETTLE_POLL_MS);
+    status = (await querySystemd([service])).get(service) || null;
+    if (status && isSettled(action, before, status)) {
+      // --no-block 之后 systemctl 的退出码只代表「job 已入队」，起不来是查状态才知道的。
+      // 阻塞版当年会在这里非零退出并报错，别把这个信号丢了——照旧抛，调用方的错误路径不变。
+      // stop 落到 failed 是正常终态（单元非零退出后就停在 failed），不算失败。
+      if (action !== "stop" && status.activeState === "failed")
+        throw new Error(
+          `${action} ${service} 失败: 单元进入 failed（${status.subState}）。` +
+            `详见 journalctl -u ${service} -n 50`
+        );
+      logger.info(`[runner-scan] ${action} ${service} 完成（${status.activeState}）`);
+      return { service, action, settled: true, status };
+    }
+    if (Date.now() >= deadline) break;
+  }
+  logger.warn(
+    `[runner-scan] ${action} ${service} 已提交，但 ${SETTLE_TIMEOUT_MS}ms 内未落定` +
+      `（当前 ${status?.activeState || "未知"}/${status?.subState || "未知"}）`
+  );
+  return { service, action, settled: false, status };
 }

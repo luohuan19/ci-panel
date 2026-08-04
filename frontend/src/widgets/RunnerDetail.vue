@@ -95,12 +95,18 @@ async function doControl(action: "start" | "stop" | "restart") {
     return message.error("这个 runner 没有 systemd 服务，面板管不了它的启停");
   acting.value = true;
   try {
-    const { execute } = controlRunnerService();
+    const { execute, state } = controlRunnerService();
     await execute({
       params: { daemonId: daemonId.value },
       data: { service: r.systemd.service, action }
     });
-    message.success(`${action} 成功`);
+    // settled=false：systemd 收下了 job 但还没跑完（多半是这个 runner 停不下来）。
+    // 不能报"成功"——它可能几分钟后才真的动，页面的定时刷新会把最终状态显示出来。
+    if (state.value?.settled === false) {
+      message.warning(`${action} 已提交，但 runner 还没停下来，状态会在刷新后更新`);
+    } else {
+      message.success(`${action} 成功`);
+    }
     await loadState(true);
   } catch (err: any) {
     message.error(`${action} 失败：` + (err?.message || err));

@@ -29,3 +29,25 @@ export interface RegisterRunnersResponse {
   results: RegisterRunnerResult[];
   registeredRepos?: string[];
 }
+
+// runner 单元在 systemd 里的状态，daemon 从 systemctl show 解析
+export interface SystemdState {
+  service: string; // 单元名，来自 .service 文件
+  loaded: boolean; // systemd 认不认识它（false = 服务文件已被删）
+  activeState: string; // active / inactive / failed
+  subState: string; // running / dead / ...
+  enabled: string; // enabled / disabled / static
+  since: string; // 主进程启动时间
+}
+
+export type SystemdAction = "start" | "stop" | "restart";
+
+// 启停结果。daemon 侧走的是 systemctl --no-block（阻塞式 restart 遇上停不掉的单元能挂满
+// 5 分钟），提交后最多轮询 8 秒确认落地：settled=false 表示 systemd 已受理但还没跑到位，
+// 这不是失败，状态由页面自己的轮询继续收敛。
+export interface ServiceControlResult {
+  service: string;
+  action: SystemdAction;
+  settled: boolean; // false = systemd 收下了 job，但等待窗口内还没跑到位（多半是停不掉的单元）
+  status: SystemdState | null; // settled 时是终态；否则是等待窗口结束时的即时状态
+}

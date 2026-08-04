@@ -7,8 +7,13 @@
 // GitHub 身份。（早期版本是 daemon 把 run.sh 当子进程托管，已废弃。）
 import fs from "fs-extra";
 import path from "path";
-import { spawn, execFileSync } from "child_process";
+import { spawn, execFile, execFileSync } from "child_process";
+import { promisify } from "util";
 import axios from "axios";
+
+// 异步版 execFile：凡是会碰 systemd 的助手调用都用它。同步跑会冻住 daemon 的单线程事件
+// 循环，systemctl 慢多久就冻多久，心跳一丢面板就把整个节点判成掉线（见 runner_scan 顶部）。
+const execFileAsync = promisify(execFile);
 import InstanceSubsystem from "./system_instance";
 import logger from "./log";
 import { writeMarker, readMarker } from "./runner_marker";
@@ -228,7 +233,7 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
   // ---- 4) 装 systemd 服务并启动（生产托管方式：开机自启、崩溃自拉起、不随 daemon 重启掉线）----
   // 取代旧的「面板当子进程跑 run.sh」。面板这边只留一个句柄实例，给文件管理/配置/详情页用，不托管。
   step("安装 systemd 服务");
-  installSystemdService(targetDir);
+  await installSystemdService(targetDir);
 
   // 写 .cipanel 标记：面板创建的 runner，来源 provision，纳入日常展示
   const marker = writeMarker(targetDir, {
@@ -259,7 +264,7 @@ export const RUNNER_SVC_HELPER =
 // 统一收在这里narrow一次，避免各处退回 err: any。
 export function errText(err: unknown): string {
   if (err instanceof Error) {
-    // execFileSync 的错误对象上挂着 stderr，比 message 更有信息量
+    // execFile 的错误对象上挂着 stderr，比 message 更有信息量（同步/异步版都有）
     const stderr = (err as Error & { stderr?: unknown }).stderr;
     const detail = typeof stderr === "string" ? stderr.trim() : "";
     return detail || err.message;
@@ -275,6 +280,8 @@ export interface HelperPreflight {
 // 向特权助手要一次自检信息。preflight 无副作用（不碰 systemd、不碰任何 runner 目录），
 // 所以可以在 daemon 启动时安全地调。拿不到就返回 null：开发机没装助手、没配免密都属正常，
 // 此时调用方退回环境变量即可。
+// 这里保留同步调用：它只在启动时被 initRunnerRoots 调一次（扫描根必须在开始服务前定下来），
+// 此刻还没有 WebSocket 连接可丢，且 preflight 不碰 systemd，不存在卡几分钟的风险。
 export function queryHelperPreflight(): HelperPreflight | null {
   let out = "";
   try {
@@ -297,9 +304,11 @@ export function queryHelperPreflight(): HelperPreflight | null {
 
 // 把 runner 装成 systemd 服务并 enable+start。daemon 非 root，走 sudo -n 调用只放行了 helper 的白名单。
 // 失败(尤其是未配免密 sudo)时抛 ProvisionError，带清晰指引。
-export function installSystemdService(dir: string): void {
+// 异步调用：助手里的 systemctl enable --now 会一直等到单元起来，同步跑会冻住 daemon 的事件
+// 循环、丢掉 WebSocket 心跳，面板就把整个节点判成掉线。
+export async function installSystemdService(dir: string): Promise<void> {
   try {
-    const out = execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, "install", dir], {
+    const { stdout: out } = await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, "install", dir], {
       encoding: "utf8",
       timeout: 60000
     });
@@ -318,12 +327,18 @@ export function installSystemdService(dir: string): void {
 }
 
 // 卸载 runner 的 systemd 服务（停 + 删单元）。走特权助手；幂等——没装服务也不报错。
-export function uninstallSystemdService(dir: string): { ok: boolean; error?: string } {
+// 异步调用，理由同 installSystemdService：助手里的 systemctl disable --now 要等单元真的停下，
+// 遇上停不掉的 runner(TimeoutStopSec=5min)能等很久，同步跑会把 daemon 整个冻住。
+// 这里刻意不给它 --no-block：调用方(deleteRunner)紧接着就删目录，必须等 runner 真停了才安全。
+export async function uninstallSystemdService(
+  dir: string
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    const out = execFileSync("sudo", ["-n", RUNNER_SVC_HELPER, "uninstall", dir], {
-      encoding: "utf8",
-      timeout: 60000
-    });
+    const { stdout: out } = await execFileAsync(
+      "sudo",
+      ["-n", RUNNER_SVC_HELPER, "uninstall", dir],
+      { encoding: "utf8", timeout: 60000 }
+    );
     logger.info(`[runner] systemd 卸载: ${String(out).trim()}`);
     return { ok: true };
   } catch (err: any) {
