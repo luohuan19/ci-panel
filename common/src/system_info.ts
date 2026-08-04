@@ -56,7 +56,7 @@ const info: ISystemInfo = {
 };
 
 // periodically refresh the cache
-setInterval(() => {
+const refreshTimer = setInterval(() => {
   if (os.platform() === "linux") {
     return setLinuxSystemInfo();
   }
@@ -65,6 +65,11 @@ setInterval(() => {
   }
   return otherSystemInfo();
 }, 3000);
+
+// unref so this timer alone cannot keep a process alive. panel and daemon run forever anyway, but
+// index.ts re-exports this module, so any short-lived importer of the barrel — a script, or a test
+// runner — would otherwise never exit.
+refreshTimer.unref();
 
 function otherSystemInfo() {
   info.freemem = os.freemem();
