@@ -12,6 +12,7 @@
 // 全程只读。
 import fs from "fs-extra";
 import path from "path";
+import { assertUnderRoots } from "./runner_scan";
 
 const DIAG_DIR = "_diag";
 // 一次最多回读的字节数（从尾部倒读或增量读都受此限，避免一次吐几十 MB）
@@ -75,7 +76,15 @@ function listDiagFiles(diagDir: string): DiagLogFile[] {
 export function readRunnerDiag(dirRaw: string, opts: ReadDiagOptions = {}): DiagLogResult {
   const dir = path.normalize(String(dirRaw || ""));
   if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
+  // dir 来自前端（runner_router.ts 原样透传 data.dir），必须落在扫描根之内。
+  // 下面对 opts.file 的防穿越只约束 _diag 目录「内」的文件名，管不到 dir 本身：
+  // 少了这一句，任何带 _diag 子目录的路径都能被读走文件清单和日志内容。
+  // 同级的 runner_env.ts:64、runner_scan 的 listDirs/makeDir/deleteRunner 都调了它。
+  assertUnderRoots(dir);
   const diagDir = path.join(dir, DIAG_DIR);
+  // dir 在根内不代表 dir/_diag 也在：_diag 本身可以是指向根外的符号链接，而下面的
+  // statSync/readdirSync 都跟随链接。assertUnderRoots 比的是 realpath，所以能挡住。
+  assertUnderRoots(diagDir);
   if (!fs.existsSync(diagDir) || !fs.statSync(diagDir).isDirectory())
     throw new Error("该 runner 还没有 _diag 日志（可能从未运行过）");
 
@@ -96,6 +105,8 @@ export function readRunnerDiag(dirRaw: string, opts: ReadDiagOptions = {}): Diag
   }
 
   const targetPath = path.join(diagDir, target);
+  // 同理：文件名已过滤穿越字符，但 _diag 里的某个 *.log 仍可能是指向根外的符号链接。
+  assertUnderRoots(targetPath);
   const size = fs.statSync(targetPath).size;
   const offset = opts.offset;
 
