@@ -175,8 +175,9 @@ function onRunnerTableChange(pag: { current?: number; pageSize?: number }) {
   };
 }
 
-// 换仓库后旧的页码可能超出新仓库的总页数，回到第一页
-watch(repoSlug, () => {
+// 换仓库、换节点后旧的页码可能超出新数据的总页数，回到第一页。
+// 必须连 daemonId 一起看：同名仓库在两个节点上都有 runner 时，只有 node 变、repo 不变
+watch([daemonId, repoSlug], () => {
   runnerPagination.value = { ...runnerPagination.value, current: 1 };
 });
 

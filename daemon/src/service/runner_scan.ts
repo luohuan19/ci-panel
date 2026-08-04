@@ -688,6 +688,30 @@ export async function deleteRunner(
         }
   );
 
+  // 停不掉就到此为止。uninstall 里的 disable --now 最多等 60 秒，而 runner 单元的
+  // TimeoutStopSec 是 5 分钟——超时返回时 Runner.Listener 很可能还活着，这时候接着往下删目录
+  // 等于把文件从一个运行中的进程底下抽走：job 当场崩、_diag 里什么都留不下，而单元还在，
+  // systemd 会带着一个空目录反复重启它。宁可原样留着让人处置，也不留下这种半删状态。
+  // 刻意不看 opts.force：那个标志的含义是「中断正在跑的 job」，批量删除时只要选中的 runner
+  // 里有一个 busy 前端就会带上它，拿它给这里开口子等于在最该拦的场景下失效。
+  if (!uninstall.ok) {
+    for (const [key, label] of [
+      ["github", "从 GitHub 注销"],
+      ["panel", "清理面板句柄实例与纳管标记"],
+      ["dir", "删除 runner 目录"]
+    ] as const)
+      steps.push({
+        key,
+        label,
+        status: "skipped",
+        detail: "systemd 服务没能停下来，后续步骤全部跳过，避免删掉一个还在运行的 runner",
+        hint: `先手动停：sudo /usr/local/sbin/ci-panel-runner-svc uninstall ${dir}；确认 systemctl status 已停止后再重试删除`
+      });
+    const warnings = steps.filter((s) => s.status !== "ok").map((s) => `${s.label}：${s.detail}`);
+    logger.warn(`[runner-delete] ${dir} 中止：systemd 未能停止（${uninstall.error || "未知原因"}）`);
+    return { dir, ok: false, steps, warnings };
+  }
+
   // 2) 从 GitHub 注销（需删除 token；停服务后才做）
   if (opts.removeToken) {
     const r = await removeGithubRegistration(dir, opts.removeToken, opts.proxy);

@@ -94,7 +94,9 @@ $ echo $?
 `KillMode=process` + `TimeoutStopSec=5min`，碰上不响应 SIGTERM 的 `Runner.Listener`，一个阻塞式
 `restart` 能挂满 5 分钟；批量重启时逐个叠加，会把面板请求拖到超时。
 
-代价是助手的退出码只代表「已入队」。「有没有真的起来」由 daemon 侧 `controlService` 轮询
+代价是助手退出码 `0` 只代表「systemd 收下了这个 job」，不代表服务已经起来/停下。提交阶段的
+错误仍然照常报：单元名非法、单元不存在这类 `systemctl` 会当场非零退出，助手也跟着非零退出。
+「有没有真的起来」则由 daemon 侧 `controlService` 轮询
 `systemctl show` 判定（最多等 8 秒），等不到就回 `settled: false`，面板显示「已提交」而不是「成功」。
 手动跑助手时同理：`restart queued: <单元>` 之后要自己 `systemctl status` 确认。
 
@@ -105,7 +107,7 @@ $ echo $?
 `ci-panel-runner-svc preflight` 把它读回来，用作自己的扫描根：
 
 ```text
-[runner-scan] 扫描根取自特权助手(v2): /data/ci-runner
+[runner-scan] 扫描根取自特权助手(v3): /data/ci-runner
 ```
 
 改扫描根**只需**跑 `install-runner-privileges.sh --root <路径>` 然后重启 daemon。
