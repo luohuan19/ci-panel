@@ -1347,5 +1347,14 @@
   "TXT_CODE_REPO_REMOVE_HAS_RUNNERS": "仓库 {{slug}} 名下还有 {{count}} 个已纳管 runner，无法取消纳管。请先取消这些 runner 的纳管，再删除仓库。",
   "TXT_CODE_REPO_REMOVE_NODE_UNREACHABLE": "无法取消纳管仓库 {{slug}}：节点 {{nodes}} 连不上，它们上面的 runner 数不进来。等节点恢复后重试。",
   "TXT_CODE_RUNNER_IMPORT_OK": "已纳管 {count} 个 runner",
-  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "已纳管 {count} 个 runner，并纳管仓库 {repos}"
+  "TXT_CODE_RUNNER_IMPORT_OK_WITH_REPOS": "已纳管 {count} 个 runner，并纳管仓库 {repos}",
+  "TXT_CODE_RUNNER_BATCH_RETRYING": "连接不稳定，重试中 {count}/{max}",
+  "TXT_CODE_RUNNER_BATCH_PROGRESS_DISCONNECTED": "进度已断开",
+  "TXT_CODE_RUNNER_BATCH_RECONNECT": "重新连接",
+  "TXT_CODE_RUNNER_SCAN_COLLECT": "扫描并收集",
+  "TXT_CODE_RUNNER_BATCH_PROGRESS_LOST": "进度查询连续失败 {count} 次：{message}。节点可能掉线或重启过——可点\"重新连接\"续看进度；若批次已丢失，用\"扫描并收集\"把已装好的 runner 纳入看护",
+  "TXT_CODE_RUNNER_BATCH_ALL_DONE": "全部结束",
+  "TXT_CODE_RUNNER_BATCH_RETRY_FAILED": "重试失败项（{count}）",
+  "TXT_CODE_RUNNER_BATCH_RETRY_TOKEN_PLACEHOLDER": "重新填注册 token 后重试失败项",
+  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "扫描基目录，把已注册(有 .runner)但面板还没建实例的 runner 纳入看护"
 }
