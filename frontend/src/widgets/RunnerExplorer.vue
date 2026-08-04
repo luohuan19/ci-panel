@@ -77,6 +77,21 @@ const allRepos = computed<Array<RepoSummary & { registered: boolean }>>(() => {
   ];
 });
 
+// runner 计数。running/busy/orphaned/conflicted 必须和 total 出自同一批 runner——
+// /api/repo/list 返回的 RepoSummary 是「跨所有节点」的汇总，下钻到某个节点后不能沿用它的计数，
+// 否则运行数（全部节点）会大于总数（当前节点），显示成 6/5 这种不可能的比值。
+function summarizeRunners(
+  runners: RepoRunner[]
+): Pick<RepoSummary, "total" | "running" | "busy" | "orphaned" | "conflicted"> {
+  return {
+    total: runners.length,
+    running: runners.filter((r) => r.running).length,
+    busy: runners.filter((r) => r.busy).length,
+    orphaned: runners.filter((r) => r.managedBy === "none").length,
+    conflicted: runners.filter((r) => r.managedBy === "both").length
+  };
+}
+
 // 每个节点上有哪些仓库、多少 runner。runner 自带 daemonId，按它归堆
 const nodeCards = computed(() =>
   (nodes.value || []).map((node) => {
@@ -91,19 +106,14 @@ const nodeCards = computed(() =>
     }
     // 该节点的系统指标（概览接口按 uuid 对上）
     const sys = AllDaemonData.value?.remote?.find((r) => r.uuid === node.uuid);
-    const running = runners.filter((r) => r.running).length;
-    const busy = runners.filter((r) => r.busy).length;
+    const stats = summarizeRunners(runners);
     return {
       node,
       sys,
       repoCount: repos.size,
-      total: runners.length,
-      running,
-      busy,
+      ...stats,
       // 空闲 = 在跑但没接 job：CI 场景第一位的问题「现在还能接多少活」
-      idle: Math.max(0, running - busy),
-      orphaned: runners.filter((r) => r.managedBy === "none").length,
-      conflicted: runners.filter((r) => r.managedBy === "both").length
+      idle: Math.max(0, stats.running - stats.busy)
     };
   })
 );
@@ -130,7 +140,8 @@ const reposOfNode = computed(() =>
   allRepos.value
     .map((repo) => {
       const runners = repo.runners.filter((r) => r.daemonId === daemonId.value);
-      return { ...repo, runners, total: runners.length };
+      // summarizeRunners 必须放在 ...repo 之后：它要覆盖掉后端那份跨节点的计数
+      return { ...repo, runners, ...summarizeRunners(runners) };
     })
     .filter((r) => r.total > 0)
     .sort((a, b) => b.total - a.total)
