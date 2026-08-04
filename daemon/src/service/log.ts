@@ -78,6 +78,9 @@ function systemInfoReport() {
   loggerSysInfo.info([`[${logTip}]`, sysInfo, selfInfo, selfInfo2].join(" "));
 }
 
-setInterval(systemInfoReport, 1000 * 5);
+// unref: the daemon runs forever regardless, but this module is imported transitively by almost
+// everything under service/, so without it any short-lived importer never exits.
+const sysInfoTimer = setInterval(systemInfoReport, 1000 * 5);
+sysInfoTimer.unref();
 
 export default logger;

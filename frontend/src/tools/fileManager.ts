@@ -49,32 +49,25 @@ export const getFileExtName = (fileName: string) => {
  */
 export const isCompressFile = (fileName: string): boolean => {
   const lowerFileName = fileName.toLowerCase();
-  
-  const singleVolumeExts = ['7z', 'zip', 'rar', 'tar.gz', 'iso', 'cab', 'tar', 'gz', 'tar.xz', 'bz2', 'tar.bz2'];
-  
-  for (const ext of singleVolumeExts) {
-    if (lowerFileName.endsWith('.' + ext)) {
-      return true;
-    }
-  }
-  
-  if (/\.7z\.\d+$/i.test(lowerFileName)) {
-    return lowerFileName.endsWith('.001');
-  }
-  
+
+  // Multi-volume checks must come first. `a.part2.rar` also ends with `.rar`, so testing the
+  // single-volume extensions before this returned true for every volume of a split archive and
+  // the file manager offered "decompress" on volume 2 onwards.
   if (/\.part\d+\.rar$/i.test(lowerFileName)) {
     return /\.part1\.rar$/i.test(lowerFileName);
   }
-  
-  if (/\.r\d{2}$/i.test(lowerFileName)) {
+
+  if (/\.7z\.\d+$/i.test(lowerFileName)) {
+    return lowerFileName.endsWith('.001');
+  }
+
+  // .r00 / .z01 are continuation volumes of a rar / zip set — only the first volume is extractable.
+  if (/\.r\d{2}$/i.test(lowerFileName) || /\.z\d{2}$/i.test(lowerFileName)) {
     return false;
   }
-  
-  if (/\.z\d{2}$/i.test(lowerFileName)) {
-    return false;
-  }
-  
-  return false;
+
+  const singleVolumeExts = ['7z', 'zip', 'rar', 'tar.gz', 'iso', 'cab', 'tar', 'gz', 'tar.xz', 'bz2', 'tar.bz2'];
+  return singleVolumeExts.some((ext) => lowerFileName.endsWith('.' + ext));
 };
 
 const fileType = new Map([

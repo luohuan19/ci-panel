@@ -95,6 +95,18 @@ export interface ProvisionRunnerParams {
   onStep?: (step: string) => void; // 可选，进度回调：每进入一个阶段回报一次
 }
 
+// 把 config.sh 的参数表里紧跟 --token 的那一项替换成 ***。
+//
+// 这是注册 token（GitHub 凭据）不进日志的唯一一道防线：下面 ProvisionError 的 fullLog 会
+// 经 BatchItemState.log 一路送到浏览器。刻意导出成独立函数而不内联，是为了能直接对它断言——
+// 内联的话测试只能把这行抄一遍，而抄一遍的测试查不出这行自己的错。
+//
+// 按位置匹配而非按内容：token 本身是随机串，没有可识别的特征。所以参数表的构造方式一旦改动
+// （比如 --token 改名），这里会静默失配 —— 那正是需要测试盯住的回归。
+export function redactTokenArgs(args: string[]): string[] {
+  return args.map((a, i) => (args[i - 1] === "--token" ? "***" : a));
+}
+
 // 带完整日志的错误：message 用于展示（截断），fullLog 保留全量输出供前端复制/下载
 export class ProvisionError extends Error {
   fullLog: string;
@@ -203,8 +215,7 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
       for (const leftover of [".credentials", ".credentials_rsaparams", ".runner"]) {
         await fs.remove(path.join(targetDir, leftover)).catch(() => {});
       }
-      // 脱敏：日志里不暴露注册 token
-      const safeArgs = args.map((a, i) => (args[i - 1] === "--token" ? "***" : a));
+      const safeArgs = redactTokenArgs(args);
       throw new ProvisionError(
         `config.sh 注册失败 (code=${r.code}): ${r.output.slice(-800)}`,
         `$ config.sh ${safeArgs.join(" ")}\n(cwd: ${targetDir})\nexit code: ${r.code}\n\n${r.output}`
