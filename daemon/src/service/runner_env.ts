@@ -13,8 +13,9 @@ import { promisify } from "util";
 import fs from "fs-extra";
 import path from "path";
 import logger from "./log";
-import { assertUnderRoots } from "./runner_scan";
+import { assertUnderRoots, readServiceName as readUnitFile } from "./runner_scan";
 import { RUNNER_SVC_HELPER } from "./runner_provision";
+import { dirKey, serviceKey, withRunnerLock } from "./runner_lock";
 
 // 单元名正则，与 daemon controlService / 助手脚本保持一致，防路径穿越
 const SERVICE_RE = /^actions\.runner\.[A-Za-z0-9._@-]+\.service$/;
@@ -68,16 +69,9 @@ function normalizeRunnerDir(dirRaw: string): string {
 }
 
 // 读 <dir>/.service 拿单元名；未装服务(读不到)返回空串，但内容非法必须抛——
-// 校验放在 try 外，避免用错误信息子串来决定是否 rethrow（改一个字就会静默降级）。
+// 校验放在读取之外，避免用错误信息子串来决定是否 rethrow（改一个字就会静默降级）。
 function readServiceName(dir: string): string {
-  const p = path.join(dir, ".service");
-  let svc = "";
-  try {
-    if (!fs.existsSync(p)) return "";
-    svc = fs.readFileSync(p, "utf8").trim();
-  } catch {
-    return "";
-  }
+  const svc = readUnitFile(dir);
   if (svc && !SERVICE_RE.test(svc)) throw new Error(`非法的服务名: ${svc}`);
   return svc;
 }
@@ -286,14 +280,23 @@ export async function writeRunnerEnv(
   patch: RunnerEnvPatch
 ): Promise<RunnerEnvResult> {
   const dir = normalizeRunnerDir(dirRaw);
-  const current = readRunnerEnv(dir);
-  const section = target === "override" ? current.override : current.dotenv;
-  // merge 以当前值打底，读不出来就不能写：否则会把既有变量当成「没有」而整份抹掉。
-  // replace 是整表覆盖、不依赖当前值，读失败不影响。
-  if (section.error && !patch?.replace)
-    throw new Error(`读取现有环境变量失败，已中止写入以免误删：${section.error}`);
-  const desired = resolveDesired(section.vars, patch || {});
-  if (target === "override") await writeOverride(dir, current.service, desired);
-  else writeDotEnv(dir, desired);
-  return readRunnerEnv(dir);
+  // 同样与删除互斥：override 是往 /etc/systemd/system/<svc>.d/ 写 drop-in，删除窗口里放行
+  // 它，就会给一个正被卸掉的单元留下 drop-in 目录（助手的 uninstall 不清它）。
+  // 只有 override 占单元名这个 key：dotenv 只写 <dir>/.env，与单元无关，占了反而会和一次
+  // 慢重启(助手 60 秒超时)互相挡——而「存 .env → 另点重启生效」正是页面上的常规操作顺序。
+  const service = readServiceName(dir);
+  const keys = [dirKey(dir)];
+  if (service && target === "override") keys.push(serviceKey(service));
+  return withRunnerLock(keys, "env", async () => {
+    const current = readRunnerEnv(dir);
+    const section = target === "override" ? current.override : current.dotenv;
+    // merge 以当前值打底，读不出来就不能写：否则会把既有变量当成「没有」而整份抹掉。
+    // replace 是整表覆盖、不依赖当前值，读失败不影响。
+    if (section.error && !patch?.replace)
+      throw new Error(`读取现有环境变量失败，已中止写入以免误删：${section.error}`);
+    const desired = resolveDesired(section.vars, patch || {});
+    if (target === "override") await writeOverride(dir, current.service, desired);
+    else writeDotEnv(dir, desired);
+    return readRunnerEnv(dir);
+  });
 }

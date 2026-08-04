@@ -33,6 +33,7 @@ import {
   RUNNER_SVC_HELPER,
   uninstallSystemdService
 } from "./runner_provision";
+import { dirKey, serviceKey, withRunnerLock } from "./runner_lock";
 import type {
   RegisterRunnerItem,
   RegisterRunnerResult,
@@ -134,6 +135,20 @@ export interface ScanResult {
 
 function isRunnerDir(dir: string) {
   return fs.existsSync(path.join(dir, ".runner"));
+}
+
+// 读 <dir>/.service 拿 systemd 单元名；文件不存在 / 读不动都当「没装服务」，返回空串。
+// .service 是「目录 → 单元」的权威映射，目录名不可信：simpler-ci/npu-runner-1 这个目录，
+// runner 在 GitHub 上其实叫 runner-dev4-7，服务名也是按后者拼的。
+// 导出给 deleteRunner（取锁要用）与 runner_env（它在这之上再加一道单元名合法性校验）复用。
+export function readServiceName(dir: string): string {
+  try {
+    const p = path.join(dir, ".service");
+    if (!fs.existsSync(p)) return "";
+    return fs.readFileSync(p, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 // 收集所有含 .runner 的目录；命中即停，不再往里挖
@@ -328,14 +343,7 @@ async function buildRunners(dirs: string[]): Promise<ScannedRunner[]> {
     } catch (err: any) {
       draft.broken = `.runner 解析失败: ${err.message}`;
     }
-    // .service 是目录 → systemd 单元名的权威映射。目录名不可信：simpler-ci/npu-runner-1
-    // 这个目录，runner 在 GitHub 上其实叫 runner-dev4-7，服务名也是按后者拼的。
-    try {
-      const p = path.join(dir, ".service");
-      if (fs.existsSync(p)) draft.service = fs.readFileSync(p, "utf8").trim();
-    } catch {
-      /* 没有 .service 就是没装 systemd 服务 */
-    }
+    draft.service = readServiceName(dir);
     return draft;
   });
 
@@ -649,10 +657,16 @@ export interface DeleteResult {
   warnings: string[]; // 由非 ok 步骤派生，兼容旧用法
 }
 
+export interface DeleteRunnerOptions {
+  removeToken?: string; // GitHub 删除 token，没有就跳过注销那一步
+  proxy?: string;
+  force?: boolean; // 正在跑 job 也删（会中断 CI）
+}
+
 // 删除是不可逆的破坏性操作。分步 best-effort：单步失败记 warning 但继续，尽量把 runner 清干净。
 export async function deleteRunner(
   dirRaw: string,
-  opts: { removeToken?: string; proxy?: string; force?: boolean } = {}
+  opts: DeleteRunnerOptions = {}
 ): Promise<DeleteResult> {
   const dir = path.normalize(String(dirRaw || ""));
   // 严格校验：绝对路径、非根、必须在扫描根下、且看起来确实是 runner 目录——绝不误删别处
@@ -667,6 +681,18 @@ export async function deleteRunner(
   if (!fs.existsSync(path.join(dir, ".runner")) && !fs.existsSync(path.join(dir, ".cipanel")))
     throw new Error("不是 runner 目录（无 .runner / .cipanel），拒绝删除");
 
+  // 单元名必须在动手之前读：uninstall 成功后助手会把 <dir>/.service 一并删掉，之后就取不到了。
+  // 内容不合法就不占这个 key —— controlService 本来也会拒掉这种单元名，占了只是白占。
+  const service = readServiceName(dir);
+  const keys = [dirKey(dir)];
+  if (SERVICE_RE.test(service)) keys.push(serviceKey(service));
+  // 删除期间挡住同一个 runner 的置备与启停（原因见 runner_lock 顶部）。目录与单元名两个 key
+  // 都占：provision 只按目录进来，service_control 只按单元名进来，各挡一条路。
+  return withRunnerLock(keys, "delete", () => runDelete(dir, opts));
+}
+
+// 删除本体。进来时已在锁内、目录也已校验过。
+async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<DeleteResult> {
   const steps: DeleteStep[] = [];
 
   // busy 拦截：正在跑 job 的删除会当场中断 CI，必须显式 force
@@ -829,6 +855,17 @@ export async function controlService(
   // 助手会再校验一次（那次才是有效的边界）；这里挡住明显非法值，省一次 sudo 往返
   if (!SERVICE_RE.test(service)) throw new Error(`非法的服务名: ${service}`);
 
+  // 与 deleteRunner 互斥：删除窗口里的 start/restart 会把刚被卸掉的单元重新拉起来，而目录
+  // 随后就没了。顺带把同一单元的并发启停也串了起来——批量启停按单元扇出，不同 runner 各占
+  // 各的 key，互不阻塞。
+  return withRunnerLock([serviceKey(service)], "service", () => runServiceAction(service, action));
+}
+
+// 启停本体。进来时已在锁内、action 与单元名都已校验过。
+async function runServiceAction(
+  service: string,
+  action: SystemdAction
+): Promise<ServiceControlResult> {
   // 重启前的状态：下面判断「restart 是否真的发生了」要拿它的 since 做对比
   const before = (await querySystemd([service])).get(service) || null;
 

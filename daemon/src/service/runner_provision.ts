@@ -21,6 +21,7 @@ import { writeMarker, readMarker } from "./runner_marker";
 // 调用点属性访问（tsc 与 webpack 打包皆然），而两侧都只在函数体里运行时相互调用、
 // 不在模块作用域求值，所以不会踩到上面第 22 行说的那类初始化顺序问题。
 import { assertUnderRoots } from "./runner_scan";
+import { dirKey, withRunnerLock } from "./runner_lock";
 
 // 实例类型常量，等于 Instance.TYPE_UNIVERSAL。刻意用字面量而不 import Instance 类：
 // instance.ts 处在 instance↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
@@ -125,30 +126,58 @@ export class ProvisionError extends Error {
 function run(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv }
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number }
 ): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     let output = "";
-    const p = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, shell: false });
+    const p = spawn(cmd, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      shell: false,
+      timeout: opts.timeout
+    });
     p.stdout.on("data", (d) => (output += d.toString()));
     p.stderr.on("data", (d) => (output += d.toString()));
     p.on("error", (e) => resolve({ code: -1, output: `${output}\n${e.message}` }));
-    p.on("close", (code) => resolve({ code: code ?? -1, output }));
+    p.on("close", (code, signal) => {
+      // 超时是发信号杀掉、退出码为 null，不点破的话调用方只看到一个没有任何解释的失败
+      if (signal)
+        output += `\n进程被信号 ${signal} 终止${opts.timeout ? `（超时 ${opts.timeout}ms）` : ""}`;
+      resolve({ code: code ?? -1, output });
+    });
   });
 }
 
+// config.sh 的超时。它要连 GitHub，走的又常是不稳的代理——代理黑洞掉连接时进程可以永远挂着，
+// 而 config.sh 跑在 runner 锁内（注册在置备里、remove 在删除里），一个挂死的子进程会把该
+// runner 的删除/置备/启停/改环境变量全部锁到 daemon 重启为止。宁可给一个宽到正常绝不会碰到
+// 的上限（正常几秒到几十秒），也不能让锁永远放不掉。
+const CONFIG_SH_TIMEOUT_MS = 5 * 60 * 1000;
+
 export async function provisionRunner(params: ProvisionRunnerParams) {
+  const targetDir = path.normalize(params.targetDir || "");
+  if (!path.isAbsolute(targetDir) || targetDir === "/")
+    throw new Error("目标目录必须是绝对路径且不能为根目录 /");
+  // 与 deleteRunner 互斥：删除正在等 systemd 停下来的那几十秒里若放行置备，单元会被重新装上
+  // 并拉起，而删除随后就把目录删了——留下一个工作目录已不存在的孤儿单元（见 runner_lock）。
+  return withRunnerLock([dirKey(targetDir)], "provision", () => runProvision(params, targetDir));
+}
+
+// 置备本体。进来时已在锁内，targetDir 已规范化并校验过。
+// 刻意用 Omit 去掉 params.targetDir：那是调用方原样传进来、还没规范化的值，而它决定了
+// assertBaseDirRepo 的基目录与解压落点——留在类型里迟早有人顺手用错一个。
+async function runProvision(
+  params: Omit<ProvisionRunnerParams, "targetDir">,
+  targetDir: string
+) {
   const { repoUrl, token, name } = params;
   const labels = (params.labels || "").trim();
   const proxy = resolveProxy(params.proxy);
-  const targetDir = path.normalize(params.targetDir || "");
 
   // ---- 校验 ----
   if (!repoUrl || !/^https?:\/\/.+/.test(repoUrl)) throw new Error("仓库地址无效（需 http/https URL）");
   if (!token) throw new Error("注册 token 不能为空");
   if (!name) throw new Error("runner 名称不能为空");
-  if (!path.isAbsolute(targetDir) || targetDir === "/")
-    throw new Error("目标目录必须是绝对路径且不能为根目录 /");
   assertBaseDirRepo(path.dirname(targetDir), repoUrl); // 一个基目录只归一个仓库
 
   const step = params.onStep || (() => {});
@@ -195,7 +224,11 @@ export async function provisionRunner(params: ProvisionRunnerParams) {
     const MAX_ATTEMPTS = 5;
     let r = { code: -1, output: "" };
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      r = await run(path.join(targetDir, "config.sh"), args, { cwd: targetDir, env: childEnv });
+      r = await run(path.join(targetDir, "config.sh"), args, {
+        cwd: targetDir,
+        env: childEnv,
+        timeout: CONFIG_SH_TIMEOUT_MS
+      });
       if (r.code === 0) break;
       const transient =
         /ended prematurely|ResponseEnded|reset by peer|ECONNRESET|EPIPE|timed?\s*out|timeout|EOF|SSL|TLS handshake|connection|502|503|504|Bad Gateway|Gateway Time-?out/i.test(
@@ -361,7 +394,11 @@ export async function removeGithubRegistration(
     childEnv.HTTP_PROXY = childEnv.HTTPS_PROXY = childEnv.ALL_PROXY = pxy;
     childEnv.NO_PROXY = "localhost,127.0.0.1,::1";
   }
-  const r = await run(configSh, ["remove", "--token", token], { cwd: dir, env: childEnv });
+  const r = await run(configSh, ["remove", "--token", token], {
+    cwd: dir,
+    env: childEnv,
+    timeout: CONFIG_SH_TIMEOUT_MS
+  });
   if (r.code !== 0) return { ok: false, error: r.output.slice(-300) };
   return { ok: true };
 }
