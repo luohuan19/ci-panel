@@ -401,11 +401,11 @@ export const runnerDiagLogs = useDefineApi<
 
 // 启停结果同样来自 common（common/src/runner_protocol.ts），与 daemon 一份声明
 export type { ServiceControlResult, SystemdAction, SystemdState } from "mcsmanager-common";
-import type { ServiceControlResult } from "mcsmanager-common";
+import type { ServiceControlResult, SystemdAction } from "mcsmanager-common";
 
 // 启停 systemd 托管的 runner。依赖 daemon 侧的 sudoers 免密白名单
 export const controlRunnerService = useDefineApi<
-  { params: { daemonId: string }; data: { service: string; action: "start" | "stop" | "restart" } },
+  { params: { daemonId: string }; data: { service: string; action: SystemdAction } },
   ServiceControlResult
 >({
   url: "/api/runner/service_control",
@@ -489,7 +489,7 @@ export const controlRunnerServiceBatch = useDefineApi<
     params: { daemonId: string };
     data: {
       items: Array<{ dir: string; service: string }>;
-      action: "start" | "stop" | "restart";
+      action: SystemdAction;
       concurrency?: number;
     };
   },

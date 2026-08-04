@@ -33,6 +33,7 @@ import {
   RUNNER_SVC_HELPER,
   uninstallSystemdService
 } from "./runner_provision";
+import { dirKey, serviceKey, withRunnerLock } from "./runner_lock";
 import type {
   RegisterRunnerItem,
   RegisterRunnerResult,
@@ -136,6 +137,22 @@ function isRunnerDir(dir: string) {
   return fs.existsSync(path.join(dir, ".runner"));
 }
 
+// 读 <dir>/.service 拿 systemd 单元名。文件不存在（ENOENT）= 没装服务，返回空串；
+// 其余失败（权限、EIO 等）一律抛出——绝不能把「读不到」也当成「没装」：deleteRunner 正是
+// 靠这个返回值决定要不要占单元名那把锁，静默返回空串会让它在毫无保护的情况下往下删，
+// 而这恰恰是本模块要防的那个竞态。不先 existsSync 再读，也顺手去掉了那对 TOCTOU。
+// .service 是「目录 → 单元」的权威映射，目录名不可信：simpler-ci/npu-runner-1 这个目录，
+// runner 在 GitHub 上其实叫 runner-dev4-7，服务名也是按后者拼的。
+// 导出给 deleteRunner（取锁要用）与 runner_env（它在这之上再加一道单元名合法性校验）复用。
+export function readServiceName(dir: string): string {
+  try {
+    return fs.readFileSync(path.join(dir, ".service"), "utf8").trim();
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return "";
+    throw err;
+  }
+}
+
 // 收集所有含 .runner 的目录；命中即停，不再往里挖
 function collectRunnerDirs(dir: string, depth: number, out: string[], errors: ScanResult["errors"]) {
   if (depth > MAX_DEPTH) return;
@@ -165,14 +182,26 @@ function collectRunnerDirs(dir: string, depth: number, out: string[], errors: Sc
 // 一次 systemctl show 查完所有单元，省得 30 个 runner 调 30 次。异步执行，不阻塞事件循环。
 async function querySystemd(services: string[]): Promise<Map<string, SystemdState>> {
   const result = new Map<string, SystemdState>();
-  if (services.length === 0) return result;
+  // 单元名来自各 runner 目录下的 .service，而那个文件 runner 属主自己就能改写。不校验就直接
+  // 展开进 argv 的话，一份写着 `--property=…` 的 .service 就能改掉这次查询——下面那个
+  // --property 排在它们后面，而 systemctl 的选项不认位置。execFile 是数组传参、不起 shell，
+  // 所以够不成命令注入，但该拦的还是要拦：形状不合法的一律不查（照旧回 null 状态）。
+  const wanted = services.filter((s) => SERVICE_RE.test(s));
+  // 丢掉的要说出来。本文件对 .service 的一贯态度是「查不到状态必须让人知道」（见 buildRunners
+  // 里的 broken），静默过滤会让一个 .service 写坏的 runner 悄悄显示成「没装服务」。
+  if (wanted.length !== services.length)
+    logger.warn(
+      `[runner-scan] 忽略 ${services.length - wanted.length} 个形状非法的单元名，` +
+        `对应 runner 的 systemd 状态将显示为未知`
+    );
+  if (wanted.length === 0) return result;
   let out = "";
   try {
     const r = await execFileAsync(
       SYSTEMCTL,
       [
         "show",
-        ...services,
+        ...wanted,
         "--property=Id,LoadState,ActiveState,SubState,UnitFileState,ExecMainStartTimestamp"
       ],
       { encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 }
@@ -328,13 +357,14 @@ async function buildRunners(dirs: string[]): Promise<ScannedRunner[]> {
     } catch (err: any) {
       draft.broken = `.runner 解析失败: ${err.message}`;
     }
-    // .service 是目录 → systemd 单元名的权威映射。目录名不可信：simpler-ci/npu-runner-1
-    // 这个目录，runner 在 GitHub 上其实叫 runner-dev4-7，服务名也是按后者拼的。
+    // readServiceName 现在对非 ENOENT 的失败会抛（删除路径必须 fail closed），但扫描是列表
+    // 视图：一个 runner 的 .service 读不动，不该让整份列表都拿不到。记在这一条的 broken 上，
+    // 其余照常列出。service 留空意味着查不到 systemd 状态，所以必须说出来，不能静默。
     try {
-      const p = path.join(dir, ".service");
-      if (fs.existsSync(p)) draft.service = fs.readFileSync(p, "utf8").trim();
-    } catch {
-      /* 没有 .service 就是没装 systemd 服务 */
+      draft.service = readServiceName(dir);
+    } catch (err: unknown) {
+      const msg = `.service 读取失败: ${errText(err)}`;
+      draft.broken = draft.broken ? `${draft.broken}；${msg}` : msg;
     }
     return draft;
   });
@@ -465,6 +495,16 @@ export async function getManagedRunnerCounts(): Promise<ManagedRunnerCounts> {
 export async function scanOneRunner(dirRaw: string): Promise<ScannedRunner | null> {
   const dir = path.normalize(String(dirRaw || ""));
   if (!path.isAbsolute(dir) || dir === "/") throw new Error("目录必须是绝对路径且不能是 /");
+  // 边界校验：dir 来自前端（runner_router 的 runner/state 原样透传）。少了这一句，任意绝对
+  // 路径都能拿来读 <dir>/.runner、.service、.cipanel。
+  // 放行已纳管的目录，与 registerRunners 同一套判断：被管理的 runner 允许落在扫描根之外
+  // （见 managedRunnerDirs 的说明），一刀切会让那些 runner 的详情页直接打不开。
+  // 用 readMarker 而不是 hasMarker：后者只看文件在不在，一个空的 .cipanel 就能把闸放开；
+  // 前者要求 marker 真能解析出 id，与 buildRunners 判定 managed 用的是同一个来源。
+  // 说清这道闸的边界：它挡的是「没有合法 .cipanel 的任意路径」。已经被植入合法 .cipanel 的
+  // 路径仍会走到下面的 reconcileHandle → ensureHandleInstance（句柄实例的 cwd 就是文件管理
+  // 的根），那一层由本路由的 ROLE.ADMIN、以及植入 marker 本就需要目标目录写权限来兜底。
+  if (!readMarker(dir)) assertUnderRoots(dir);
   const runner = (await buildRunners([dir]))[0] || null;
   if (runner) reconcileHandle(runner); // 详情页直接进来时也补齐，保证文件管理可用
   return runner;
@@ -649,10 +689,16 @@ export interface DeleteResult {
   warnings: string[]; // 由非 ok 步骤派生，兼容旧用法
 }
 
+export interface DeleteRunnerOptions {
+  removeToken?: string; // GitHub 删除 token，没有就跳过注销那一步
+  proxy?: string;
+  force?: boolean; // 正在跑 job 也删（会中断 CI）
+}
+
 // 删除是不可逆的破坏性操作。分步 best-effort：单步失败记 warning 但继续，尽量把 runner 清干净。
 export async function deleteRunner(
   dirRaw: string,
-  opts: { removeToken?: string; proxy?: string; force?: boolean } = {}
+  opts: DeleteRunnerOptions = {}
 ): Promise<DeleteResult> {
   const dir = path.normalize(String(dirRaw || ""));
   // 严格校验：绝对路径、非根、必须在扫描根下、且看起来确实是 runner 目录——绝不误删别处
@@ -667,6 +713,25 @@ export async function deleteRunner(
   if (!fs.existsSync(path.join(dir, ".runner")) && !fs.existsSync(path.join(dir, ".cipanel")))
     throw new Error("不是 runner 目录（无 .runner / .cipanel），拒绝删除");
 
+  // 单元名必须在动手之前读：uninstall 成功后助手会把 <dir>/.service 一并删掉，之后就取不到了。
+  // 内容不合法就不占这个 key —— controlService 本来也会拒掉这种单元名，占了只是白占。
+  // 读不出来（权限、EIO）就拒绝删除：拿不到单元名就占不上那把锁，等于在毫无保护的情况下开删。
+  // 和上面几道守卫一样，把原始 fs 错误包一层，说清楚是「因为这个」才不删的。
+  let service: string;
+  try {
+    service = readServiceName(dir);
+  } catch (err: unknown) {
+    throw new Error(`读取 .service 失败，无法确定 systemd 单元名，拒绝删除: ${errText(err)}`);
+  }
+  const keys = [dirKey(dir)];
+  if (SERVICE_RE.test(service)) keys.push(serviceKey(service));
+  // 删除期间挡住同一个 runner 的置备与启停（原因见 runner_lock 顶部）。目录与单元名两个 key
+  // 都占：provision 只按目录进来，service_control 只按单元名进来，各挡一条路。
+  return withRunnerLock(keys, "delete", () => runDelete(dir, opts));
+}
+
+// 删除本体。进来时已在锁内、目录也已校验过。
+async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<DeleteResult> {
   const steps: DeleteStep[] = [];
 
   // busy 拦截：正在跑 job 的删除会当场中断 CI，必须显式 force
@@ -788,8 +853,12 @@ export async function deleteRunner(
 // (systemctl 接受多个单元名)。glob 排不掉空白，sudo < 1.9.10 也没有锚定正则。所以校验放进
 // root 拥有的助手脚本里，sudoers 只放行助手本身。
 
-// satisfies 把它和 common 里的 SystemdAction 钉在一起：协议加了动作而这里忘了放行，编译期就报
-const ALLOWED_ACTIONS = ["start", "stop", "restart"] as const satisfies readonly SystemdAction[];
+// 用 Record<SystemdAction, true> 而不是数组 + satisfies：数组只校验每个元素合法，协议里新增一个
+// 动作它照样编译得过，这里就会静默地不放行。记录型要求每个成员都显式列出，漏一个当场报错。
+const ALLOWED_ACTIONS = { start: true, stop: true, restart: true } as const satisfies Record<
+  SystemdAction,
+  true
+>;
 
 // 助手已经把 job 交给 systemd 之后，最多再等多久确认它跑到位。等不到不算失败——如实回
 // settled:false，让调用方去看状态轮询，绝不把请求挂在这里（见下方 controlService 的注释）。
@@ -819,10 +888,23 @@ export async function controlService(
   service: string,
   action: SystemdAction
 ): Promise<ServiceControlResult> {
-  if (!ALLOWED_ACTIONS.includes(action)) throw new Error(`不支持的操作: ${action}`);
+  // hasOwnProperty 而不是 in：action 来自请求体，别让 "toString" 这类原型链上的键蒙混过关
+  if (!Object.prototype.hasOwnProperty.call(ALLOWED_ACTIONS, action))
+    throw new Error(`不支持的操作: ${action}`);
   // 助手会再校验一次（那次才是有效的边界）；这里挡住明显非法值，省一次 sudo 往返
   if (!SERVICE_RE.test(service)) throw new Error(`非法的服务名: ${service}`);
 
+  // 与 deleteRunner 互斥：删除窗口里的 start/restart 会把刚被卸掉的单元重新拉起来，而目录
+  // 随后就没了。顺带把同一单元的并发启停也串了起来——批量启停按单元扇出，不同 runner 各占
+  // 各的 key，互不阻塞。
+  return withRunnerLock([serviceKey(service)], "service", () => runServiceAction(service, action));
+}
+
+// 启停本体。进来时已在锁内、action 与单元名都已校验过。
+async function runServiceAction(
+  service: string,
+  action: SystemdAction
+): Promise<ServiceControlResult> {
   // 重启前的状态：下面判断「restart 是否真的发生了」要拿它的 since 做对比
   const before = (await querySystemd([service])).get(service) || null;
 
