@@ -12,6 +12,10 @@ import axios from "axios";
 import InstanceSubsystem from "./system_instance";
 import logger from "./log";
 import { writeMarker, readMarker } from "./runner_marker";
+// runner_scan 也引本模块，这里构成一个环。安全：module 是 commonjs，命名导入编译成
+// 调用点属性访问（tsc 与 webpack 打包皆然），而两侧都只在函数体里运行时相互调用、
+// 不在模块作用域求值，所以不会踩到上面第 22 行说的那类初始化顺序问题。
+import { assertUnderRoots } from "./runner_scan";
 
 // 实例类型常量，等于 Instance.TYPE_UNIVERSAL。刻意用字面量而不 import Instance 类：
 // instance.ts 处在 instance↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
@@ -803,6 +807,13 @@ export function collectRunners(baseDir: string): CollectResult {
   const base = path.normalize((baseDir || "").trim());
   if (!path.isAbsolute(base) || base === "/")
     throw new Error("基目录必须是绝对路径且不能为根目录 /");
+  // baseDir 来自前端（runner_router.ts 原样透传 data.baseDir），必须落在扫描根之内。
+  // 少了这一句，任意目录都能被纳管：下面对每个匹配的子目录会 ensureHandleInstance +
+  // writeMarker，而句柄实例的 cwd 就是文件管理接口的根 —— 等于把任意路径变成可网页浏览。
+  //
+  // 必须排在所有 fs.* 之前：放到存在性检查之后的话，「不存在」和「越界」会给出两种不同的
+  // 报错，等于把这个接口变成任意路径的存在性探针。readRunnerDiag 里也是同样的顺序。
+  assertUnderRoots(base);
   if (!fs.existsSync(base) || !fs.statSync(base).isDirectory())
     throw new Error(`基目录不存在或不是目录: ${base}`);
 
@@ -818,6 +829,15 @@ export function collectRunners(baseDir: string): CollectResult {
 
   for (const name of fs.readdirSync(base)) {
     const dir = path.join(base, name);
+    // 逐个子项复核：base 在扫描根内不代表子项也在——子项可以是指向根外的符号链接，
+    // 而下面的 statSync 会跟随它。这里跳过而不是整体抛错，免得一个坏链接
+    // 让整次收集失败（下面 statSync 失败时也是同样的跳过语义）。
+    try {
+      assertUnderRoots(dir);
+    } catch {
+      skipped.push({ name, reason: "不在扫描根内（可能是符号链接）" });
+      continue;
+    }
     try {
       if (!fs.statSync(dir).isDirectory()) continue;
     } catch {

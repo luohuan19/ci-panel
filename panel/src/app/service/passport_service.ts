@@ -221,6 +221,7 @@ export function checkBanIp(ctx: Koa.ParameterizedContext) {
 }
 
 export function getUuidByApiKey(apiKey: string) {
+  if (!apiKey) return null;
   const pageData = userSystem.getQueryWrapper().selectPage(
     {
       apiKey
@@ -228,10 +229,14 @@ export function getUuidByApiKey(apiKey: string) {
     1,
     1
   );
-  if (pageData.total === 1) {
-    return pageData.data[0];
-  }
-  return null;
+  if (pageData.total !== 1) return null;
+  const user = pageData.data[0];
+  // Re-check exactly. The query layer decides on its own whether a condition value is a
+  // pattern, and this key comes straight from ?apikey= / x-request-api-key — an attacker
+  // controls its shape. permission() grants this user's level to the request, so nothing
+  // short of a byte-for-byte match may pass, whatever the query layer's semantics become.
+  // (Do not switch to QueryWrapper.select: LocalFileSource.select is a stub returning [].)
+  return user?.apiKey === apiKey ? user : null;
 }
 
 export function isApiRequest(ctx: Koa.ParameterizedContext) {

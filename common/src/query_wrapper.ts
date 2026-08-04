@@ -11,6 +11,33 @@ interface Page<T> {
   data: T[];
 }
 
+// Shared pagination for both data sources below. Previously each carried its own copy of
+//   while (size > 0) { size -= pageSize; maxPage++; }
+// which never terminates for pageSize <= 0. That loop is synchronous, so no timeout can
+// preempt it: a single request with pageSize 0 pinned the whole event loop. Callers reach
+// it through `toNumber(data.pageSize) ?? 1`, and toNumber("") is 0, which ?? does not catch.
+function paginate<T>(data: T[], page: number, pageSize: number) {
+  // Floor before validating, not after: callers clamp with Math.max/Math.min, which keeps a
+  // fractional page_size from the query string intact (the route validator only runs
+  // Number()). The old loop tolerated 1.5, so rejecting it outright would turn a request
+  // that used to work into a 500. Flooring first also rejects 0.5, which would otherwise
+  // survive the > 0 check and then divide by zero.
+  const size = Math.floor(pageSize);
+  if (!Number.isFinite(size) || size <= 0)
+    throw new RangeError(`pageSize must be a positive number, got ${pageSize}`);
+  // page 同样要取整：一个小数 page 会让 start 落在页边界之间，返回的窗口跨着两页。
+  const index = Math.floor(page);
+  if (!Number.isFinite(index) || index <= 0)
+    throw new RangeError(`page must be a positive number, got ${page}`);
+  const start = (index - 1) * size;
+  return {
+    page: index,
+    pageSize: size,
+    maxPage: Math.ceil(data.length / size),
+    data: data.slice(start, start + size)
+  };
+}
+
 // Provide the MAP query interface used by the routing layer
 export class QueryMapWrapper {
   constructor(public map: IMap) {}
@@ -24,20 +51,7 @@ export class QueryMapWrapper {
   }
 
   page<T>(data: T[], page = 1, pageSize = 10) {
-    const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    let size = data.length;
-    let maxPage = 0;
-    while (size > 0) {
-      size -= pageSize;
-      maxPage++;
-    }
-    return {
-      page,
-      pageSize,
-      maxPage,
-      data: data.slice(start, end)
-    };
+    return paginate(data, page, pageSize);
   }
 }
 
@@ -80,10 +94,24 @@ export class LocalFileSource<T> implements IDataSource<T> {
       for (const key in condition) {
         const dataValue = v[key];
         const targetValue = condition[key];
-        if (targetValue[0] == "%") {
-          if (!dataValue.includes(targetValue.slice(1, targetValue.length - 1))) return false;
-        } else {
-          if (targetValue !== dataValue) return false;
+        // Only a %needle% value — leading AND trailing % — is treated as a substring match.
+        // manage_user_router builds `%${userName}%` for its admin search and relies on this.
+        //
+        // Anything else compares exactly. The previous form keyed off the leading % alone and
+        // searched for `slice(1, length - 1)`, so a bare "%" searched for "" — and
+        // "".includes("") is always true, matching every record. getUuidByApiKey accepts on
+        // total === 1, so `?apikey=%` resolved to the user on a single-user panel. The same
+        // slice was off by one without a trailing %: "%abc" searched for "ab".
+        const isPattern =
+          typeof targetValue === "string" &&
+          targetValue.length > 2 &&
+          targetValue.startsWith("%") &&
+          targetValue.endsWith("%");
+        if (isPattern) {
+          const needle = targetValue.slice(1, -1);
+          if (typeof dataValue !== "string" || !dataValue.includes(needle)) return;
+        } else if (targetValue !== dataValue) {
+          return;
         }
       }
       result.push(v);
@@ -92,21 +120,7 @@ export class LocalFileSource<T> implements IDataSource<T> {
   }
 
   page(data: T[], page = 1, pageSize = 10) {
-    const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    let size = data.length;
-    let maxPage = 0;
-    while (size > 0) {
-      size -= pageSize;
-      maxPage++;
-    }
-    return {
-      page,
-      pageSize,
-      maxPage,
-      total: data.length,
-      data: data.slice(start, end)
-    };
+    return { ...paginate(data, page, pageSize), total: data.length };
   }
 
   select(condition: any): any[] {

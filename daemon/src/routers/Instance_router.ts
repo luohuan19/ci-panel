@@ -35,8 +35,16 @@ routerApp.use((event, ctx, data, next) => {
 
 // Get the list of instances of this daemon (query)
 routerApp.on("instance/select", (ctx, data) => {
-  const page = toNumber(data.page) ?? 1;
-  const pageSize = toNumber(data.pageSize) ?? 1;
+  // Sanitise instead of trusting the coercion: toNumber("") and toNumber(0) both yield 0,
+  // which `?? 1` does not rescue, and toNumber("Infinity") yields Infinity. Degrade to the
+  // default rather than let QueryMapWrapper.page reject the request — panel/daemon is an
+  // untrusted boundary, so the guard lives on both sides.
+  const asCount = (v: unknown, def: number, max: number) => {
+    const n = toNumber(v);
+    return n !== null && Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : def;
+  };
+  const page = asCount(data.page, 1, Number.MAX_SAFE_INTEGER);
+  const pageSize = asCount(data.pageSize, 1, 100);
   const condition = data.condition;
   const targetTag = data.condition.tag;
   const overview: IInstanceDetail[] = [];
