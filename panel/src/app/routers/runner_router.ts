@@ -11,7 +11,7 @@ import { parseRepoSlug } from "../entity/repo";
 import { logger } from "../service/log";
 import { $t } from "../i18n";
 import { errMessage } from "../utils/error";
-import type { RegisterRunnerResult } from "mcsmanager-common";
+import { collectRegisteredRepoSlugs } from "mcsmanager-common";
 
 // 创建/导入 runner 时自动把其仓库纳管进注册表（若还没有）。不带 PAT——回退全局 token，用户之后可补填。
 // 用面板给某仓库建 runner、或把它的 runner 导进来，显然是要管它，仓库就该自动登记，
@@ -350,11 +350,11 @@ router.post(
       // 导入即纳管其仓库，和 provision 路径一致。用 daemon 回传的 repo 而非请求体里的：
       // 那是 daemon 从 .runner 读出来的，与之后 managed_list 归堆用的 slug 同源，
       // 否则注册表的 key 可能对不上，仓库列表里照样显示"未纳管"。
-      const slugs = new Set<string>();
-      for (const r of (result as { results?: RegisterRunnerResult[] })?.results || []) {
-        if (r?.ok && r.repo) slugs.add(r.repo);
-      }
-      const registeredRepos = Array.from(slugs).filter((slug) =>
+      //
+      // 提取字段的活交给 common 里的 collectRegisteredRepoSlugs：这里原本是一句不受检查的
+      // `result as { results?: RegisterRunnerResult[] }`，daemon 改字段名编译期没有任何动静。
+      // 现在那段窄化和协议声明住在同一个文件里，并且有测试盯着。
+      const registeredRepos = collectRegisteredRepoSlugs(result).filter((slug) =>
         ensureRepoRegistered(slug, $t("TXT_CODE_REPO_AUTO_REGISTER_IMPORT"))
       );
       ctx.body = { ...(result as object), registeredRepos };

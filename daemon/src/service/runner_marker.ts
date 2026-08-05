@@ -13,6 +13,7 @@
 import fs from "fs-extra";
 import path from "path";
 import { v4 } from "uuid";
+import type { RunnerSource } from "mcsmanager-common";
 
 export const MARKER_FILE = ".cipanel";
 // v2：新增 labels 字段。v1 老 marker 无 labels，读出为 ""（标签未知），安全降级。
@@ -20,7 +21,10 @@ const MARKER_VERSION = 2;
 
 // source 刻意只记「来源」（创建还是导入）这个不变量，不记 systemd/panel/both 这种
 // 会漂移的实时托管方式——后者每次探测现算，存进静态文件只会过期误导。
-export type RunnerSource = "provision" | "import";
+//
+// 定义在 common/src/runner_protocol.ts，三方共用。这里只转出去，免得已有的
+// `from "./runner_marker"` 全要改路径——之前这里是第二份手写声明，两边各自演化。
+export type { RunnerSource };
 
 export interface RunnerMarker {
   v: number;

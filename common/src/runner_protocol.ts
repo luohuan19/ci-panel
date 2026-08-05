@@ -3,8 +3,8 @@
 // 之前 daemon 与 frontend 各手写一份、panel 再声明一次自己用到的字段，给结果加一个
 // 字段要改三处，漏一处只会在运行时才发现。
 //
-// 刻意只放类型、不引任何运行时依赖：前端用 `import type` 引它，编译期就被擦除，
-// 不会把 common 里的 fs / child_process 代码带进浏览器 bundle。
+// 除文件末尾那个纯函数外只放类型，且**不引任何运行时依赖**：前端用 `import type` 引它，
+// 编译期就被擦除，不会把 common 里的 fs / child_process 代码带进浏览器 bundle。
 export type RunnerSource = "provision" | "import";
 
 // 纳管一个 runner 目录的入参
@@ -50,4 +50,28 @@ export interface ServiceControlResult {
   action: SystemdAction;
   settled: boolean; // false = systemd 收下了 job，但等待窗口内还没跑到位（多半是停不掉的单元）
   status: SystemdState | null; // settled 时是终态；否则是等待窗口结束时的即时状态
+}
+
+// panel 转发 daemon 的 runner/register 回复时，要从中挑出「本次纳管成功、且 daemon 解析出
+// 仓库」的那些 slug，用来顺带登记仓库注册表。
+//
+// 提取成函数，是因为 panel 原先在路由里直接写 `(result as { results?: RegisterRunnerResult[] })`
+// —— RemoteRequest 的返回是 unknown，那个断言不受任何检查。daemon 改个字段名编译期毫无动静，
+// 运行时 results 变 undefined，循环一次都不进，registeredRepos 恒为空数组：仓库列表里
+// 一直显示「未纳管」，而没有任何一处报错。
+//
+// 放在协议文件里而不是 panel 里，是为了让它和它依赖的字段名同生共死：改了 RegisterRunnerResult
+// 就必须改这里，而这里有测试盯着。运行时只做窄化，不信任入参的任何形状。
+export function collectRegisteredRepoSlugs(payload: unknown): string[] {
+  const results = (payload as { results?: unknown } | null | undefined)?.results;
+  if (!Array.isArray(results)) return [];
+  const slugs = new Set<string>();
+  for (const r of results) {
+    if (!r || typeof r !== "object") continue;
+    const item = r as Partial<RegisterRunnerResult>;
+    // 只收成功项：失败项的 repo 可能是请求体里的兜底值，与 daemon 从 .runner 读出的
+    // 不同源，登记进去会让注册表的 key 对不上。
+    if (item.ok === true && typeof item.repo === "string" && item.repo) slugs.add(item.repo);
+  }
+  return Array.from(slugs);
 }

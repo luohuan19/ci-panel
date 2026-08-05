@@ -98,7 +98,11 @@ jobs:
       - name: Test frontend
         run: npm run test --prefix frontend
 
-      # daemon's tsconfig `include` covers only src/, so webpack never sees a spec. Without
-      # this, a spec referencing a renamed export would keep "passing" indefinitely.
+      # Neither package's build tsconfig includes test/, and vitest transpiles through esbuild
+      # without type-checking — so without these steps a spec referencing a renamed export would
+      # keep "passing" indefinitely. common's matters most: it owns the shared protocol types.
+      - name: Type-check common (incl. tests)
+        run: npm run type-check --prefix common
+
       - name: Type-check daemon (incl. tests)
         run: npm run type-check --prefix daemon

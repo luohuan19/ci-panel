@@ -14,6 +14,7 @@
     "build": "tsc --project tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "type-check": "tsc --noEmit -p tsconfig.test.json",
     "pub": "npm publish"
   },
   "dependencies": {
