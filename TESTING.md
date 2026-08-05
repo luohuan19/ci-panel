@@ -9,8 +9,10 @@ the reference: tool choices, full config files, and the reasoning behind them.
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
   **As of Phase 4 all four packages have a suite** — `daemon/` 92, `common/` 79, `frontend/` 55,
   `panel/` 42; 268 in total. `common/`, `daemon/` and `panel/` keep their specs in `test/` and
-  type-check them via `tsconfig.test.json`; `frontend/` keeps its in `src/tools/__tests__/`,
-  covered by `tsconfig.vitest.json`.
+  type-check them via `tsconfig.test.json`, as their own CI steps. `frontend/` keeps its in
+  `src/tools/__tests__/` and type-checks them via `tsconfig.vitest.json` — but through its
+  `build` script (`run-p type-check build-only`), so it has no separate CI step. All four are
+  covered; only three are visible in the `test:` job.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -475,6 +477,8 @@ Run each of these rather than assuming.
    npm run type-check --prefix common      # these three also cover their test/ dirs
    npm run type-check --prefix daemon
    npm run type-check --prefix panel
+   npm run type-check --prefix frontend    # covers src/**/__tests__ via tsconfig.vitest.json;
+                                           #   also runs inside `build --prefix frontend`
    npm run lint --prefix frontend          # only package with lint; rewrites files (--fix)
 
    npm run build --prefix panel

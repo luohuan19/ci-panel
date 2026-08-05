@@ -111,3 +111,9 @@ jobs:
 
       - name: Type-check panel (incl. tests)
         run: npm run type-check --prefix panel
+
+      # frontend is deliberately absent here, not forgotten: its `build` script is
+      # `run-p type-check build-only`, and that type-check runs against
+      # tsconfig.vitest.json, which covers src/**/__tests__ too. So the `build:` job
+      # already fails on a frontend spec's type error — verified by introducing one.
+      # Repeating vue-tsc here would add ~25s for no additional coverage.

@@ -123,10 +123,11 @@ The `verify` skill runs the real gate: all four vitest suites, `type-check` on
 all four, `lint` on `frontend` (the only package with one), plus `build` for each
 affected package.
 
-**A `common/` change is the wide case** — `preview-build` first, then every suite
-and every build, since all three consumers resolve it. Never report a check you
-did not run; if you scoped the run narrower, name what you skipped and why. Fix
-every failure before committing.
+**Every affected package gets all three** — suite, type-check and build. A
+`common/` change is the wide case: `preview-build` first, then all of it for all
+four, since the other three resolve its output. Never report a check you did not
+run; if you scoped the run narrower, name what you skipped and why. Fix every
+failure before committing.
 
 When the issue is a defect, add the failing spec **before** the fix and confirm
 it goes red against the unfixed code — see `.claude/rules/no-test-tampering.md`.

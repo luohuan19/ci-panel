@@ -150,12 +150,13 @@ need cleanup logic.
 
 ### 6. Describe the Verification Strategy
 
-State exactly how the change will be verified. Name the specs you will add or
-update for **every affected package** — all four have a suite — plus type checks,
-lint, and the concrete manual path through the UI or API.
+State exactly how the change will be verified. For **every affected package** name
+the specs you will add or update, and run its suite, its type-check **and its
+build** — all four packages have all three. Plus `lint` for `frontend/` (the only
+package with one) and the concrete manual path through the UI or API.
 
-A change to `common/` is the wide case: it needs `preview-build` first, then all
-four suites and all four builds, because every package consumes it. If you scope a
+A change to `common/` is the wide case: `preview-build` first, then all four
+suites, type-checks and builds, because every package consumes it. If you scope a
 run narrower than that, say which packages you skipped and why.
 
 ````text
