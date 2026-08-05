@@ -65,9 +65,21 @@ expect(new QueryMapWrapper({}).page([1, 2, 3, 4], 1.5, 2).page).toBe(1);     // 
 expect(new QueryMapWrapper({}).page([1, 2, 3], 2, 1)).toEqual({ page: 2, pageSize: 1, maxPage: 3, data: [2] });
 ```
 
-> ⚠️ A *synchronous* loop is not interruptible by any timeout, so the fix must always land before
-> the spec, and `common/vitest.config.ts` keeps `testTimeout` at 2s so a revert fails fast instead
-> of wedging a CI worker.
+> ⚠️ **`testTimeout` cannot rescue this one.** `withTimeout` in `@vitest/runner` is
+> `Promise.race([fn(...args), new Promise(...setTimeout...)])` — and `fn(...args)` is evaluated
+> *before* the racing promise is constructed, so against a synchronous body the timer is never even
+> scheduled. Revert the guard and the spec does not fail in 2s; it wedges the worker until something
+> outside the process kills it. Two consequences: the fix must always land **before** the spec, and
+> the CI step needs a process-level watchdog, which `testTimeout` is not a substitute for:
+>
+> ```yaml
+> - name: Test common
+>   run: timeout -k 10 120 npm run test --prefix common
+> ```
+>
+> `common/vitest.config.ts` sets `testTimeout` to 2s for a different reason — every spec in that
+> package is pure logic that should finish in milliseconds, so a tight bound catches an *async*
+> hang early. It does nothing for this case.
 
 Also cover the caller-side clamp in `daemon/src/routers/Instance_router.ts:42-46`: `toNumber("")`
 and `toNumber(0)` both yield `0`, which `??` does not rescue, and `toNumber("Infinity")` yields
@@ -292,22 +304,26 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 
 ## 8. CI
 
-Add a **second job** to [.github/workflows/ci.yml](.github/workflows/ci.yml). The existing `build:`
-job stays byte-identical — it is the current release gate and must not be slowed or destabilised by
-test-install variance.
+The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
+Phase 0 and currently runs `Test frontend` only. The existing `build:` job stays byte-identical: it
+is the current release gate and must not be slowed or destabilised by test-install variance.
 
-The first three steps (`actions/checkout@v4`, `actions/setup-node@v4` with its five-line
+Its first three steps (`actions/checkout@v4`, `actions/setup-node@v4` with its five-line
 `cache-dependency-path`, and `Install dependencies: npm install`) are **byte-identical to the
-`build:` job** — copy them. The root `npm install` lifecycle script chains install-dependents and
-preview-build, so that one command provisions every package's devDependencies including vitest.
-Then:
+`build:` job**. The root `npm install` lifecycle script chains install-dependents and preview-build,
+so that one command provisions every package's devDependencies including vitest.
+
+The block below is the **target state** once every phase has landed — add each step in the phase
+that gives its package a suite, never ahead of it:
 
 ```yaml
       - name: Build common          # guard for the day the preview-build hook goes away
         run: npm run build --prefix common
 
+      # `timeout` is load-bearing here, not redundant: reverting the pagination guard hangs the
+      # worker synchronously, where vitest's own testTimeout never even gets scheduled (§2.2).
       - name: Test common           # carries the formerly-exploitable defects; fails fastest
-        run: npm run test --prefix common
+        run: timeout -k 10 120 npm run test --prefix common
 
       - name: Test daemon
         run: npm run test --prefix daemon

@@ -32,8 +32,10 @@ them there rather than a copy here. Five points worth carrying to the other thre
 
 ## `common/vitest.config.ts`
 
-The 2s `testTimeout` is what turns a reverted pagination guard into a readable failure instead of a
-burned job.
+The 2s `testTimeout` suits a package that is pure logic end to end — anything slower than that is a
+hang, not a slow test. It does **not** guard the pagination loop: a synchronous loop never yields
+the event loop, so the `setTimeout` behind `testTimeout` can never fire. That case needs a
+process-level `timeout` on the CI step instead (TESTING.md §2.2).
 
 ```ts
 import { defineConfig } from "vitest/config";
@@ -57,6 +59,14 @@ export default defineConfig({
 and stops a stale `dist` from silently testing an older protocol. `threads: false` is required by
 the module-level singletons and import-time side effects, and makes `process.chdir` work in the
 setup file — **do not write `pool` / `poolOptions`, those are vitest 1.0+ fields**.
+
+`__dirname` is fine in a `.mts` config despite the file being ESM, so no `fileURLToPath` dance is
+needed. vite's `bundleConfigFile` hands esbuild `define: { __dirname: "__vite_injected_original_dirname" }`,
+and its `inject-file-scope-variables` plugin prepends `const __vite_injected_original_dirname =
+"<config dir>"` in the load hook — a bundle-time string literal, not anything derived at runtime.
+The plugin's filter is `/\.[cm]?[jt]s$/`, which covers `.mts`. Verified against vite 4.5.14 as
+resolved by `frontend/package-lock.json`; the guarantee carries to daemon/panel only if they pin
+the same vitest, since vite reaches them as a transitive dependency of it.
 
 ```ts
 import path from "node:path";
