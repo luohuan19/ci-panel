@@ -37,7 +37,11 @@ process.on("exit", () => {
   try {
     process.chdir(os.tmpdir());
     fs.removeSync(sandbox);
-  } catch {
-    /* 收尾失败不该影响测试结果,沙箱在 /tmp 下,系统迟早会清 */
+  } catch (err: unknown) {
+    // 不重抛:此时测试结论已经出来了,让收尾问题改写退出码只会把真实结果盖掉。
+    // 但也不能咽下去 —— 悄悄失败的话,累积的沙箱是唯一线索,而那要等到有人翻 /tmp 才发现。
+    // 这里用 console 而非项目 logger:logger 是 cwd 相对的 log4js,而我们刚 chdir 走了,
+    // 何况进程已在退出中,异步 appender 未必还能落盘。
+    console.error(`[daemon-test] 沙箱清理失败,请手动删除 ${sandbox}:`, err);
   }
 });

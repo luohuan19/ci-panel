@@ -631,13 +631,26 @@ const scanRoots = () => [...runnerRoots];
 export function assertUnderRoots(target: string) {
   if (!path.isAbsolute(target)) throw new Error("路径必须是绝对路径");
   // 比较真实路径：只做字符串前缀判断的话，扫描根下的一个符号链接（<root>/x → /etc）
-  // 就能把这道边界绕过去。路径还不存在时（listDirs/createDir 会传新建目录）realpath 失败，
-  // 退回按原路径比较，行为与从前一致。
+  // 就能把这道边界绕过去。
+  //
+  // 路径还不存在时（listDirs/makeDir 会传新建目录）realpathSync 直接失败，此时不能退回按字面
+  // 路径比较：<root>/x → /根外 的链接下面，一个尚未创建的 <root>/x/新目录 字面上仍以 <root>
+  // 开头，就那么放过去了。改成上溯到最深的那个「存在的祖先」，解析它，再把剩下的字面段拼回来。
+  // 于是不存在的路径按其真实落点判定，而合法的新建路径（祖先在根内）照旧放行。
   const real = (p: string) => {
-    try {
-      return fs.realpathSync(p);
-    } catch {
-      return path.normalize(p);
+    const rest: string[] = [];
+    let cur = path.normalize(p);
+    for (;;) {
+      try {
+        return path.join(fs.realpathSync(cur), ...rest);
+      } catch {
+        const parent = path.dirname(cur);
+        // 一路上溯到文件系统根都不存在（或没权限 lstat）：没有可信的落点可推，
+        // 退回字面路径。这一支只在整条路径都不存在时才会走到。
+        if (parent === cur) return path.normalize(p);
+        rest.unshift(path.basename(cur));
+        cur = parent;
+      }
     }
   };
   const resolved = real(target);

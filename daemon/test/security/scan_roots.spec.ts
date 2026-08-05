@@ -67,6 +67,45 @@ describe("accepts what is genuinely inside", () => {
   });
 });
 
+describe("a path that does not exist is judged by where it would actually land", () => {
+  // The missing-path fallback cannot be lexical. Under <root>/link -> outside, a not-yet-created
+  // <root>/link/child still *reads* as being under the root, so a lexical comparison accepts it
+  // and the guard's whole realpath discipline is bypassed for exactly the paths that are about
+  // to be created. Resolving the deepest existing ancestor is what closes it.
+  const link = () => {
+    const p = here("missing-escape-link");
+    if (!fs.existsSync(p)) fs.symlinkSync(OUTSIDE_ROOT, p);
+    return p;
+  };
+
+  it("rejects a missing child below an escaping symlink", () => {
+    expect(() => assertUnderRoots(path.join(link(), "not-created-yet"))).toThrow(
+      /只允许在扫描根下操作/
+    );
+  });
+
+  it("rejects a missing grandchild too, not just the first level", () => {
+    expect(() => assertUnderRoots(path.join(link(), "a", "b", "c"))).toThrow(
+      /只允许在扫描根下操作/
+    );
+  });
+
+  it("still accepts a missing path whose deepest existing ancestor is inside", () => {
+    // The reason the fallback exists at all — makeDir and listDirs are handed paths that do
+    // not exist yet. Those must keep working.
+    expect(() => assertUnderRoots(here("boundary", "brand-new"))).not.toThrow();
+    expect(() => assertUnderRoots(here("boundary", "a", "b", "c"))).not.toThrow();
+  });
+
+  it("accepts a missing path below an in-root symlink", () => {
+    const target = here("boundary", "real-target");
+    fs.mkdirsSync(target);
+    const inside = here("missing-inside-link");
+    if (!fs.existsSync(inside)) fs.symlinkSync(target, inside);
+    expect(() => assertUnderRoots(path.join(inside, "brand-new"))).not.toThrow();
+  });
+});
+
 describe("symlinks — the reason this compares realpath", () => {
   it("rejects a symlink under the root that points outside", () => {
     const link = here("escape-link");
