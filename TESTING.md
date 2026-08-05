@@ -299,9 +299,9 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 ## 8. CI
 
 The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
-Phase 0. As of Phase 3 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend` and
-`Type-check daemon (incl. tests)`; the remaining steps below arrive with the phase that gives their
-package a suite. The existing `build:` job stays
+Phase 0. As of Phase 3 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend`,
+`Type-check common (incl. tests)` and `Type-check daemon (incl. tests)`; the remaining steps below
+arrive with the phase that gives their package a suite. The existing `build:` job stays
 byte-identical: it is the current release gate and must not be slowed or destabilised by
 test-install variance.
 

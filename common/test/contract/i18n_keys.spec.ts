@@ -145,16 +145,68 @@ describe("placeholders survive translation", () => {
     expect(broken).toEqual([]);
   });
 
-  it("catches a translated placeholder NAME, not just a missing one", () => {
-    // The failure this is really for. th_TH renders `{{seconds}}` as `{{วินาที}}` — the variable
-    // name itself was translated, so vue-i18n has nothing to substitute and the number vanishes.
-    // Neither a key-completeness check nor a "same number of braces" check would notice.
-    const th = read("th_TH.json");
-    const translatedNames = Object.keys(source)
-      .filter((k) => k in th)
-      .filter((k) => tokens(source[k]).length === tokens(th[k]).length)
-      .filter((k) => tokens(source[k]).join() !== tokens(th[k]).join());
-    expect(translatedNames.length).toBeGreaterThan(0);
-    expect(tokens(th["TXT_CODE_c093bec9"])).not.toEqual(tokens(source["TXT_CODE_c093bec9"]));
+  // Which languages currently have at least one mismatch. Names, not counts, so fixing one entry
+  // does not red the gate — only a language becoming dirty, or a language becoming wholly clean
+  // (delete it here and add it to PLACEHOLDER_CLEAN above), does.
+  const KNOWN_IMPERFECT = [
+    "de_DE.json",
+    "es_ES.json",
+    "fr_FR.json",
+    "ja_JP.json",
+    "ko_KR.json",
+    "pt_BR.json",
+    "ru_RU.json",
+    "th_TH.json",
+    "tr_TR.json"
+  ];
+
+  it("mismatches stay confined to the translations already known to have them", () => {
+    const dirty = others
+      .filter((file) => {
+        const d = read(file);
+        return Object.keys(source).some(
+          (k) => k in d && tokens(source[k]).join() !== tokens(d[k]).join()
+        );
+      })
+      .sort();
+    expect(dirty).toEqual(KNOWN_IMPERFECT);
+  });
+});
+
+describe("tokens() tells the failure modes apart", () => {
+  // Fixtures, deliberately — NOT the live catalogues. An assertion that a real translation still
+  // contains a specific defect would red the moment someone fixes it, which turns "improve a
+  // translation" into "break the build". The comparator is what needs pinning; the catalogues are
+  // gated above by name.
+  it("treats a translated placeholder name as a mismatch", () => {
+    // The failure mode this whole gate exists for: th_TH renders `{{seconds}}` as `{{วินาที}}`,
+    // so vue-i18n has nothing to substitute and the number silently vanishes. A key-completeness
+    // check sees nothing, and so does a "same number of braces" check.
+    expect(tokens("waited {{seconds}}s")).not.toEqual(tokens("รอ {{วินาที}} วินาที"));
+  });
+
+  it("treats a changed brace count as a mismatch", () => {
+    // `{{x}}` is the backend's $t(), `{x}` the frontend's t(). Swapping one for the other stops
+    // interpolation just as dead as renaming the variable.
+    expect(tokens("{{x}}")).not.toEqual(tokens("{x}"));
+  });
+
+  it("ignores ordering, since word order changes legitimately in translation", () => {
+    expect(tokens("{{a}} then {{b}}")).toEqual(tokens("{{b}} 之前是 {{a}}"));
+  });
+
+  it("ignores the surrounding prose", () => {
+    expect(tokens("Deleted {{count}} runners")).toEqual(tokens("已删除 {{count}} 个 runner"));
+  });
+
+  it("returns [] for a string with no placeholders, and for a non-string", () => {
+    expect(tokens("plain text")).toEqual([]);
+    expect(tokens(undefined)).toEqual([]);
+    expect(tokens(42)).toEqual([]);
+  });
+
+  it("does not treat an empty brace pair as a placeholder", () => {
+    expect(tokens("{}")).toEqual([]);
+    expect(tokens("{{}}")).toEqual([]);
   });
 });
