@@ -7,8 +7,8 @@ the reference: tool choices, full config files, and the reasoning behind them.
 
 - Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
-  As of Phase 2, `common/` (35 cases), `daemon/` (64) and `frontend/` (41) each run a vitest suite
-  in CI; `panel/` gets one in Phase 4.
+  As of Phase 3, `common/` (73 cases), `daemon/` (80) and `frontend/` (52) each run a vitest suite
+  in CI — 205 in total; `panel/` gets one in Phase 4.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -21,99 +21,61 @@ the reference: tool choices, full config files, and the reasoning behind them.
 security-regression → contract → boundary-validation → pure-logic → router-integration — roughly
 16–21 engineer-days to the stopping line.**
 
-## 2. Regression tests owed by v1.0.4
+## 2. Regression tests owed by v1.0.4 — **paid, Phases 1–2**
 
-Three high-severity defects were fixed and released without a single test
-(advisories GHSA-9c3v-fg72-8wr9, GHSA-j2c6-2pg4-jqqw, GHSA-5c23-gcwf-wjpr). Nothing prevents any
-of them from coming back. These specs are the highest-priority work in the whole plan.
+Three high-severity defects were fixed and released without a single test (advisories
+GHSA-9c3v-fg72-8wr9, GHSA-j2c6-2pg4-jqqw, GHSA-5c23-gcwf-wjpr). The specs now exist; read them
+rather than a description of them. What each is really guarding:
 
-### 2.1 Wildcard condition matching — `common/src/query_wrapper.ts:105`
+### 2.1 Wildcard condition matching — `common/src/query_wrapper.ts`
 
 `LocalFileSource.selectPage` treats a value as a substring match only when it starts *and* ends
-with `%`. What the old leading-`%`-only form allowed is described in GHSA-9c3v-fg72-8wr9.
+with `%`. The old leading-`%`-only form searched `slice(1, length - 1)`, so a bare `"%"` searched
+for `""` and matched every record — and panel's `getUuidByApiKey` accepts on `total === 1`.
+The `%needle%` form must keep working: `manage_user_router` builds `` `%${userName}%` `` for its
+admin search and depends on it. Spec: `common/test/security/apikey_wildcard.spec.ts`, which also
+states outright that this layer is **not** the auth boundary — the byte-for-byte re-check in
+`getUuidByApiKey` is, and that is Phase 4.
 
-Spec: `common/test/security/apikey_wildcard.spec.ts`
-
-```ts
-const one = new LocalFileSource([{ uuid: "u", apiKey: "REAL_SECRET", permission: 10 }]);
-expect(one.selectPage({ apiKey: "%" }, 1, 1).total).toBe(0);
-expect(one.selectPage({ apiKey: "%REAL" }, 1, 1).total).toBe(0); // leading % is not a pattern
-expect(one.selectPage({ apiKey: "REAL_SECRET" }, 1, 1).total).toBe(1);
-
-// Regression guard: manage_user_router.ts:72 builds `%${userName}%` and depends on this.
-const many = new LocalFileSource([{ userName: "alice" }, { userName: "albert" }, { userName: "bob" }]);
-expect(many.selectPage({ userName: "%al%" }, 1, 10).total).toBe(2);
-// The old slice was off by one: "%abc%" must not also match "abd".
-expect(new LocalFileSource([{ k: "abc" }, { k: "abd" }]).selectPage({ k: "%abc%" }, 1, 10).total).toBe(1);
-```
-
-Pin the panel side too: `getUuidByApiKey` re-checks the key byte-for-byte after the lookup, so it
-no longer depends on the query layer's pattern semantics.
-
-### 2.2 Pagination guard — `common/src/query_wrapper.ts:19`
+### 2.2 Pagination guard — `common/src/query_wrapper.ts`
 
 `paginate()` floors `page` and `pageSize`, then rejects a non-positive or non-finite result.
 Before 1.0.4 both data sources ran `while (size > 0) { size -= pageSize }`, which never terminates
-for `pageSize <= 0`. That loop is **synchronous**, so no timeout can preempt it.
-
-Spec: `common/test/security/pagination_dos.spec.ts`
-
-```ts
-it.each([0, -1, 0.5, NaN, Infinity])("rejects pageSize %p", (n) => {
-  expect(() => new QueryMapWrapper({}).page([1, 2, 3], 1, n)).toThrow(RangeError);
-});
-expect(new QueryMapWrapper({}).page([1, 2, 3, 4], 1, 1.5).pageSize).toBe(1); // floors, not rejects
-expect(new QueryMapWrapper({}).page([1, 2, 3, 4], 1.5, 2).page).toBe(1);     // no window spanning two pages
-expect(new QueryMapWrapper({}).page([1, 2, 3], 2, 1)).toEqual({ page: 2, pageSize: 1, maxPage: 3, data: [2] });
-```
+for `pageSize <= 0`. Fractional values *floor* rather than reject, deliberately: callers pass
+query-string values through `Number()` only, and the old loop tolerated `1.5`.
+Spec: `common/test/security/pagination_dos.spec.ts`. Also covers the caller-side clamp in
+`daemon/src/routers/Instance_router.ts` — `toNumber("")` and `toNumber(0)` both yield `0`, which
+`??` does not rescue.
 
 > ⚠️ **`testTimeout` cannot rescue this one.** `withTimeout` in `@vitest/runner` is
-> `Promise.race([fn(...args), new Promise(...setTimeout...)])` — and `fn(...args)` is evaluated
-> *before* the racing promise is constructed, so against a synchronous body the timer is never even
-> scheduled. Revert the guard and the spec does not fail in 2s; it wedges the worker until something
-> outside the process kills it. Two consequences: the fix must always land **before** the spec, and
-> the CI step needs a process-level watchdog, which `testTimeout` is not a substitute for:
->
-> ```yaml
-> - name: Test common
->   run: timeout -k 10 120 npm run test --prefix common
-> ```
->
-> `common/vitest.config.ts` sets `testTimeout` to 2s for a different reason — every spec in that
-> package is pure logic that should finish in milliseconds, so a tight bound catches an *async*
-> hang early. It does nothing for this case.
+> `Promise.race([fn(...args), new Promise(...setTimeout...)])`, and `fn(...args)` is evaluated
+> *before* the racing promise is constructed — against a synchronous body the timer is never even
+> scheduled. Revert the guard and the spec does not fail in 2s; it wedges the worker until
+> something outside the process kills it. Hence `timeout -k 10 120` on the CI step, and hence the
+> fix must always land **before** the spec.
 
-Also cover the caller-side clamp in `daemon/src/routers/Instance_router.ts:42-46`: `toNumber("")`
-and `toNumber(0)` both yield `0`, which `??` does not rescue, and `toNumber("Infinity")` yields
-`Infinity`.
+### 2.3 Scan-root boundary — `runner_logs.ts`, `runner_scan.ts`
 
-### 2.3 Scan-root boundary — `runner_logs.ts:83,87,109` and `runner_provision.ts:831,851`
+`assertUnderRoots` compares `realpathSync` results, so it catches symlink escapes as well as `..`,
+and it runs ahead of every `fs.*` access **and on each derived path** (GHSA-5c23-gcwf-wjpr). The
+derived-path cases are what a naive fix misses: `<runner>/_diag` can be a symlink out even when
+`<runner>` is not, and so can a `*.log` inside it. Ordering matters too — the guard runs before
+`fs.existsSync`, so an out-of-roots path is indistinguishable from a non-existent one rather than
+becoming a probe for what exists on the host. Specs: `daemon/test/security/scan_roots.spec.ts`,
+`diag_logs_boundary.spec.ts`, `collect_boundary.spec.ts`, `meta_file_boundary.spec.ts`.
 
-`assertUnderRoots` (`daemon/src/service/runner_scan.ts:577`) compares `realpathSync` results, so it
-catches symlink escapes as well as `..`. Both functions now call it ahead of every `fs.*` access
-**and on each derived path** (GHSA-5c23-gcwf-wjpr). Specs: `daemon/test/security/scan_roots.spec.ts`,
-`diag_logs_boundary.spec.ts`, `collect_boundary.spec.ts`. The derived-path cases are what a naive
-fix misses:
-
-| Case | Expectation |
-| --- | --- |
-| `readRunnerDiag(<dir outside roots>)` | throws |
-| `<runner>/_diag` is a symlink to `/etc` | throws (guard is on `diagDir`, not just `dir`) |
-| a `*.log` inside `_diag` is a symlink outside | throws (guard is on `targetPath`) |
-| `collectRunners("/etc")` | throws |
-| a child of `base` is a symlink outside the roots | skipped with a reason, collection continues |
-| `assertUnderRoots` on a not-yet-existing path under a root | does not throw (the `mkdir` path) |
-| ordering | the guard runs before `fs.existsSync`, so an out-of-roots path cannot be distinguished from a non-existent one |
+Writing these turned up three further gaps in the same boundary; see Phase 2 below.
 
 **Deliberately not covered:** symlink-replacement races (TOCTOU) between check and read — closing
-that needs descriptor-relative no-follow operations across every file path in the daemon.
+that needs descriptor-relative no-follow operations across every file path in the daemon, or
+isolating the runner account's write permissions at the deployment layer.
 
 ## 3. Layers
 
 | Layer | Scope | Packages | Size | Phase |
 | --- | --- | --- | --- | --- |
 | **security-regression** | path containment, PAT disclosure, auth bypass, sudo argument boundary, delete blast radius | common / daemon / panel | 12–16 files, ~60 cases | 1–2, 4 |
-| **contract** | panel↔daemon protocol, i18n keys and placeholders, logic duplicated across packages (`labelKey`, `SERVICE_RE`) | all four | 5–7 files, ~25 cases | 3 |
+| **contract** | panel↔daemon protocol, i18n keys and placeholders, logic duplicated across packages (`labelKey`, `SERVICE_RE`) | all four | 5 files, 70 cases (delivered) | 3 |
 | **boundary-validation** | the two edges the code itself calls untrusted: browser↔panel and panel↔daemon coercion and narrowing | common / daemon / panel | 8–10 files, ~50 cases | 1, 4 |
 | **pure-logic** | marker idempotency, log tail offsets, systemd output parsing, version compare, env parsing | daemon / common / frontend | 15–20 files, ~120 cases | 0, 5 |
 | **router-integration** | in-process socket RPC through the existing `routerApp.emitRouter` seam | daemon / panel | 4–6 files, ~35 cases | 5 (cuttable) |
@@ -154,111 +116,111 @@ each package's installed TypeScript / `@types/node` floor:
 
 Every command notes its directory — **the four packages install separately**.
 
-### Phase 0 — prove the loop, zero installs (half a day)
+### Phase 0 — prove the loop, zero installs (half a day) — **done, #28**
 
-frontend already has vitest, so nothing is installed and no production code is touched yet.
+frontend already had vitest, so nothing was installed and no production code touched. Added
+`vitest.config.ts` + `vitest.setup.ts`, the `test` scripts, three specs under
+`src/tools/__tests__/` (41 cases), and the CI `test` job.
 
-1. Add `frontend/vitest.config.ts` and `vitest.setup.ts`; add `test` / `test:watch` scripts
-2. Pin jsdom's URL in the config. `protocol.ts` reads `window.location` in every function, so
-   without a fixed origin the specs would either assert against jsdom's default (an implementation
-   detail that moves with the version) or restate `window.location.*` back at themselves
-3. Add `"files": ["vitest.setup.ts"]` to `tsconfig.vitest.json`. `files` merges with the inherited
-   `include`, where a second `include` would replace it; without this the setup file sits in no
-   tsconfig at all and `npm run type-check` never sees it
-4. Write three specs against modules with no or same-directory imports only: `permission.ts` (no
-   imports at all), `protocol.ts` (imports `./string`), `fileManager.ts` — under `src/tools/__tests__/`
-5. `cd frontend && npm test`; add the CI `test` job running only `npm run test --prefix frontend`
+Three decisions worth carrying forward: pin jsdom's URL (`protocol.ts` reads `window.location` in
+every function, so the alternative is asserting against a version-dependent default or restating
+`window.location.*` back at itself); `tsconfig.vitest.json` needs `"files": ["vitest.setup.ts"]`
+because `files` merges with the inherited `include` where a second `include` would replace it; and
+no `passWithNoTests`, which would turn a broken glob into a green job that ran nothing.
 
-**The defect Phase 0 was written to catch** — `isCompressFile`
-([frontend/src/tools/fileManager.ts:50](frontend/src/tools/fileManager.ts#L50)): the
-`singleVolumeExts` loop tested `endsWith('.rar')` first, so `a.part2.rar` returned `true` before
-reaching the multi-volume branch below, and the UI offered to extract volume 2 of a split archive.
-**Fixed ahead of the suite in #24**, together with the two `unref` calls (§7.1), the
-`redactTokenArgs` extraction (§7.2) and the `@types/mocha` removal — so Phase 0 installs nothing
-*and* touches no production code. The spec is the regression guard, and reverting the fix must turn
-it red:
+The defect it was written to catch — `isCompressFile` offering "decompress" on volume 2 of a split
+archive — was fixed ahead of the suite in #24, along with the two `unref` calls (§7.1), the
+`redactTokenArgs` extraction (§7.2) and the `@types/mocha` removal. The spec is its regression
+guard: reverting the pre-#24 extension ordering reddens two cases.
 
-```ts
-expect(isCompressFile("a.part1.rar")).toBe(true);
-expect(isCompressFile("a.part2.rar")).toBe(false); // red against the pre-#24 ordering
-```
+### Phase 1 — common, and the regressions owed by 1.0.4 (1 day) — **done, #29**
 
-**Exit criteria:** `npm run test --prefix frontend` green; CI test job green on a PR.
+`common/` got vitest 0.34.6 with vite constrained to `^4.5.14` (0.34's peer range admits vite 5,
+which prints a CJS-deprecation warning on every run; the range matches `frontend/`, so the repo
+stays on one vite major), plus the §2.1 and §2.2 specs — 35 cases, no production code changed.
 
-### Phase 1 — common, and the regression tests owed by 1.0.4 (1 day)
-
-0. In `common/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6 vite@^4.5.14`. Constrain vite
-   explicitly — vitest 0.34's peer range admits vite 5, which then prints a CJS-deprecation warning
-   on every run. Noise in a CI log is not free; it trains people to skim past it. The range matches
-   `frontend/package.json`, so the repo stays on one vite major.
-1. `common/package.json`: add `test` / `test:watch`
-2. Add `common/vitest.config.ts`, **including `threads: false`** — see §9
-3. Write `common/test/security/pagination_dos.spec.ts` and `apikey_wildcard.spec.ts` (§2.1, §2.2)
-4. Add `Build common` + `Test common` (with `timeout -k 10 120`, see §2.2) to the CI test job
-
-**Exit criteria:** `npm run test --prefix common` green; reverting either 1.0.4 fix makes a spec
-fail; `npm run build --prefix panel` still green.
+**Exit criteria met:** suite green; reverting the wildcard fix reddens 4 cases and the pageSize
+guard 9; restoring the real pre-1.0.4 loop hangs until `timeout` kills it with exit 124.
 
 > **Not in this phase:** moving `"typescript"` out of `common`'s `dependencies`. It is genuinely
-> misplaced — a build tool that all three consumers inherit through `file:../common` — but it is
-> unrelated to adding tests and it touches the release path (`build.sh` runs
-> `npm install --production` inside `production-code/`). Verifying it means running the full
+> misplaced — a build tool all three consumers inherit through `file:../common` — but it is
+> unrelated to adding tests and touches the release path (`build.sh` runs
+> `npm install --production` inside `production-code/`). Verifying it means the full
 > `build.sh` → `pack.sh` → `smoke-test.sh` chain, so it belongs in its own PR.
 
-### Phase 2 — daemon path boundary and secret redaction (3–4 days)
+### Phase 2 — daemon path boundary and secret redaction (3–4 days) — **done, #30**
 
-0. In `daemon/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6 vite@^4.5.14`
-1. Add `daemon/vitest.config.mts`, `daemon/test/setup.ts`, `daemon/tsconfig.test.json`
-   ([TESTING_SETUP.md](TESTING_SETUP.md))
-2. `daemon/package.json`: add `test` / `test:watch` / `"type-check": "tsc --noEmit -p tsconfig.test.json"`
-3. Write the §2.3 specs: `scan_roots` (including the symlink cases), `diag_logs_boundary`,
-   `collect_boundary`, plus `service_name_boundary` — assert **all three** copies of `SERVICE_RE`
-   agree (`runner_scan.ts`, `runner_env.ts`, and `prod-scripts/ci-panel-runner-svc`; the bash one
-   is the real boundary, being the one that runs as root) and that the shape rejects whitespace,
-   `/` and option-shaped names
-4. Write `token_redaction.spec.ts` against `redactTokenArgs` (§7.2)
-5. Add `Test daemon` + `Type-check daemon` to CI
+`daemon/` got vitest plus `test/setup.ts` (a `/tmp` sandbox it chdirs into before any daemon module
+loads) and `tsconfig.test.json` (the only thing covering `test/`; the build's tsconfig includes
+`src/` alone). Six specs, 64 cases at the time.
 
-**Exit criteria:** every §2.3 case passes including the three symlink ones; `ProvisionError.fullLog`
-provably redacts the token; `tsc --noEmit -p tsconfig.test.json` clean.
+`service_name_boundary` asserts **all three** copies of `SERVICE_RE` agree — `runner_scan.ts`,
+`runner_env.ts`, and `prod-scripts/ci-panel-runner-svc`. The bash one is the real boundary, being
+the copy that runs as root, and nothing in the build would notice if they drifted.
 
-> **Corrections to §2.3, found by writing the specs.** The table described intended behaviour in
-> two places where the code did something else. Both fixed in the same PR.
+**Exit criteria met:** every §2.3 case passes including the symlink ones; `ProvisionError.fullLog`
+provably redacts the token; `type-check` clean.
+
+> **Corrections to §2.3, found by writing the specs.** The table described intent, not behaviour,
+> in two places. Both fixed in the same PR.
 >
-> 1. *"a child of `base` is a symlink outside the roots → skipped with a reason"* — `collectRunnerDirs`
->    guarded only the root it was handed; the recursive descent had no check at all. Since
->    `statSync` / `readdirSync` / `isRunnerDir` all follow links, one `<root>/<repo>/x -> /anywhere`
+> 1. *"a child of `base` is a symlink outside the roots → skipped with a reason"* —
+>    `collectRunnerDirs` guarded only the root it was handed; the recursive descent had no check.
+>    `statSync` / `readdirSync` / `isRunnerDir` all follow links, so one `<root>/<repo>/x -> /anywhere`
 >    made the scan read that directory's `.runner` and report it as a normal runner, `errors` empty.
->    The guard now runs per level and records the skip.
-> 2. **Directory-level guarding is not enough, which the table did not consider at all.** The three
->    metadata files (`.runner`, `.service`, `.cipanel`) are writable by the runner's own account and
->    `readFileSync` follows links, so a directory legitimately inside the roots could still serve up
->    any file on the host. `.runner -> <secret>` put its `gitHubUrl`/`agentName` straight into the
->    list; when the target was not JSON, Node's parse error embedded the first ~10 bytes of content
->    and shipped them to the UI as `broken`; and `.cipanel -> <anywhere>` made `hasMarker` true,
->    which is what `registerRunners` and `scanOneRunner` use to *skip* `assertUnderRoots` entirely.
->    New `metaFilePath` in `runner_marker.ts` requires each metadata file to resolve inside its own
->    directory. Deliberately not an `assertUnderRoots` call: managed runners are allowed to live
->    outside the roots, so "must not escape its own directory" is the constraint that holds for both.
+> 2. **Directory-level guarding is not enough, which the table did not consider.** The three metadata
+>    files are writable by the runner's own account and `readFileSync` follows links.
+>    `.runner -> <secret>` put its `gitHubUrl`/`agentName` into the list; against a non-JSON target,
+>    Node's parse error embedded the first ~10 bytes and shipped them to the UI as `broken`; and
+>    `.cipanel -> <anywhere>` made `hasMarker` true, which is what `registerRunners` and
+>    `scanOneRunner` use to *skip* `assertUnderRoots`. New `metaFilePath` requires each metadata file
+>    to resolve inside its own directory — deliberately not an `assertUnderRoots` call, since managed
+>    runners may live outside the roots.
 >
-> Also note `collectFromRoots` **collects** the root rejection into `errors` rather than throwing,
-> so the `collectRunners("/etc") → throws` row is really "returns no runners and one error".
+> A third, found in review: `assertUnderRoots` fell back to a lexical comparison for a missing path,
+> so a not-yet-created child of an escaping symlink was accepted. Not reachable (`makeDir` requires
+> its base to exist, and an existing base resolves through realpath), but the guard was leaning on a
+> caller's `existsSync` to cover its own blind spot. It now resolves the deepest existing ancestor.
+>
+> Also: `collectFromRoots` **collects** the root rejection into `errors` rather than throwing, so the
+> `collectRunners("/etc") → throws` row is really "returns no runners and one error".
 
-### Phase 3 — contract layer (2–3 days)
+### Phase 3 — contract layer (2–3 days) — **done**
 
-1. `common/test/contract/i18n_keys.spec.ts` — calibrated against the real catalogues: all 11
-   non-source languages have 0 extra keys (green today); completeness gated on zh_CN only,
-   placeholders on zh_CN + zh_TW
-2. Record the 7 untranslated ci-panel keys (`TXT_CODE_REPO_AUTO_REGISTER_*`,
-   `TXT_CODE_RUNNER_IMPORT_OK*`) as a known gap rather than blocking the pipeline; widen the gate
-   once they are translated
-3. `common/test/contract/runner_protocol.spec.ts` — replay the **unchecked cast** panel performs at
-   `runner_router.ts:354-360` and pin every field
-4. Delete the duplicate `RunnerSource` in `daemon/src/service/runner_marker.ts:23`; import the one
-   from `common/src/runner_protocol.ts`
-5. Extract the frontend `labelKey` into `frontend/src/tools/runnerNaming.ts`, replace the copy in
-   `AddRunnerDialog.vue:84`, and assert it agrees with the daemon's (`runner_provision.ts:498`) —
-   divergence produces fleet-wide runner-name collisions
+Four contracts, none of which any compiler or build step was checking.
+
+1. `common/test/contract/i18n_keys.spec.ts` — **the plan's numbers were stale**: it said 7
+   untranslated ci-panel keys; there are 16, and ten of the eleven translations are missing the same
+   set. Calibrated against the real catalogues rather than the plan: extra keys gated across all
+   eleven (0 today), completeness on `zh_CN` only, placeholders on `zh_CN` + `zh_TW`. The rest is
+   recorded as a known gap with an assertion that it has not *grown* — a gate that fails from its
+   first commit gets ignored (§10).
+   Placeholders keep their brace form: `{{x}}` is the backend's `$t()`, `{x}` the frontend's `t()`,
+   and normalising them together would miss a changed brace count. It also catches a translated
+   placeholder *name* — `th_TH` renders `{{seconds}}` as `{{วินาที}}`, so vue-i18n substitutes
+   nothing and the number vanishes.
+2. `common/test/contract/runner_protocol.spec.ts` — panel mined daemon's reply through
+   `(result as { results?: RegisterRunnerResult[] })`, an assertion nothing checks: rename a field
+   on the daemon side and the compiler stays silent while `registeredRepos` is permanently empty.
+   Rather than restate that cast in a spec, the narrowing moved into `collectRegisteredRepoSlugs`
+   beside the type declaration it depends on, and panel now calls it.
+3. Deleted the duplicate `RunnerSource` in `runner_marker.ts`; it re-exports common's.
+4. `labelKey` extracted to `frontend/src/tools/runnerNaming.ts`, with parity against the daemon copy
+   asserted in `daemon/test/contract/label_key_parity.spec.ts` — textually *and* behaviourally.
+   **Deliberately still two copies:** the frontend's imports from `mcsmanager-common` are all
+   `import type` and erased at compile time; a value import would be the first, and the barrel
+   re-exports `system_info` (a `setInterval`) and `system_storage` (fs), pulling node built-ins into
+   the browser bundle. Divergence produces fleet-wide duplicate runner names, so the test is the
+   price of that trade.
+
+Phase 3 also gave `common/` the `tsconfig.test.json` + `type-check` script daemon got in Phase 2.
+Without it the protocol spec's compile-time claim was hollow: `common`'s build tsconfig includes
+`src/` alone and vitest transpiles through esbuild, so the whole suite could reference a renamed
+export and stay green. Renaming `RegisterRunnersResponse` now reports the spec by name.
+
+**Exit criteria met:** breaking each contract reddens it — drifting `labelKey` 1 case, renaming
+`results` 5, dropping a `zh_CN` key 2, downgrading a `{{x}}` to `{x}` 1, and turning one frontend
+`import type` into a value import 1.
 
 ### Phase 4 — panel authorization and remaining boundaries (4–5 days)
 
@@ -296,12 +258,9 @@ bug, not scheduled.
 
 ## 6. New config files
 
-Full contents of every file still to create — `common/vitest.config.ts`,
-`daemon/vitest.config.mts` (and panel's), `daemon/test/setup.ts`, the two
-`tsconfig.test.json`, and the `package.json` script additions — are in
-[TESTING_SETUP.md](TESTING_SETUP.md). frontend's are already in the tree
-([vitest.config.ts](frontend/vitest.config.ts), [vitest.setup.ts](frontend/vitest.setup.ts)) and
-were removed from that file. Delete it entirely once the other three land; neither document should
+Only **panel's** configs remain to be written; [TESTING_SETUP.md](TESTING_SETUP.md) holds them.
+frontend's, common's and daemon's are all in the tree, and that file was reduced to a pointer for
+each as it landed. Delete it entirely once panel's land; neither document should
 carry a second copy of a checked-in config.
 
 ## 7. Minimum refactors
@@ -340,7 +299,7 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 ## 8. CI
 
 The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
-Phase 0. As of Phase 2 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend` and
+Phase 0. As of Phase 3 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend` and
 `Type-check daemon (incl. tests)`; the remaining steps below arrive with the phase that gives their
 package a suite. The existing `build:` job stays
 byte-identical: it is the current release gate and must not be slowed or destabilised by
@@ -377,6 +336,9 @@ that gives its package a suite, never ahead of it:
         run: npm run test --prefix frontend
 
       # panel/daemon tsconfig include does not cover test/, so webpack never sees a spec.
+      - name: Type-check common (incl. tests)
+        run: npm run type-check --prefix common
+
       - name: Type-check daemon (incl. tests)
         run: npm run type-check --prefix daemon
 
@@ -428,7 +390,7 @@ entire wall time is worker startup. Measured on a 320-core machine:
 | `common` (2 files, 34 cases at the time) | 106s | **1.1s** |
 | `frontend` (3 files, 41 cases) | 84s | **3.6s** |
 
-(Measured during Phase 1; `common/` has 35 cases now. Left as taken — the ratio is the point.)
+(Measured during Phase 1; `common/` has 73 cases now. Left as taken — the ratio is the point.)
 
 On GitHub's 4-core `ubuntu-latest` the default is survivable (frontend measured 56s), but this
 project provisions self-hosted runners — the day the `test` job moves onto a big one, `Test common`
@@ -449,10 +411,13 @@ per-file module isolation today; do not start.
 - **Aliasing to source is a deliberate asymmetry.** daemon and panel test `common/src` while the
   frontend build consumes `common/dist`. A change that breaks the built output but not the source
   would pass the daemon suite — the `Build common` CI step exists for exactly that.
-- **The i18n gate is narrower than it looks.** Every language except zh_CN is missing the same 7
-  keys, and 9 of 12 have placeholder mismatches (ru_RU 18, pt_BR 17, es_ES 15). Completeness and
-  placeholders are therefore scoped to zh_CN / zh_TW — better a weak gate that is green from the
-  first commit than a strong one that goes red and gets ignored.
+- **The i18n gate is narrower than it looks.** Ten of the eleven translations are missing the same
+  **16** ci-panel keys (the plan said 7; measured in Phase 3), and 9 of 11 have placeholder
+  mismatches (ru_RU 19, pt_BR 18, es_ES 16, fr 14, tr 13, de 10, ko 8, ja 6, th 2). Completeness is
+  therefore scoped to **zh_CN alone** and placeholders to **zh_CN + zh_TW** — better a weak gate
+  that is green from the first commit than a strong one that goes red and gets ignored. The 16 are
+  listed explicitly in the spec, so adding an English-only key is a reviewable one-line declaration
+  rather than a bumped counter.
 - **Router integration is the likeliest casualty** (it needs the `router_app.ts` split and an
   await-aware `emitRouter`, both touching ten router files). Cutting it leaves the daemon's worst
   defect — an async handler rejection emits nothing and hangs the panel's request — uncovered.

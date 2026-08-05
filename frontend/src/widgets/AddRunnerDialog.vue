@@ -7,6 +7,7 @@ import { message } from "ant-design-vue";
 import { PlusOutlined, DeleteOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { onUnmounted } from "vue";
 import { t } from "@/lang/i18n";
+import { labelKey } from "@/tools/runnerNaming";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import SelectDirDialog from "./SelectDirDialog.vue";
 import {
@@ -79,18 +80,6 @@ const groups = ref<Group[]>([{ baseName: "", labels: "linux,arm64", count: "1" }
 
 const addGroup = () => groups.value.push({ baseName: "", labels: "linux,arm64", count: "1" });
 const removeGroup = (i: number) => groups.value.length > 1 && groups.value.splice(i, 1);
-
-// 标签集合归一化，与 daemon 端 labelKey 保持一致：拆分、去空、小写、去重、排序。
-// 用于判断某组标签是否命中该仓库已有的 label 组（顺序/大小写/重复无关）。
-function labelKey(labels: string): string {
-  return (labels || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-    .filter((v, i, a) => a.indexOf(v) === i)
-    .sort()
-    .join(",");
-}
 
 // 该仓库在当前基目录下已有的 label 组（来自后端扫描 .cipanel）。用于复用标签与锁定命名。
 const repoGroups = ref<RepoLabelGroup[]>([]);

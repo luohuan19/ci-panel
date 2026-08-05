@@ -34,6 +34,10 @@ export type {
   SystemdState
 } from "./runner_protocol";
 
+// 同一份协议里唯一的运行时导出，供 panel 转发 daemon 回复时用。前端不引它（只 import type），
+// 所以浏览器 bundle 不受影响。
+export { collectRegisteredRepoSlugs } from "./runner_protocol";
+
 export { removeTrail } from "./string_utils";
 
 export {
