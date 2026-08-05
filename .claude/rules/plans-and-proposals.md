@@ -151,8 +151,12 @@ need cleanup logic.
 ### 6. Describe the Verification Strategy
 
 State exactly how the change will be verified. Name the specs you will add or
-update for the packages that have a suite (`common/`, `daemon/`, `frontend/`),
-plus type checks, lint, and the concrete manual path through the UI or API.
+update for **every affected package** — all four have a suite — plus type checks,
+lint, and the concrete manual path through the UI or API.
+
+A change to `common/` is the wide case: it needs `preview-build` first, then all
+four suites and all four builds, because every package consumes it. If you scope a
+run narrower than that, say which packages you skipped and why.
 
 ````text
 # ❌ Vague

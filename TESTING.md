@@ -8,7 +8,9 @@ the reference: tool choices, full config files, and the reasoning behind them.
 - Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
   **As of Phase 4 all four packages have a suite** — `daemon/` 92, `common/` 79, `frontend/` 55,
-  `panel/` 40; 266 in total, all four type-checked including their `test/` directories.
+  `panel/` 42; 268 in total. `common/`, `daemon/` and `panel/` keep their specs in `test/` and
+  type-check them via `tsconfig.test.json`; `frontend/` keeps its in `src/tools/__tests__/`,
+  covered by `tsconfig.vitest.json`.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -237,21 +239,25 @@ are pinned rather than smoothed over: an API key **bypasses the CSRF and ajax ch
 (an API request has no session to carry a token), and a route with no `level` skips authorisation
 altogether because `isNaN(parseInt(String(undefined)))` is true.
 
-**Three fixes, all verified as not currently exploitable before being made:**
+**Three fixes.** Each was characterised before being made rather than after — none needed a
+private advisory, but they are not all the same shape and the summary should not flatten them:
 
-1. **SSRF in `/api/auth/proxy`.** It called `axios.request` on a caller-supplied URL and returned
-   the body — a read primitive aimed at whatever the panel host can reach. ADMIN-only, but ADMIN
-   being able to configure nodes is not the same as ADMIN being able to use the panel as a jump
-   host. `checkSafeUrl` already existed in `panel/` with **zero callers**; it is now wired in, plus
-   `maxRedirects: 0` so a publicly-resolving host cannot 302 to loopback and bypass the check.
+1. **SSRF in `/api/auth/proxy` — genuinely exploitable, by an ADMIN.** It called `axios.request`
+   on a caller-supplied URL and returned the body: a working read primitive aimed at whatever the
+   panel host can reach. The mitigating factor is the privilege bar, not the absence of a bug.
+   Public rather than an advisory because an ADMIN can already point node connections at arbitrary
+   hosts — but that is a reason about *marginal* gain, and being able to read the response is more
+   than that argument covers. `checkSafeUrl` already existed in `panel/` with **zero callers**; it
+   is now wired in, plus `maxRedirects: 0` so a publicly-resolving host cannot 302 to loopback and
+   bypass the check.
 2. **`checkSafeUrl` existed twice and had drifted** — panel's had a protocol allow-list, daemon's
    did not, so `file/download_from_url` accepted `ftp://`. Both copies are now identical and
    pinned by `panel/test/security/safe_url.spec.ts`. The dead private-range block (unreachable
    because the IPv4 check above it already returns) is gone.
-3. **`disk_limit_service` ran `du` through a shell.** `checkFilePath` blocked `"`, `$` and
-   `` ` `` — exactly what can break out of the surrounding double quotes — so it was not
-   exploitable. But that conclusion needed *both* the quotes and the blacklist to hold; the argv
-   form of `execFile` needs neither.
+3. **`disk_limit_service` ran `du` through a shell — not exploitable as it stood.**
+   `checkFilePath` blocked `"`, `$` and `` ` ``, which is exactly what can break out of the
+   surrounding double quotes. But that conclusion needed *both* the quotes and the blacklist to
+   hold; the argv form of `execFile` needs neither.
 
 **`file_manager_paths.spec.ts`** documents the largest piece of standing authority in the daemon:
 `isRootTopRath()` short-circuits `checkPath`, `isOutsideWorkspace` and the copy/move guard, and
@@ -273,19 +279,22 @@ holds, but the client gets no error.
 redirects 1, re-introducing the daemon URL drift 2, loosening the API-key level check 3, removing
 the ban logout 1, and comparing paths lexically instead of by realpath 1.
 
-### Phase 5 — router integration and pure-logic breadth (5–7 days, **cuttable**)
+### Phase 5 — router integration and pure-logic breadth — **not scheduled**
 
-1. Split `daemon/src/service/router.ts`: move `RouterApp` + `routerApp` + `navigation` into a new
-   `router_app.ts`, keeping the re-exports and ten side-effect imports so `app.ts:15` is untouched
-2. Make `emitRouter` (`router.ts:16`) await-aware — it currently wraps `super.emit` in a synchronous
-   try/catch, so **an async handler that rejects emits nothing** and the panel's request hangs
+Unlocked by a specific escaped bug, not by a plan. What it would contain, in priority order:
+
+1. Make `emitRouter` (`daemon/src/service/router.ts`) await-aware. It wraps `super.emit` in a
+   synchronous try/catch, so **an async handler that rejects emits nothing at all** and the panel's
+   request hangs until its own timeout. This is the daemon's worst known defect and the reason this
+   phase exists; the rest is breadth.
+2. Split `router.ts`'s composition root into `router_app.ts` so handlers are testable without the
+   whole daemon, keeping the re-exports and side-effect imports so `app.ts` is untouched.
 3. Export the private parsers in `runner_env.ts` / `runner_provision.ts` / `runner_scan.ts` (no
-   behaviour change) and add pure-logic specs
-4. Upload coverage as an artifact — **still no thresholds**
+   behaviour change) and add pure-logic specs.
+4. Upload coverage as an artifact — still no thresholds.
 
 **Stopping rule: the line has been reached.** Phase 4 is done, so from here a new spec is added
-only when a bug reaches master — failing test first, then the fix. Phase 5 below is not scheduled;
-its refactors are unlocked by a specific escaped bug, not by a plan.
+only when a bug reaches master — failing test first, then the fix.
 
 ## 6. Config files
 
@@ -297,38 +306,24 @@ drift, and the copy is the one nobody updates.
 The non-obvious decisions each config encodes are recorded next to the phase that made them (§5).
 The one that applies to every package: **`threads: false`**, for the reasons in §9.
 
-## 7. Minimum refactors
+## 7. Minimum refactors — all landed
 
-Only what is required to unlock high-value tests. None change behaviour.
+Only what was required to unlock high-value tests; none changed behaviour.
 
-### 7.1 No barrel imports (the two `unref` calls landed in #24)
+**No barrel imports.** `require('common/dist/index.js')` used to never exit (exit 124) because
+`index.ts` re-exports `system_info` and its `setInterval` was not `unref`'d. That timer and
+`daemon/src/service/log.ts`'s were fixed in #24, but the import rule stands regardless: specs in
+`common/` import the specific module, **never the barrel**, which drags in every consumer's side
+effects for no benefit.
 
-`require('common/dist/index.js')` used to leave an active `Timeout` and **never exit** (exit 124):
-`common/src/index.ts` re-exports `system_info`, which started an un-unref'd `setInterval`.
-Both that timer and `daemon/src/service/log.ts`'s are `.unref()`'d as of #24. The import rule still
-stands regardless: specs in `common/` import the specific module, **never the barrel** — the barrel
-drags in every consumer's side effects for no benefit.
+**`redactTokenArgs`** (#24) was extracted out of `runner_provision.ts` because testing inline logic
+means restating it in the spec, and a spec that mirrors the implementation cannot detect a bug in
+it. It matches by argument *position*, so renaming `--token` would silently stop redacting — which
+is what `token_redaction.spec.ts` pins. Specs use placeholder tokens and `example-org/example-repo`
+only: **this is a public repository**.
 
-### 7.2 `redactTokenArgs` (daemon) — extracted in #24
-
-The redaction in `runner_provision.ts` was inline, and testing inline logic means restating the
-implementation in the spec, which **cannot detect a bug in it**. It is now a real symbol:
-
-```ts
-export function redactTokenArgs(args: string[]): string[] {
-  return args.map((a, i) => (args[i - 1] === "--token" ? "***" : a));
-}
-```
-
-It matches by argument *position*, so renaming `--token` would silently stop redacting — that is
-what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
-`example-org/example-repo` only — **this is a public repository**.
-
-### 7.3 Add `export` (daemon, no behaviour change)
-
-`runner_env.ts`: `parseEnvironmentLine`, `parseOverrideConf`, `parseDotEnv`, `sanitizeVars`,
-`resolveDesired`. `runner_provision.ts`: `parseRunnerVersion`, `cmpVersion`, `clampConcurrency`.
-`runner_scan.ts`: `isSettled`, `parseRoots`, `repoSlug`. Needed only for Phase 5.
+**Exports for Phase 5** (no behaviour change), if it is ever unlocked: the private parsers in
+`runner_env.ts`, `runner_provision.ts` and `runner_scan.ts`.
 
 ## 8. CI
 

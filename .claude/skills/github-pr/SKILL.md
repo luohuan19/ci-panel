@@ -161,7 +161,8 @@ EOF
 **PR Title/Body**: auto-extracted from commit messages since `origin/master`.
 All four packages have vitest suites. Report the real counts (e.g. "daemon: N
 passed, 8 files") and never write "all tests pass" as a blanket claim — coverage is
-risk-first, not broad.
+risk-first, not broad. For a `common/` change, that means counts for all four:
+every package consumes it.
 
 **Important:**
 

@@ -114,11 +114,14 @@ class DownloadManager {
       });
     } catch (err: any) {
       if (fallbackUrl && !controller.signal.aborted) {
+        // 先摘掉本次任务,再决定要不要走 fallback:下面那句校验会抛,而抛出去之后没有任何
+        // 人再回来清理 this.tasks —— 任务会以「下载中」的样子永远挂在列表里,还占着
+        // maxDownloadFromUrlFileCount 的名额。
+        this.tasks = this.tasks.filter((t) => t.id !== taskId);
         // fallbackUrl 是调用方另给的一个地址,不是 url 的派生物 —— 入口那次 checkSafeUrl 校验
         // 的是 url,管不到它。少了这一句,只要让主 url 失败,fallbackUrl 就能指向任意主机、
         // 任意协议,内容还会被写进工作区。
         if (!checkSafeUrl(fallbackUrl)) throw new Error(`Unsafe fallback URL: ${fallbackUrl}`);
-        this.tasks = this.tasks.filter((t) => t.id !== taskId);
         return await this.downloadFromUrl(fallbackUrl, targetPath);
       }
 

@@ -45,8 +45,8 @@ jobs:
         run: npm run build --prefix daemon
 
       # This is `run-p type-check build-only`, so vue-tsc runs here too.
-      # panel and daemon have no type-check script; their type errors surface
-      # through their webpack builds above.
+      # The other three type-check in the `test:` job below, against their
+      # tsconfig.test.json — which is also the only thing covering their test/ dirs.
       - name: Build frontend
         run: npm run build --prefix frontend
 
@@ -54,9 +54,9 @@ jobs:
   # current release gate and must not be slowed or destabilised by the test run.
   # The first three steps are byte-identical to it on purpose.
   test:
-    # Deliberately not "Test all packages": this string becomes the required-check
-    # name in branch protection, and daemon/panel have no suite yet. A name that
-    # stays accurate as later phases add packages avoids churning that config.
+    # Deliberately just "Test": this string is the required-check name in branch
+    # protection, so keeping it independent of which packages it covers means
+    # adding a step never churns that config. All four are covered now.
     name: Test
     runs-on: ubuntu-latest
 
@@ -100,9 +100,9 @@ jobs:
       - name: Test frontend
         run: npm run test --prefix frontend
 
-      # Neither package's build tsconfig includes test/, and vitest transpiles through esbuild
-      # without type-checking — so without these steps a spec referencing a renamed export would
-      # keep "passing" indefinitely. common's matters most: it owns the shared protocol types.
+      # No build tsconfig includes test/, and vitest transpiles through esbuild without
+      # type-checking — so without these steps a spec referencing a renamed export would keep
+      # "passing" indefinitely. common's matters most: it owns the shared protocol types.
       - name: Type-check common (incl. tests)
         run: npm run type-check --prefix common
 
