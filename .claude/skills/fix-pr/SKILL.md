@@ -127,8 +127,8 @@ For large logs: `gh run view <RUN_ID> --log-failed 2>&1 | grep -iE "error|ERR!" 
 **External checks** (non-GitHub Actions): no run ID exists — open the `link` URL directly to view logs from the external provider.
 
 **Reproducing locally:** use the `verify` skill (suites / type-check / lint /
-build per package). `common/`, `daemon/` and `frontend/` have a `test` script;
-`panel/` does not — never invent one for it.
+build per package). All four packages have a `test` script; only `frontend/` has
+`lint`.
 
 ### Step 4: Get User Confirmation
 

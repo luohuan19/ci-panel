@@ -2,9 +2,8 @@
 
 ## Status in This Repository
 
-**This rule is live.** `common/`, `daemon/` and `frontend/` each run a vitest suite
-(`npm run test --prefix <pkg>`); `panel/` gets one in Phase 4 of the rollout tracked
-in #20. See `TESTING.md` for what each suite covers.
+**This rule is live.** All four packages run a vitest suite
+(`npm run test --prefix <pkg>`). See `TESTING.md` for what each covers.
 
 The suites are risk-first, not coverage-first: most of what exists guards a
 boundary whose violation is unrecoverable — path containment, PAT disclosure,

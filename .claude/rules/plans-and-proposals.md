@@ -150,9 +150,14 @@ need cleanup logic.
 
 ### 6. Describe the Verification Strategy
 
-State exactly how the change will be verified. Name the specs you will add or
-update for the packages that have a suite (`common/`, `daemon/`, `frontend/`),
-plus type checks, lint, and the concrete manual path through the UI or API.
+State exactly how the change will be verified. For **every affected package** name
+the specs you will add or update, and run its suite, its type-check **and its
+build** — all four packages have all three. Plus `lint` for `frontend/` (the only
+package with one) and the concrete manual path through the UI or API.
+
+A change to `common/` is the wide case: `preview-build` first, then all four
+suites, type-checks and builds, because every package consumes it. If you scope a
+run narrower than that, say which packages you skipped and why.
 
 ````text
 # ❌ Vague
@@ -174,13 +179,9 @@ plus type checks, lint, and the concrete manual path through the UI or API.
 For a defect fix, name the spec that goes red against the unfixed code — an
 assertion that passes either way proves nothing (`no-test-tampering.md`).
 
-**`panel/` has no suite until Phase 4 of #20**, so a defect living there has no
-spec to turn red. State the exact reproduction instead — the request or UI steps,
-the wrong response or render, and the same path re-run after the fix — and write
-the line **"panel has no suite, verified by reproduction"** so the gap reads as
-deliberate rather than forgotten. If the behaviour can be pinned in `common/`
-instead, prefer that: it is testable today. For a diff spanning `panel/` and
-another package, that package's spec is still required.
+Every package is testable now, `panel/` included — the exception that used to
+apply to it is gone. Where behaviour belongs to more than one package, prefer
+pinning it in `common/`.
 
 ## Summary
 
@@ -192,4 +193,4 @@ another package, that package's spec is still required.
 | Step ordering | Yes — with per-package commands and dependencies |
 | Edge cases and alternatives | Yes — with trade-off analysis |
 | Verification strategy | Yes — the suites of every affected package, type-check, lint, build, and manual steps |
-| Red-then-green for defects | Yes — name the spec that fails against the unfixed code, or state the `panel/` reproduction exception |
+| Red-then-green for defects | Yes — name the spec that fails against the unfixed code |

@@ -1356,5 +1356,7 @@
   "TXT_CODE_RUNNER_BATCH_ALL_DONE": "All finished",
   "TXT_CODE_RUNNER_BATCH_RETRY_FAILED": "Retry failed items ({count})",
   "TXT_CODE_RUNNER_BATCH_RETRY_TOKEN_PLACEHOLDER": "Re-enter the registration token to retry the failed items",
-  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "Scan the base directory and adopt runners that are registered (have .runner) but have no panel instance yet"
+  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "Scan the base directory and adopt runners that are registered (have .runner) but have no panel instance yet",
+  "TXT_CODE_PROXY_UNSAFE_TARGET": "Proxy target is not allowed: only public http/https domains are permitted",
+  "TXT_CODE_PROXY_REQUEST_FAILED": "Proxy request failed; see the panel log for details"
 }

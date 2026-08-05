@@ -28,9 +28,12 @@ consumers see type changes. Shared types belong in `common/`, never duplicated.
 
 ## Verification
 
-`common/`, `daemon/` and `frontend/` each have a vitest suite
-(`npm run test --prefix <pkg>`); **`panel/` does not**. The gate is those suites
-plus `npm run type-check --prefix frontend` and `--prefix daemon`,
-`npm run lint --prefix frontend`, and `npm run build --prefix <pkg>` for each
-touched package. Report real counts; never claim "tests pass" as a blanket
-statement. See `TESTING.md` for what the suites cover.
+All four packages have a vitest suite (`npm run test --prefix <pkg>`). The gate is
+those suites plus `npm run type-check --prefix <pkg>` for all four,
+`npm run lint --prefix frontend` (the only package with lint), and
+`npm run build --prefix <pkg>` for each touched package.
+
+**Every affected package gets all three** — suite, type-check, build. A `common/`
+change means all of it for all four: `npm run preview-build` first, since the other
+three consume its output. Report real counts and name anything you skipped; never
+claim "tests pass" as a blanket statement. See `TESTING.md` for what they cover.

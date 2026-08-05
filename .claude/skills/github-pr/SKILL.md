@@ -144,8 +144,8 @@ gh pr create \
 - Key change 2
 
 ## Verification
-- [ ] `npm run test --prefix <common|daemon|frontend>` — give real counts (panel has no suite)
-- [ ] `npm run type-check --prefix frontend` / `--prefix daemon` passes
+- [ ] `npm run test --prefix <pkg>` for each affected package — give real counts
+- [ ] `npm run type-check --prefix <pkg>` passes (all four have one)
 - [ ] `npm run lint --prefix frontend` clean
 - [ ] `npm run build --prefix <affected packages>` succeeds
 - [ ] Code review completed
@@ -159,9 +159,10 @@ EOF
 `--repo` and `--base` are explicit on purpose — never rely on `gh` inferring them.
 
 **PR Title/Body**: auto-extracted from commit messages since `origin/master`.
-`common/`, `daemon/` and `frontend/` have vitest suites; `panel/` does not. Report
-the real counts (e.g. "daemon: N passed, 6 files") and never write "all tests pass" —
-`panel/` is untested and coverage elsewhere is risk-first, not broad.
+All four packages have vitest suites. Report the real counts (e.g. "daemon: N
+passed, 8 files") and never write "all tests pass" as a blanket claim — coverage is
+risk-first, not broad. For a `common/` change, that means counts for all four:
+every package consumes it.
 
 **Important:**
 

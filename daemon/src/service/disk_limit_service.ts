@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import { promisify } from "util";
@@ -8,7 +8,7 @@ import { checkFilePath } from "../tools/filepath";
 import { ConsumerQueue } from "../utils/queue";
 import { sleep } from "../utils/sleep";
 
-const execPromise = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface IDiskLimitItem {
   instance: Instance;
@@ -104,8 +104,11 @@ class DiskLimitService {
       return this.getCheckDefaultValue(instance, maxSpace);
     }
 
-    const command = `du -s --block-size=1M "${workspace}"`;
-    const { stdout } = await execPromise(command);
+    // execFile + 数组传参,不起 shell。此前是 `du -s --block-size=1M "${workspace}"` 走
+    // exec:路径确实在双引号里,而 checkFilePath 又拦掉了 " $ ` —— 恰好就是能突破双引号的
+    // 那几个,所以当时并不可利用。但那是「双引号」和「黑名单」两个条件同时成立才成立的结论,
+    // 任意一方改动都会破防(比如有人为了支持带空格的路径去掉引号)。argv 形式不依赖任何一方。
+    const { stdout } = await execFileAsync("du", ["-s", "--block-size=1M", workspace]);
 
     const diskUsageSizeMb = Number(String(stdout.split("/")[0]).replaceAll("\t", "").trim());
 

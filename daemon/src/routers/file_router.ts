@@ -190,8 +190,17 @@ routerApp.on("file/download_from_url", async (ctx, data) => {
     fileManager.checkPath(fileName);
     const targetPath = fileManager.toAbsolutePath(fileName);
 
-    // Start download in background
+    // Start download in background.
+    // fallbackUrl 与 url 同等对待:它也是调用方给的地址,主 url 一失败就会被直接请求。
+    // 在入口就拒,而不是等到下载失败后才在 download_manager 里抛 —— 那时用户只会看到
+    // 一个语焉不详的下载失败。
     const fallbackUrl = data.fallbackUrl;
+    if (fallbackUrl && !checkSafeUrl(String(fallbackUrl))) {
+      protocol.responseError(ctx, t("TXT_CODE_3fe1b194"), {
+        disablePrint: true
+      });
+      return;
+    }
 
     const maxDownloadFromUrlFileCount = globalConfiguration.config.maxDownloadFromUrlFileCount;
     if (
