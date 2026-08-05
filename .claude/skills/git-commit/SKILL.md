@@ -28,9 +28,10 @@ git diff --cached --name-only
 
 | Changed paths | Run `code-review` | Run `verify` |
 | ------------- | ----------------- | ------------ |
-| `frontend/**` | Yes | Yes — type-check, lint, build frontend |
-| `panel/**` / `daemon/**` | Yes | Yes — build that package (no lint/type-check exists) |
-| `common/**` | Yes | Yes — build `common/` **and all three consumers** |
+| `frontend/**` | Yes | Yes — test, type-check, lint, build frontend |
+| `daemon/**` | Yes | Yes — test, type-check (covers `test/`), build daemon; no lint script |
+| `panel/**` | Yes | Yes — build panel; it has no other script |
+| `common/**` | Yes | Yes — test + build `common/`, **and all three consumers** |
 | `languages/**` | Yes | Yes — build frontend |
 | Docs only (`*.md`) | Yes | Skip |
 | Config only (`.json`, `.github/`, `.claude/`) | Yes | Skip |

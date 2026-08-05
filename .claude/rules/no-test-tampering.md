@@ -2,9 +2,15 @@
 
 ## Status in This Repository
 
-**This repository currently has no test files.** `vitest` is present as a frontend
-dev dependency but no suite is wired up. This rule is forward-looking: it applies
-in full the moment any test is added, and it also governs how tests get introduced.
+**This rule is live.** `common/`, `daemon/` and `frontend/` each run a vitest suite
+(`npm run test --prefix <pkg>`); `panel/` gets one in Phase 4 of the rollout tracked
+in #20. See `TESTING.md` for what each suite covers.
+
+The suites are risk-first, not coverage-first: most of what exists guards a
+boundary whose violation is unrecoverable — path containment, PAT disclosure,
+auth bypass. **Weakening one of those is not a small edit.** Several were written
+specifically to fail against a reverted fix, and that property is the only reason
+they are worth having.
 
 ## Core Rule
 

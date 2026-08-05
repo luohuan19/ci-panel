@@ -37,13 +37,13 @@ rules deliberately do not duplicate them:
 - **`plans-and-proposals.md`** — plans must include concrete code, paths, before/after
 - **`problem-handling.md`** — blocking vs. non-blocking; `KNOWN_ISSUES.md` (git-ignored)
 - **`documentation-length.md`** — docs ≤500 lines, rules/skills ≤200 lines
-- **`no-test-tampering.md`** — never weaken a test to make it pass (forward-looking)
+- **`no-test-tampering.md`** — never weaken a test to make it pass (live: three suites exist)
 
 ## Skills (`.claude/skills/`)
 
 - **`git-commit`** — commit workflow: review, verify, stage, message, post-check
 - **`code-review`** — reviews the diff against project standards (`context: fork`)
-- **`verify`** — type-check, lint, and build (`context: fork`)
+- **`verify`** — suites, type-check, lint, and build (`context: fork`)
 - **`github-pr`** — branch, rebase, push, open a PR
 - **`fix-pr`** — resolve review threads and CI failures on a PR
 - **`auto-pr`** — create a PR then loop on fixes until green
@@ -58,12 +58,23 @@ main context window.
 
 ## Two things to know before using these
 
-**There is no test suite.** `vitest` is a frontend devDependency but zero test
-files exist and no package defines a `test` script. The real gate is
-`npm run type-check --prefix frontend`, `npm run lint --prefix frontend`, and
-`npm run build --prefix <pkg>`. Note that `panel/` and `daemon/` have neither a
-`lint` nor a `type-check` script — their type errors surface only via `build`.
-Never invent a test command or report "tests passed".
+**Three packages have a suite; `panel/` does not.** Run what exists — and only
+what exists.
+
+| Package | `test` | `type-check` | `lint` | `build` |
+| ------- | ------ | ------------ | ------ | ------- |
+| `common` | ✅ vitest | ❌ | ❌ | ✅ |
+| `daemon` | ✅ vitest | ✅ (also covers `test/`) | ❌ | ✅ |
+| `frontend` | ✅ vitest | ✅ | ✅ | ✅ |
+| `panel` | ❌ | ❌ | ❌ | ✅ |
+
+`panel/` has no script but `build`, so its type errors surface only there; it
+gets a suite in Phase 4 of the rollout tracked in #20. `common/` has no
+`type-check` either — its specs are checked by nothing but the suite running.
+Strategy and per-package config rationale live in `TESTING.md` at the repo root.
+
+**Never invent a command that does not exist, and never report a check you did
+not run.** `npm run test --prefix panel` is not a thing.
 
 **There is one remote.** `origin` is `pypto-tools/ci-panel` (public, default branch
 `master`) — all PRs and issues go here. Because the repo is public, treat
