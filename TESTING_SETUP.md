@@ -45,71 +45,36 @@ them there rather than a copy here. Five points worth carrying to the other thre
   pre-1.0.4 implementation: the run sails past 2s and only the CI step's process-level
   `timeout -k 10 120` stops it, with exit 124 and no orphaned workers (TESTING.md §2.2).
 
-## `daemon/vitest.config.mts` (`panel/vitest.config.ts` is identical minus the `mcsmanager-common` alias)
+## daemon — done; panel's config mirrors it minus the `mcsmanager-common` alias
 
-`alias` mirrors `webpack.config.js:39-42` (vitest does not read tsconfig `paths`); pointing
-`mcsmanager-common` at `common/src` rather than `dist/` takes `preview-build` out of the test loop
-and stops a stale `dist` from silently testing an older protocol. `threads: false` is required by
-the module-level singletons and import-time side effects, and makes `process.chdir` work in the
-setup file — **do not write `pool` / `poolOptions`, those are vitest 1.0+ fields**.
+`daemon/vitest.config.mts`, `daemon/test/setup.ts` and `daemon/tsconfig.test.json` are in the tree
+as of Phase 2. What panel should copy:
 
-`__dirname` is fine in a `.mts` config despite the file being ESM, so no `fileURLToPath` dance is
-needed. vite's `bundleConfigFile` hands esbuild `define: { __dirname: "__vite_injected_original_dirname" }`,
-and its `inject-file-scope-variables` plugin prepends `const __vite_injected_original_dirname =
-"<config dir>"` in the load hook — a bundle-time string literal, not anything derived at runtime.
-The plugin's filter is `/\.[cm]?[jt]s$/`, which covers `.mts`. Verified against vite 4.5.14 as
-resolved by `frontend/package-lock.json`; the guarantee carries to daemon/panel only if they pin
-the same vitest, since vite reaches them as a transitive dependency of it.
-
-```ts
-import path from "node:path";
-import { defineConfig } from "vitest/config";
-
-export default defineConfig({
-  resolve: {
-    alias: {
-      "@languages": path.resolve(__dirname, "../languages"),
-      "mcsmanager-common": path.resolve(__dirname, "../common/src/index.ts")
-    }
-  },
-  test: {
-    environment: "node",
-    include: ["test/**/*.spec.ts"],
-    setupFiles: ["./test/setup.ts"],
-    passWithNoTests: true, // 写下第一个 spec 的那次提交里删掉，见 TESTING.md §8
-    threads: false,
-    testTimeout: 5000,
-    teardownTimeout: 2000,
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "lcov"],
-      include: ["src/**/*.ts"],
-      exclude: ["src/types/**", "../common/**"]
-    }
-  }
-});
-```
-
-## `daemon/test/setup.ts`
-
-`service/log.ts` renames `logs/current.log` and configures a cwd-relative log4js appender at import
-time, and `system_instance.ts` does `fs.mkdirsSync('data/InstanceData')` — without this, one test
-run pollutes the developer's working tree.
+- **`alias` mirrors `webpack.config.js`** — vitest does not read tsconfig `paths`. Pointing
+  `mcsmanager-common` at `common/src` rather than `dist/` takes `preview-build` out of the test loop
+  and stops a stale `dist` from silently testing an older protocol.
+- **`__dirname` is fine in a `.mts` config** despite the file being ESM, so no `fileURLToPath` dance
+  is needed. vite's `bundleConfigFile` hands esbuild
+  `define: { __dirname: "__vite_injected_original_dirname" }`, and its `inject-file-scope-variables`
+  plugin prepends that as a bundle-time string literal from `path.dirname(args.path)`. The plugin's
+  filter is `/\.[cm]?[jt]s$/`, which covers `.mts`. Verified by loading a real `.mts` config.
+- **`threads: false` is mandatory here**, for three separate reasons: `process.chdir` throws inside a
+  worker thread, `runner_scan` fixes its scan roots from `CIP_SCAN_ROOTS` at module load, and the
+  pool-startup cost dwarfs the assertions (TESTING.md §9). Remember 0.3x spells it `threads`.
+- **Inject the package root through `test.env`, do not derive it from `process.cwd()`.** The setup
+  file runs once *per test file* and chdirs into a fresh sandbox each time, so from the second file
+  onwards `cwd` is the previous sandbox. `import.meta.url` is not an option either — the tsconfig's
+  `module` is `commonjs` and `type-check` rejects it. The config file's own `__dirname` is the one
+  stable reference:
 
 ```ts
-import fs from "fs-extra";
-import os from "os";
-import path from "path";
-
-const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "ci-panel-daemon-test-"));
-fs.mkdirsSync(path.join(sandbox, "logs"));
-fs.mkdirsSync(path.join(sandbox, "data"));
-process.chdir(sandbox);
-
-// runner_scan.ts reads CIP_SCAN_ROOTS once at module load — set it before importing any daemon module.
-process.env.CIP_SCAN_ROOTS = path.join(sandbox, "runners");
-fs.mkdirsSync(process.env.CIP_SCAN_ROOTS);
+    env: { CIP_TEST_DAEMON_ROOT: __dirname },
 ```
+
+- **The sandbox is containment, not a fix.** `service/log.ts` renames `logs/current.log` and attaches
+  a cwd-relative log4js appender at import time; `system_instance.ts` does
+  `fs.mkdirsSync('data/InstanceData')`. The chdir keeps that out of the working tree — after a run,
+  `git status` must still be clean. Narrowing those import-time side effects is Phase 5.
 
 ## `daemon/tsconfig.test.json` / `panel/tsconfig.test.json`
 

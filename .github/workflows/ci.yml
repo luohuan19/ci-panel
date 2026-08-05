@@ -89,6 +89,16 @@ jobs:
       - name: Test common
         run: timeout -k 10 120 npm run test --prefix common
 
-      # daemon and panel get their steps in later phases of the rollout tracked in #20.
+      # Wrapped for the same reason as Test common: these specs walk /proc and can reach
+      # systemctl, so a wedge here would otherwise burn the job's whole default timeout.
+      - name: Test daemon
+        run: timeout -k 10 300 npm run test --prefix daemon
+
+      # panel gets its steps in Phase 4 of the rollout tracked in #20.
       - name: Test frontend
         run: npm run test --prefix frontend
+
+      # daemon's tsconfig `include` covers only src/, so webpack never sees a spec. Without
+      # this, a spec referencing a renamed export would keep "passing" indefinitely.
+      - name: Type-check daemon (incl. tests)
+        run: npm run type-check --prefix daemon

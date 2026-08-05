@@ -205,18 +205,42 @@ fail; `npm run build --prefix panel` still green.
 
 ### Phase 2 — daemon path boundary and secret redaction (3–4 days)
 
-0. In `daemon/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6`
+0. In `daemon/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6 vite@^4.5.14`
 1. Add `daemon/vitest.config.mts`, `daemon/test/setup.ts`, `daemon/tsconfig.test.json`
    ([TESTING_SETUP.md](TESTING_SETUP.md))
 2. `daemon/package.json`: add `test` / `test:watch` / `"type-check": "tsc --noEmit -p tsconfig.test.json"`
 3. Write the §2.3 specs: `scan_roots` (including the symlink cases), `diag_logs_boundary`,
-   `collect_boundary`, plus `service_name_boundary` — assert both copies of `SERVICE_RE`
-   (`runner_scan.ts:40`, `runner_env.ts:20`) are identical and both reject whitespace and `/`
+   `collect_boundary`, plus `service_name_boundary` — assert **all three** copies of `SERVICE_RE`
+   agree (`runner_scan.ts`, `runner_env.ts`, and `prod-scripts/ci-panel-runner-svc`; the bash one
+   is the real boundary, being the one that runs as root) and that the shape rejects whitespace,
+   `/` and option-shaped names
 4. Write `token_redaction.spec.ts` against `redactTokenArgs` (§7.2)
 5. Add `Test daemon` + `Type-check daemon` to CI
 
 **Exit criteria:** every §2.3 case passes including the three symlink ones; `ProvisionError.fullLog`
 provably redacts the token; `tsc --noEmit -p tsconfig.test.json` clean.
+
+> **Corrections to §2.3, found by writing the specs.** The table described intended behaviour in
+> two places where the code did something else. Both fixed in the same PR.
+>
+> 1. *"a child of `base` is a symlink outside the roots → skipped with a reason"* — `collectRunnerDirs`
+>    guarded only the root it was handed; the recursive descent had no check at all. Since
+>    `statSync` / `readdirSync` / `isRunnerDir` all follow links, one `<root>/<repo>/x -> /anywhere`
+>    made the scan read that directory's `.runner` and report it as a normal runner, `errors` empty.
+>    The guard now runs per level and records the skip.
+> 2. **Directory-level guarding is not enough, which the table did not consider at all.** The three
+>    metadata files (`.runner`, `.service`, `.cipanel`) are writable by the runner's own account and
+>    `readFileSync` follows links, so a directory legitimately inside the roots could still serve up
+>    any file on the host. `.runner -> <secret>` put its `gitHubUrl`/`agentName` straight into the
+>    list; when the target was not JSON, Node's parse error embedded the first ~10 bytes of content
+>    and shipped them to the UI as `broken`; and `.cipanel -> <anywhere>` made `hasMarker` true,
+>    which is what `registerRunners` and `scanOneRunner` use to *skip* `assertUnderRoots` entirely.
+>    New `metaFilePath` in `runner_marker.ts` requires each metadata file to resolve inside its own
+>    directory. Deliberately not an `assertUnderRoots` call: managed runners are allowed to live
+>    outside the roots, so "must not escape its own directory" is the constraint that holds for both.
+>
+> Also note `collectFromRoots` **collects** the root rejection into `errors` rather than throwing,
+> so the `collectRunners("/etc") → throws` row is really "returns no runners and one error".
 
 ### Phase 3 — contract layer (2–3 days)
 

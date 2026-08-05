@@ -20,6 +20,7 @@ import InstanceSubsystem from "./system_instance";
 import logger from "./log";
 import {
   hasMarker,
+  metaFilePath,
   readMarker,
   removeMarker,
   writeMarker,
@@ -146,7 +147,8 @@ function isRunnerDir(dir: string) {
 // 导出给 deleteRunner（取锁要用）与 runner_env（它在这之上再加一道单元名合法性校验）复用。
 export function readServiceName(dir: string): string {
   try {
-    return fs.readFileSync(path.join(dir, ".service"), "utf8").trim();
+    // metaFilePath 顺带挡住「.service 是指向别处的符号链接」——目录在根内不代表文件也在。
+    return fs.readFileSync(metaFilePath(dir, ".service"), "utf8").trim();
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return "";
     throw err;
@@ -156,6 +158,17 @@ export function readServiceName(dir: string): string {
 // 收集所有含 .runner 的目录；命中即停，不再往里挖
 function collectRunnerDirs(dir: string, depth: number, out: string[], errors: ScanResult["errors"]) {
   if (depth > MAX_DEPTH) return;
+  // 每一层都要复核，不能只在根上校验一次：下面的 statSync/readdirSync 与 isRunnerDir 都跟随
+  // 符号链接，所以扫描根里的一个 <root>/仓库/x → /根外目录 就足以让这次扫描去回读根外的
+  // .runner，并把它当成一个正常 runner 报给前端。assertUnderRoots 比的是 realpath，能挡住。
+  // 记进 errors 而不是静默跳过：本模块对「扫到一半跳过了什么」一贯要求可见（见下面 readdirSync
+  // 失败的那一支），静默会让人以为那个目录压根不存在。
+  try {
+    assertUnderRoots(dir);
+  } catch (err: unknown) {
+    errors.push({ dir, error: errText(err) });
+    return;
+  }
   try {
     if (!fs.statSync(dir).isDirectory()) return;
   } catch {
@@ -349,8 +362,10 @@ async function buildRunners(dirs: string[]): Promise<ScannedRunner[]> {
       broken: undefined as string | undefined
     };
     try {
-      // .runner 带 BOM，直接 JSON.parse 会炸
-      const raw = fs.readFileSync(path.join(dir, ".runner"), "utf8").replace(/^﻿/, "");
+      // .runner 带 BOM，直接 JSON.parse 会炸。
+      // 走 metaFilePath：目录逐层校验过了，但 .runner 本身仍可能是指向根外的符号链接，
+      // 而它的内容（repo / agentName）会直接进列表送到浏览器。
+      const raw = fs.readFileSync(metaFilePath(dir, ".runner"), "utf8").replace(/^﻿/, "");
       const j = JSON.parse(raw);
       if (j.gitHubUrl) draft.repo = repoSlug(String(j.gitHubUrl));
       if (j.agentName) draft.agentName = String(j.agentName);
