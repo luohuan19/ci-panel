@@ -36,13 +36,40 @@ export function markerPath(dir: string) {
   return path.join(dir, MARKER_FILE);
 }
 
+// runner 的元数据文件（.runner / .service / .cipanel）必须真的落在那个 runner 目录里。
+// 三个文件 runner 属主自己都能写，把其中任一换成指向别处的符号链接，读取方就会跟过去 ——
+// 目录在扫描根内，不代表它里面的文件也在。少了这道检查，一个 <runner>/.runner → /任意文件
+// 就能让扫描把该文件的内容当作 runner 元数据读回并送到浏览器（JSON 解析失败时，Node 的错误
+// 信息里还带着内容前缀）。
+//
+// 比的是「文件的 realpath 是否就在该目录的 realpath 下」，而不是再调一次 assertUnderRoots：
+// 被管理的 runner 允许落在扫描根之外（见 runner_scan 的 managedRunnerDirs），所以对这三个
+// 文件而言正确的约束是「不许逃出自己的目录」—— 那对根内根外都成立。
+// 导出给 runner_scan 复用（它读 .runner 和 .service）。放在本文件是因为这里最底层、
+// 不 import 任何其他 service，不会绕出循环依赖。
+export function metaFilePath(dir: string, name: string): string {
+  const file = path.join(dir, name);
+  // 文件不存在时抛 ENOENT，与直接 readFileSync 的行为一致，调用方照旧按「没有这个文件」处理。
+  const realFile = fs.realpathSync(file);
+  if (path.dirname(realFile) !== fs.realpathSync(dir))
+    throw new Error(`${name} 逃出了 runner 目录（疑似符号链接）: ${dir}`);
+  return realFile;
+}
+
+// 逃逸的 marker 一律当作「没有 marker」。这里必须 fail closed：registerRunners 与 scanOneRunner
+// 正是靠 hasMarker/readMarker 为真来跳过 assertUnderRoots 的，返回 true 等于把边界让开。
 export function hasMarker(dir: string): boolean {
-  return fs.existsSync(markerPath(dir));
+  try {
+    metaFilePath(dir, MARKER_FILE);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function readMarker(dir: string): RunnerMarker | null {
   try {
-    const raw = fs.readFileSync(markerPath(dir), "utf8").replace(/^\uFEFF/, "");
+    const raw = fs.readFileSync(metaFilePath(dir, MARKER_FILE), "utf8").replace(/^\uFEFF/, "");
     const j = JSON.parse(raw);
     if (!j || typeof j.id !== "string" || !j.id) return null;
     return {

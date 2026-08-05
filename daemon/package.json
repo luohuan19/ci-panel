@@ -4,7 +4,10 @@
   "description": "CI Panel node daemon: GitHub Actions runner scan/provision/logs, processes, scheduled tasks and I/O streams.",
   "scripts": {
     "dev": "nodemon --watch src --ext ts,js --exec \"npm run build && node --enable-source-maps production/app.js\"",
-    "build": "webpack --config webpack.config.js"
+    "build": "webpack --config webpack.config.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit -p tsconfig.test.json"
   },
   "homepage": "https://github.com/pypto-tools/ci-panel",
   "author": "https://github.com/yumao233",
@@ -64,11 +67,14 @@
     "@types/ssh2": "^1.11.7",
     "@types/stream-throttle": "^0.1.4",
     "@types/uuid": "^8.3.0",
+    "@vitest/coverage-v8": "^0.34.6",
     "eslint": "^7.13.0",
     "nodemon": "^3.1.10",
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.1",
     "typescript": "^5.8.3",
+    "vite": "^4.5.14",
+    "vitest": "^0.34.6",
     "webpack": "^5.94.0",
     "webpack-cli": "^4.10.0",
     "webpack-node-externals": "^3.0.0"
