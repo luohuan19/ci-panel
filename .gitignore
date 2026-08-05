@@ -142,3 +142,7 @@ src/public/1.png
 
 # Local-only issue tracking (see .claude/rules/problem-handling.md)
 KNOWN_ISSUES.md
+
+# Scratch git worktrees. These are live checkouts of this same repo — committing one
+# would nest a second copy of the tree inside itself.
+/.claude/worktrees/

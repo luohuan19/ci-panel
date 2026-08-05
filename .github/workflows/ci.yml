@@ -49,3 +49,35 @@ jobs:
       # through their webpack builds above.
       - name: Build frontend
         run: npm run build --prefix frontend
+
+  # Deliberately a second job rather than more steps on `build`: that job is the
+  # current release gate and must not be slowed or destabilised by the test run.
+  # The first three steps are byte-identical to it on purpose.
+  test:
+    # Deliberately not "Test all packages": this string becomes the required-check
+    # name in branch protection, and only frontend has a suite so far. A name that
+    # stays accurate as later phases add packages avoids churning that config.
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            common/package-lock.json
+            panel/package-lock.json
+            daemon/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      # Only frontend has a suite so far. common, daemon and panel get theirs in
+      # later phases of the rollout tracked in #20; each adds its own step here.
+      - name: Test frontend
+        run: npm run test --prefix frontend
