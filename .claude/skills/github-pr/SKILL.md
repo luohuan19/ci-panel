@@ -144,7 +144,8 @@ gh pr create \
 - Key change 2
 
 ## Verification
-- [ ] `npm run type-check --prefix frontend` passes
+- [ ] `npm run test --prefix <common|daemon|frontend>` — give real counts (panel has no suite)
+- [ ] `npm run type-check --prefix frontend` / `--prefix daemon` passes
 - [ ] `npm run lint --prefix frontend` clean
 - [ ] `npm run build --prefix <affected packages>` succeeds
 - [ ] Code review completed
@@ -158,7 +159,9 @@ EOF
 `--repo` and `--base` are explicit on purpose — never rely on `gh` inferring them.
 
 **PR Title/Body**: auto-extracted from commit messages since `origin/master`.
-This repo has **no test suite** — never write "all tests pass" in a PR body.
+`common/`, `daemon/` and `frontend/` have vitest suites; `panel/` does not. Report
+the real counts (e.g. "daemon: N passed, 6 files") and never write "all tests pass" —
+`panel/` is untested and coverage elsewhere is risk-first, not broad.
 
 **Important:**
 

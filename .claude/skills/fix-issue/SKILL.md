@@ -119,10 +119,14 @@ update.
 /verify
 ```
 
-The `verify` skill runs the real gate: `type-check` and `lint` on `frontend`,
-plus `build` for each affected package. **This project has no test suite** — do
-not invent `npm test` or report "tests passed". Fix every failure before
-committing.
+The `verify` skill runs the real gate: the vitest suites of `common/`, `daemon/`
+and `frontend/`, `type-check` on `frontend` and `daemon`, `lint` on `frontend`,
+plus `build` for each affected package. **`panel/` has no suite** — do not invent
+`npm run test --prefix panel`, and never report a check you did not run. Fix
+every failure before committing.
+
+When the issue is a defect, add the failing spec **before** the fix and confirm
+it goes red against the unfixed code — see `.claude/rules/no-test-tampering.md`.
 
 ## Step 8: Commit Changes
 

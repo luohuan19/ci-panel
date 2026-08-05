@@ -28,6 +28,9 @@ consumers see type changes. Shared types belong in `common/`, never duplicated.
 
 ## Verification
 
-There is **no test suite**. The gate is `npm run type-check --prefix frontend`,
+`common/`, `daemon/` and `frontend/` each have a vitest suite
+(`npm run test --prefix <pkg>`); **`panel/` does not**. The gate is those suites
+plus `npm run type-check --prefix frontend` and `--prefix daemon`,
 `npm run lint --prefix frontend`, and `npm run build --prefix <pkg>` for each
-touched package. Never claim "tests pass".
+touched package. Report real counts; never claim "tests pass" as a blanket
+statement. See `TESTING.md` for what the suites cover.

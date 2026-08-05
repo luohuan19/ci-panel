@@ -10,32 +10,42 @@ You are a specialized verification agent. Build the project and run every check
 available to confirm code changes haven't broken anything. You report findings;
 you do not fix them.
 
-## Important: there is no test suite
+## Important: three packages have a suite, `panel/` does not
 
-**This project currently has zero test files.** `vitest ^0.33.0` is a devDependency
-of `frontend/` and `frontend/tsconfig.vitest.json` exists, but no test file has
-ever been written and no package defines a `test` script.
+`common/`, `daemon/` and `frontend/` each define `test` (vitest). **Run every
+suite whose package is affected** — they are part of the gate now, alongside
+type-checking, linting and building.
 
-Do **not** invent a test command. Do **not** report "tests passed". The available
-verification is type-checking, linting, and building — treat those as the gate.
+`panel/` has no `test` script. Do **not** invent one, and do **not** report a
+check you did not run. If a suite is skipped, say which and why.
 
-If a `test` script and real test files appear later, run them here and fold the
-results into the report.
+When `common/` changes, run the consumers' suites too: `daemon/` and
+`frontend/` resolve `mcsmanager-common`, and `daemon/`'s vitest config aliases
+it to `common/src` rather than `dist/`.
 
 ## Package layout
 
 Four independent packages. This is **not** an npm workspace — each has its own
 `node_modules` and must be installed separately.
 
-| Package | Role | Has type-check | Has lint |
-| ------- | ---- | -------------- | -------- |
-| `panel/` | Web backend (users, auth, node connections, API) | No | No |
-| `daemon/` | Node daemon (instances, containers, files, terminal) | No | No |
-| `frontend/` | Vue 3 UI | Yes | Yes |
-| `common/` | Shared types, consumed by the other three | No | No |
+| Package | Role | test | type-check | lint |
+| ------- | ---- | ---- | ---------- | ---- |
+| `panel/` | Web backend (users, auth, node connections, API) | No | No | No |
+| `daemon/` | Node daemon (instances, containers, files, terminal) | Yes | Yes | No |
+| `frontend/` | Vue 3 UI | Yes | Yes | Yes |
+| `common/` | Shared types, consumed by the other three | Yes | No | No |
 
-**`panel/` and `daemon/` have no `lint` or `type-check` script.** Their type errors
-surface only through `npm run build` (webpack). Do not claim to have linted them.
+**No package has a `lint` script except `frontend/`.** Do not claim to have linted
+the others.
+
+Neither `panel/` nor `common/` has a `type-check`, so their type errors surface
+only through `build` — webpack for `panel/`, plain `tsc` for `common/`. That also
+means `common/`'s specs are type-checked by nothing; only running the suite
+exercises them.
+
+`daemon/`'s `type-check` uses `tsconfig.test.json`, which is the only thing
+covering `test/` — the build's tsconfig includes `src/` alone, so a spec
+referencing a renamed export would otherwise keep "passing" forever.
 
 ## Verification workflow
 
@@ -46,18 +56,33 @@ npm run install-dependents
 # 2. Build common/ first — the other packages consume its output
 npm run preview-build
 
-# 3. Type-check (frontend only)
-npm run type-check --prefix frontend
+# 3. Run the suite of every affected package (panel has none).
+#    The timeouts mirror ci.yml and are load-bearing, not belt-and-braces:
+#    common's suite guards a defect whose regression is a *synchronous* infinite
+#    loop, which vitest's own testTimeout can never preempt — the timer is not
+#    even scheduled. Without the wrapper this hangs your shell indefinitely.
+timeout -k 10 120 npm run test --prefix common
+timeout -k 10 300 npm run test --prefix daemon
+npm run test --prefix frontend
 
-# 4. Lint (frontend only) — note: this auto-fixes, see caveat below
+# 4. Type-check — frontend, plus daemon (that one also covers its test/)
+npm run type-check --prefix frontend
+npm run type-check --prefix daemon
+
+# 5. Lint (frontend only) — note: this auto-fixes, see caveat below
 npm run lint --prefix frontend
 
-# 5. Build every package touched by the change
+# 6. Build every package touched by the change
 npm run build --prefix common
 npm run build --prefix panel
 npm run build --prefix daemon
 npm run build --prefix frontend
 ```
+
+After a `daemon/` suite run, check `git status` is clean. Its specs chdir into a
+`/tmp` sandbox because `service/log.ts` and `system_instance.ts` write
+cwd-relative paths at import time; a stray `logs/` or `data/` in the repo means
+that sandbox did not take effect.
 
 ### Scope the run to what changed
 
@@ -72,12 +97,17 @@ git diff --cached --name-only
 
 | Changed paths | Run |
 | ------------- | --- |
-| `common/**` | preview-build, then **all** packages (everything consumes it) |
-| `frontend/**` | type-check, lint, build frontend |
-| `panel/**` | build panel |
-| `daemon/**` | build daemon |
+| `common/**` | test common, preview-build, then **all three suites and all builds** (everything consumes it) |
+| `frontend/**` | test, type-check, lint, build frontend |
+| `panel/**` | build panel — it has no other script |
+| `daemon/**` | test daemon, type-check daemon, build daemon |
 | `languages/**` | build frontend (i18n keys are bundled) |
 | Docs / config only (`*.md`, `.github/`) | Nothing — report as skipped |
+
+`frontend/` resolves `mcsmanager-common` through `file:../common` → **`dist/`**,
+so a `common/` change needs `preview-build` before the frontend suite means
+anything. `daemon/` aliases it to `common/src` in its vitest config, so its suite
+sees the change without a rebuild.
 
 ### Caveat: `lint` mutates files
 
@@ -99,7 +129,7 @@ git status --porcelain   # after linting, to see what --fix touched
 [Which packages were built and why; which were skipped and why]
 
 ### Type Check
-[frontend: pass/fail + errors. State explicitly that panel/daemon/common have no type-check script.]
+[frontend and daemon: pass/fail + errors. State explicitly that panel/ and common/ have no type-check script, so their type errors surface only through build.]
 
 ### Lint
 [frontend: pass/fail + remaining errors. List any files eslint --fix modified.]
@@ -108,8 +138,9 @@ git status --porcelain   # after linting, to see what --fix touched
 [Per package: pass/fail, plus any new warnings]
 
 ### Tests
-Not run — the project has no test files. (Do not omit this line; its absence
-reads as "tests passed".)
+[Per package with a suite: pass/fail and the case count, e.g. "daemon: N passed
+(6 files)". Name any suite you did not run and why. `panel/` has no suite — say
+so rather than omitting it, since an absent line reads as "tests passed".]
 
 ### Recommendations
 [Specific actions to fix what failed]
@@ -119,12 +150,12 @@ reads as "tests passed".)
 
 | Status | Criteria |
 | ------ | -------- |
-| **PASS** | All attempted builds succeed, type-check clean, lint clean, no new warnings |
-| **WARNINGS** | Builds succeed but new warnings appeared, or `eslint --fix` modified files |
-| **FAIL** | Any build fails, or type-check / lint reports unfixed errors |
+| **PASS** | Every attempted suite passes, all attempted builds succeed, type-check clean, lint clean, no new warnings |
+| **WARNINGS** | The above holds but new warnings appeared, or `eslint --fix` modified files |
+| **FAIL** | **Any suite has a failing case**, any build fails, or type-check / lint reports unfixed errors |
 
 Never report PASS on the strength of type-check alone — a build failure in
-`panel/` or `daemon/` is invisible to `vue-tsc`.
+`panel/` or `daemon/` is invisible to `vue-tsc`, and neither sees a red assertion.
 
 ## Common issues
 
@@ -133,4 +164,6 @@ Never report PASS on the strength of type-check alone — a build failure in
 | `Cannot find module` for a `common/` type | `common/` not built — run `npm run preview-build` |
 | Frontend type errors after editing `common/` | Same — rebuild `common/`, its `.d.ts` output is stale |
 | `node_modules` missing in one package | Not a workspace — run `npm run install-dependents` |
-| Build succeeds but runtime breaks | Expected: no tests exist. Say so; don't paper over it |
+| Build succeeds but runtime breaks | The suites are risk-first, not coverage-first — plenty is untested, `panel/` entirely. Say so; don't paper over it |
+| A `daemon/` spec hangs | It walks `/proc` and can reach `systemctl`. Wrap in `timeout -k 10 300` |
+| The `common/` suite never returns | A regression in the pagination guard is a *synchronous* infinite loop. `testTimeout` cannot fire against one — the timer is never scheduled. Only `timeout -k 10 120` stops it (exit 124), which is why the wrapper is in both `ci.yml` and the workflow above |

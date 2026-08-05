@@ -5,8 +5,10 @@ the reference: tool choices, full config files, and the reasoning behind them.
 
 ## 1. Where we stand
 
-- Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K),
-  **zero test files**, no package defines a `test` script. CI only builds.
+- Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
+  time this was written: **zero test files**, no package defined a `test` script, CI only built.
+  As of Phase 2, `common/` (35 cases), `daemon/` (64) and `frontend/` (41) each run a vitest suite
+  in CI; `panel/` gets one in Phase 4.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -338,8 +340,9 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 ## 8. CI
 
 The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
-Phase 0. As of Phase 1 it runs `Build common`, `Test common` and `Test frontend`; the remaining
-steps below arrive with the phase that gives their package a suite. The existing `build:` job stays
+Phase 0. As of Phase 2 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend` and
+`Type-check daemon (incl. tests)`; the remaining steps below arrive with the phase that gives their
+package a suite. The existing `build:` job stays
 byte-identical: it is the current release gate and must not be slowed or destabilised by
 test-install variance.
 
@@ -457,11 +460,12 @@ per-file module isolation today; do not start.
 
 ## 11. How to verify the setup itself
 
-There is no test suite yet, so run each of these rather than assuming.
+Run each of these rather than assuming.
 
-1. **Build and type-check each package** (note the directory): `common/` → `npm run build`;
-   `panel/` and `daemon/` → `npx tsc --noEmit -p tsconfig.test.json && npm run build`;
-   `frontend/` → `npm run type-check && npm run lint`.
+1. **Build and type-check each package** (note the directory): `common/` → `npm run build` (it has
+   no `type-check`); `daemon/` → `npm run type-check && npm run build`; `panel/` → `npm run build`
+   only, until Phase 4 gives it a `tsconfig.test.json`; `frontend/` → `npm run type-check &&
+   npm run lint`.
 2. **Prove the loop:** in each package, first write an assertion that must fail and confirm it
    **does**, then correct it. A test that passes against broken code tests nothing.
 3. **Handle leaks:** `cd daemon && npx vitest run --reporter=verbose` and confirm the process exits

@@ -150,8 +150,11 @@ need cleanup logic.
 
 ### 6. Describe the Verification Strategy
 
-The project currently has no test files, so state exactly how the change will be
-verified — type checks, lint, and the concrete manual path through the UI or API.
+State exactly how the change will be verified. Name the specs you will add or
+update for the packages that have a suite (`common/`, `daemon/`, `frontend/`),
+plus type checks, lint, and the concrete manual path through the UI or API.
+`panel/` has no suite yet, so changes there are still verified by `build` plus a
+manual path.
 
 ````text
 # ❌ Vague
@@ -159,15 +162,19 @@ verified — type checks, lint, and the concrete manual path through the UI or A
 
 # ✅ Detailed
 "Verification:
-1. Type-check: `cd common && npm run build`, `cd panel && npx tsc --noEmit`,
-   `cd frontend && npm run type-check`
-2. Manual: start the panel and daemon, open the node's runner page, confirm the
+1. Specs: add `common/test/contract/runner_protocol.spec.ts` pinning the new
+   field, and extend `frontend/src/tools/__tests__/protocol.spec.ts`
+2. Suites: `npm run test --prefix common`, `--prefix frontend`
+3. Type-check: `npm run build --prefix common` (no type-check script there),
+   `npm run build --prefix panel`, `npm run type-check --prefix frontend`
+4. Manual: start the panel and daemon, open the node's runner page, confirm the
    queue count renders and updates when a job is queued
-3. i18n: confirm the new `TXT_CODE_RUNNER_QUEUED` key resolves (no raw key shown)
+5. i18n: confirm the new `TXT_CODE_RUNNER_QUEUED` key resolves (no raw key shown)
 "
 
-If tests exist by the time you plan the change, describe which test files you will
-add or update instead — see `no-test-tampering.md`.
+For a change that fixes a defect, say which spec goes red against the unfixed
+code — an assertion that passes either way proves nothing. See
+`no-test-tampering.md`.
 ````
 
 ## Summary

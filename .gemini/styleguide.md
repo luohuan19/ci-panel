@@ -55,5 +55,7 @@ Shared types belong in `common/` and must never be redeclared in two packages.
   problem; do not bundle unrelated refactors or formatting sweeps.
 - **Never** add AI co-author lines or "Generated with …" footers to commits or
   PRs — commits reflect human authorship only.
-- There is **no test suite**; the gate is `type-check` / `lint` (frontend) and
-  `build` (all packages). Never claim "tests pass".
+- `common/`, `daemon/` and `frontend/` have vitest suites; **`panel/` does not**.
+  The gate is those suites plus `type-check` (frontend, daemon), `lint`
+  (frontend) and `build` (all packages). Report real counts rather than claiming
+  "tests pass".
