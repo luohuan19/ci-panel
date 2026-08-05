@@ -363,11 +363,15 @@ that gives its package a suite, never ahead of it:
       - name: Test common           # carries the formerly-exploitable defects; fails fastest
         run: timeout -k 10 120 npm run test --prefix common
 
+      # Also wrapped: these specs walk /proc and can reach systemctl, so a wedge
+      # here would otherwise burn the job's whole default timeout.
       - name: Test daemon
-        run: npm run test --prefix daemon
+        run: timeout -k 10 300 npm run test --prefix daemon
 
+      # panel's suite will drive Koa middleware; same wrapper, so one wedged
+      # request cannot burn the job.
       - name: Test panel
-        run: npm run test --prefix panel
+        run: timeout -k 10 300 npm run test --prefix panel
 
       - name: Test frontend
         run: npm run test --prefix frontend
@@ -421,8 +425,10 @@ entire wall time is worker startup. Measured on a 320-core machine:
 
 | Package | default | `threads: false` |
 | --- | --- | --- |
-| `common` (2 files, 34 cases) | 106s | **1.1s** |
+| `common` (2 files, 34 cases at the time) | 106s | **1.1s** |
 | `frontend` (3 files, 41 cases) | 84s | **3.6s** |
+
+(Measured during Phase 1; `common/` has 35 cases now. Left as taken — the ratio is the point.)
 
 On GitHub's 4-core `ubuntu-latest` the default is survivable (frontend measured 56s), but this
 project provisions self-hosted runners — the day the `test` job moves onto a big one, `Test common`
@@ -462,11 +468,25 @@ per-file module isolation today; do not start.
 
 Run each of these rather than assuming.
 
-1. **Build and type-check each package** (note the directory): `common/` → `npm run build` (it has
-   no `type-check`); `daemon/` → `npm run type-check && npm run build`; `panel/` → `npm run build`
-   only, until Phase 4 gives it a `tsconfig.test.json`; `frontend/` → `npm run type-check &&
-   npm run lint`.
-2. **Prove the loop:** in each package, first write an assertion that must fail and confirm it
+1. **Run every suite, then build and type-check every package** (note the prefix). This is the
+   whole gate, not a subset of it:
+
+   ```bash
+   npm run build --prefix common           # FIRST: frontend resolves common/dist, so its
+                                           #   suite is meaningless against a stale build
+   timeout -k 10 120 npm run test --prefix common
+   timeout -k 10 300 npm run test --prefix daemon
+   npm run test --prefix frontend          # panel has no suite until Phase 4
+
+   npm run type-check --prefix daemon      # the only thing covering daemon/test/
+   npm run lint --prefix frontend          # only package with lint; rewrites files (--fix)
+
+   npm run build --prefix panel            # panel has no type-check; build is where its
+   npm run build --prefix daemon           #   type errors surface
+   npm run build --prefix frontend         # this is run-p type-check build-only
+   ```
+
+2. **Prove the loop:** in each package with a suite, first write an assertion that must fail and confirm it
    **does**, then correct it. A test that passes against broken code tests nothing.
 3. **Handle leaks:** `cd daemon && npx vitest run --reporter=verbose` and confirm the process exits
    on its own. If it hangs, some `setInterval` is missing `.unref()` (§7.1).

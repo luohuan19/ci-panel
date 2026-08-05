@@ -153,8 +153,6 @@ need cleanup logic.
 State exactly how the change will be verified. Name the specs you will add or
 update for the packages that have a suite (`common/`, `daemon/`, `frontend/`),
 plus type checks, lint, and the concrete manual path through the UI or API.
-`panel/` has no suite yet, so changes there are still verified by `build` plus a
-manual path.
 
 ````text
 # ❌ Vague
@@ -171,11 +169,18 @@ manual path.
    queue count renders and updates when a job is queued
 5. i18n: confirm the new `TXT_CODE_RUNNER_QUEUED` key resolves (no raw key shown)
 "
-
-For a change that fixes a defect, say which spec goes red against the unfixed
-code — an assertion that passes either way proves nothing. See
-`no-test-tampering.md`.
 ````
+
+For a defect fix, name the spec that goes red against the unfixed code — an
+assertion that passes either way proves nothing (`no-test-tampering.md`).
+
+**`panel/` has no suite until Phase 4 of #20**, so a defect living there has no
+spec to turn red. State the exact reproduction instead — the request or UI steps,
+the wrong response or render, and the same path re-run after the fix — and write
+the line **"panel has no suite, verified by reproduction"** so the gap reads as
+deliberate rather than forgotten. If the behaviour can be pinned in `common/`
+instead, prefer that: it is testable today. For a diff spanning `panel/` and
+another package, that package's spec is still required.
 
 ## Summary
 
@@ -186,4 +191,5 @@ code — an assertion that passes either way proves nothing. See
 | Before/after comparisons | Yes — for modifications |
 | Step ordering | Yes — with per-package commands and dependencies |
 | Edge cases and alternatives | Yes — with trade-off analysis |
-| Verification strategy | Yes — type-check, lint, and manual steps |
+| Verification strategy | Yes — the suites of every affected package, type-check, lint, build, and manual steps |
+| Red-then-green for defects | Yes — name the spec that fails against the unfixed code, or state the `panel/` reproduction exception |

@@ -37,13 +37,13 @@ rules deliberately do not duplicate them:
 - **`plans-and-proposals.md`** — plans must include concrete code, paths, before/after
 - **`problem-handling.md`** — blocking vs. non-blocking; `KNOWN_ISSUES.md` (git-ignored)
 - **`documentation-length.md`** — docs ≤500 lines, rules/skills ≤200 lines
-- **`no-test-tampering.md`** — never weaken a test to make it pass (forward-looking)
+- **`no-test-tampering.md`** — never weaken a test to make it pass (live: three suites exist)
 
 ## Skills (`.claude/skills/`)
 
 - **`git-commit`** — commit workflow: review, verify, stage, message, post-check
 - **`code-review`** — reviews the diff against project standards (`context: fork`)
-- **`verify`** — type-check, lint, and build (`context: fork`)
+- **`verify`** — suites, type-check, lint, and build (`context: fork`)
 - **`github-pr`** — branch, rebase, push, open a PR
 - **`fix-pr`** — resolve review threads and CI failures on a PR
 - **`auto-pr`** — create a PR then loop on fixes until green
