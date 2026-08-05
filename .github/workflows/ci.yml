@@ -55,7 +55,7 @@ jobs:
   # The first three steps are byte-identical to it on purpose.
   test:
     # Deliberately not "Test all packages": this string becomes the required-check
-    # name in branch protection, and only frontend has a suite so far. A name that
+    # name in branch protection, and daemon/panel have no suite yet. A name that
     # stays accurate as later phases add packages avoids churning that config.
     name: Test
     runs-on: ubuntu-latest
@@ -77,7 +77,18 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # Only frontend has a suite so far. common, daemon and panel get theirs in
-      # later phases of the rollout tracked in #20; each adds its own step here.
+      # Guard for the day the root install's preview-build hook goes away: the common
+      # suite runs against src/, so nothing else here would notice a broken dist/.
+      - name: Build common
+        run: npm run build --prefix common
+
+      # `timeout` is load-bearing, not belt-and-braces. This suite covers a defect whose
+      # regression is a *synchronous* infinite loop, and vitest's own testTimeout cannot
+      # fire against one — the timer is never even scheduled (TESTING.md §2.2). Verified:
+      # against the pre-1.0.4 implementation the run is killed here with exit 124.
+      - name: Test common
+        run: timeout -k 10 120 npm run test --prefix common
+
+      # daemon and panel get their steps in later phases of the rollout tracked in #20.
       - name: Test frontend
         run: npm run test --prefix frontend

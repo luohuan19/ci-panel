@@ -30,27 +30,20 @@ them there rather than a copy here. Five points worth carrying to the other thre
   and do not declare a `coverage` block before `@vitest/coverage-v8` is actually installed —
   `vitest run --coverage` then prompts for an install, which hangs a CI step.
 
-## `common/vitest.config.ts`
+## common — done, the file is the source of truth
 
-The 2s `testTimeout` suits a package that is pure logic end to end — anything slower than that is a
-hang, not a slow test. It does **not** guard the pagination loop: a synchronous loop never yields
-the event loop, so the `setTimeout` behind `testTimeout` can never fire. That case needs a
-process-level `timeout` on the CI step instead (TESTING.md §2.2).
+`common/vitest.config.ts` exists in the tree as of Phase 1. Two things it settles for daemon/panel:
 
-```ts
-import { defineConfig } from "vitest/config";
-
-export default defineConfig({
-  test: {
-    environment: "node",
-    include: ["test/**/*.spec.ts"],
-    passWithNoTests: true, // 写下第一个 spec 的那次提交里删掉，见 TESTING.md §8
-    testTimeout: 2000,
-    teardownTimeout: 1000,
-    coverage: { provider: "v8", reporter: ["text", "lcov"], include: ["src/**"] }
-  }
-});
-```
+- **`include: ["test/**/*.spec.ts"]` needs no tsconfig change here.** `common/tsconfig.json`'s
+  `include` is `["src/**/*"]`, so `npm run build` never sees a spec and nothing lands in `dist/`.
+  The trade-off is that specs are *not* type-checked by any existing script — daemon and panel get
+  the `tsconfig.test.json` below precisely because they can afford to fix that; common cannot
+  without a second tsconfig it does not otherwise need.
+- **The 2s `testTimeout` does not guard the pagination loop.** It suits a pure-logic package —
+  anything slower is a hang, not a slow test — but a synchronous loop never yields the event loop,
+  so the `setTimeout` behind `testTimeout` is never even scheduled. Confirmed by restoring the
+  pre-1.0.4 implementation: the run sails past 2s and only the CI step's process-level
+  `timeout -k 10 120` stops it, with exit 124 and no orphaned workers (TESTING.md §2.2).
 
 ## `daemon/vitest.config.mts` (`panel/vitest.config.ts` is identical minus the `mcsmanager-common` alias)
 
