@@ -1356,5 +1356,7 @@
   "TXT_CODE_RUNNER_BATCH_ALL_DONE": "全部结束",
   "TXT_CODE_RUNNER_BATCH_RETRY_FAILED": "重试失败项（{count}）",
   "TXT_CODE_RUNNER_BATCH_RETRY_TOKEN_PLACEHOLDER": "重新填注册 token 后重试失败项",
-  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "扫描基目录，把已注册(有 .runner)但面板还没建实例的 runner 纳入看护"
+  "TXT_CODE_RUNNER_SCAN_COLLECT_TIP": "扫描基目录，把已注册(有 .runner)但面板还没建实例的 runner 纳入看护",
+  "TXT_CODE_PROXY_UNSAFE_TARGET": "不允许的代理目标：仅允许公网 http/https 域名",
+  "TXT_CODE_PROXY_REQUEST_FAILED": "代理请求失败，详情见面板日志"
 }

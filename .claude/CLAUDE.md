@@ -58,23 +58,23 @@ main context window.
 
 ## Two things to know before using these
 
-**Three packages have a suite; `panel/` does not.** Run what exists — and only
-what exists.
+**All four packages have a suite** as of Phase 4 of #20. Run what exists — and
+only what exists.
 
 | Package | `test` | `type-check` | `lint` | `build` |
 | ------- | ------ | ------------ | ------ | ------- |
-| `common` | ✅ vitest | ❌ | ❌ | ✅ |
-| `daemon` | ✅ vitest | ✅ (also covers `test/`) | ❌ | ✅ |
+| `common` | ✅ vitest | ✅ (covers `test/`) | ❌ | ✅ |
+| `daemon` | ✅ vitest | ✅ (covers `test/`) | ❌ | ✅ |
+| `panel` | ✅ vitest | ✅ (covers `test/`) | ❌ | ✅ |
 | `frontend` | ✅ vitest | ✅ | ✅ | ✅ |
-| `panel` | ❌ | ❌ | ❌ | ✅ |
 
-`panel/` has no script but `build`, so its type errors surface only there; it
-gets a suite in Phase 4 of the rollout tracked in #20. `common/` has no
-`type-check` either — its specs are checked by nothing but the suite running.
-Strategy and per-package config rationale live in `TESTING.md` at the repo root.
+Only `frontend/` has a `lint` script. The three `tsconfig.test.json` type-checks
+matter because the build tsconfigs include `src/` alone and vitest transpiles
+through esbuild without type-checking — without them a spec referencing a renamed
+export would keep passing. Strategy and rationale live in `TESTING.md`.
 
 **Never invent a command that does not exist, and never report a check you did
-not run.** `npm run test --prefix panel` is not a thing.
+not run.** `npm run lint --prefix panel` is not a thing.
 
 **There is one remote.** `origin` is `pypto-tools/ci-panel` (public, default branch
 `master`) — all PRs and issues go here. Because the repo is public, treat

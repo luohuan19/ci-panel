@@ -26,10 +26,9 @@ never pauses to ask which issues to address.
 - **PR target is always `origin` = `pypto-tools/ci-panel`, base branch `master`.**
 - **No GitHub Project board, by design.** Never pass `--project` or add
   project-field steps.
-- **`common/`, `daemon/` and `frontend/` have vitest suites; `panel/` does not.**
-  Verification = the `verify` skill (suites, type-check, lint, build). Report real
-  counts; never claim a blanket "tests passed", and never invent a `test` script
-  for `panel/`. This loop runs unattended, so an unrun check reported as passing
+- **All four packages have vitest suites.** Verification = the `verify` skill
+  (suites, type-check, lint, build). Report real counts; never claim a blanket
+  "tests passed". This loop runs unattended, so an unrun check reported as passing
   is not recoverable mid-run.
 
 ## Input

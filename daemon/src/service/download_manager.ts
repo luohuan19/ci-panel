@@ -5,6 +5,7 @@ import path from "path";
 import { Throttle } from "stream-throttle";
 import { getCommonHeaders } from "../common/network";
 import { globalConfiguration } from "../entity/config";
+import { checkSafeUrl } from "../utils/url";
 
 export const DOWNLOAD_STATUS = {
   DOWNLOADING: 0,
@@ -113,6 +114,10 @@ class DownloadManager {
       });
     } catch (err: any) {
       if (fallbackUrl && !controller.signal.aborted) {
+        // fallbackUrl 是调用方另给的一个地址,不是 url 的派生物 —— 入口那次 checkSafeUrl 校验
+        // 的是 url,管不到它。少了这一句,只要让主 url 失败,fallbackUrl 就能指向任意主机、
+        // 任意协议,内容还会被写进工作区。
+        if (!checkSafeUrl(fallbackUrl)) throw new Error(`Unsafe fallback URL: ${fallbackUrl}`);
         this.tasks = this.tasks.filter((t) => t.id !== taskId);
         return await this.downloadFromUrl(fallbackUrl, targetPath);
       }
@@ -171,6 +176,16 @@ class DownloadManager {
         timeout: 60000,
         headers: getCommonHeaders(url),
         maxRedirects: 10,
+        // 保留重定向 —— 下载走 CDN 几乎必然经过一跳,设 0 会打断正常功能。改为**逐跳校验**:
+        // 否则一个公网可解析的域名 302 到 169.254.169.254 就把入口处的 checkSafeUrl 绕过去了,
+        // 真正发出的请求不是被校验过的那个。panel 的 /api/auth/proxy 那边直接设 0,是因为它
+        // 没有任何合法的重定向需求。
+        beforeRedirect: (options: Record<string, any>) => {
+          const next =
+            String(options.href || "") ||
+            `${options.protocol}//${options.host}${options.path || ""}`;
+          if (!checkSafeUrl(next)) throw new Error(`Unsafe redirect target: ${next}`);
+        },
         signal: controller.signal
       });
     } catch (err: any) {

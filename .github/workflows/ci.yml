@@ -94,7 +94,9 @@ jobs:
       - name: Test daemon
         run: timeout -k 10 300 npm run test --prefix daemon
 
-      # panel gets its steps in Phase 4 of the rollout tracked in #20.
+      - name: Test panel
+        run: timeout -k 10 300 npm run test --prefix panel
+
       - name: Test frontend
         run: npm run test --prefix frontend
 
@@ -106,3 +108,6 @@ jobs:
 
       - name: Type-check daemon (incl. tests)
         run: npm run type-check --prefix daemon
+
+      - name: Type-check panel (incl. tests)
+        run: npm run type-check --prefix panel

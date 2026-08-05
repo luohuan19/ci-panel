@@ -7,8 +7,8 @@ the reference: tool choices, full config files, and the reasoning behind them.
 
 - Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
-  As of Phase 3, `common/` (73 cases), `daemon/` (80) and `frontend/` (52) each run a vitest suite
-  in CI — 205 in total; `panel/` gets one in Phase 4.
+  **As of Phase 4 all four packages have a suite** — `daemon/` 92, `common/` 79, `frontend/` 55,
+  `panel/` 40; 266 in total, all four type-checked including their `test/` directories.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -222,25 +222,56 @@ export and stay green. Renaming `RegisterRunnersResponse` now reports the spec b
 `results` 5, dropping a `zh_CN` key 2, downgrading a `{{x}}` to `{x}` 1, and turning one frontend
 `import type` into a value import 1.
 
-### Phase 4 — panel authorization and remaining boundaries (4–5 days)
+### Phase 4 — panel authorization and remaining boundaries (4–5 days) — **done; this is the line**
 
-0. In `panel/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6` (pin 0.34.x — TS 4.9.5, Node 14 typings)
-1. `panel/vitest.config.ts` **must set `threads: false`**: `common/src/system_storage.ts:5` computes
-   `DATA_PATH` from `process.cwd()` at class-definition time, so the store can only be redirected by
-   `process.chdir` in a setup file — and that throws inside worker threads. Also clear
-   `CIP_GITHUB_REPOS` / `CIP_GITHUB_TOKEN` via `test.env`, so `repo_service.ts`'s import-time
-   `migrateFromEnv()` cannot pick up the developer's shell
-2. Specs: `permission_middleware` (per branch), `api_key_auth`, `token_never_leaks`
-3. Fix `panel/src/app/utils/url.ts` — the `ipv4Regex` early return makes the private-range checks
-   below it dead code; then wire `checkSafeUrl` into `/api/auth/proxy`
-   (`login_router.ts:133-149`), which calls `axios.request` on an operator-supplied target today
-   with no host validation
-4. Fix `daemon/src/service/disk_limit_service.ts:107` — `du -s --block-size=1M "${workspace}"` runs
-   through `promisify(exec)`; switch to the argv form of `execFile`
-5. `daemon/test/security/file_manager_paths.spec.ts`, including a case that **documents current
-   behaviour**: `FileManager.isRootTopRath()` short-circuits every guard, and
-   `system_instance.ts:116` sets the built-in global instance's cwd to `/`
-6. Add `Test panel` + `Type-check panel` to CI
+`panel/` gets vitest, and with it every package now has a suite. Its config **must** set
+`threads: false`: `common/src/system_storage.ts` computes `DATA_PATH` from `process.cwd()` at
+*class-definition* time, so the store can only be redirected by `process.chdir` in the setup file —
+and that throws inside a worker thread. `test.env` also blanks `CIP_GITHUB_REPOS` /
+`CIP_GITHUB_TOKEN`, since `repo_service.ts` calls `migrateFromEnv()` at module scope and would
+otherwise read the developer's shell.
+
+**`permission_middleware.spec.ts`** covers all four ways a request can be admitted — API key,
+session, `token: false`, and a route that declares no `level` at all. Two behaviours worth knowing
+are pinned rather than smoothed over: an API key **bypasses the CSRF and ajax checks entirely**
+(an API request has no session to carry a token), and a route with no `level` skips authorisation
+altogether because `isNaN(parseInt(String(undefined)))` is true.
+
+**Three fixes, all verified as not currently exploitable before being made:**
+
+1. **SSRF in `/api/auth/proxy`.** It called `axios.request` on a caller-supplied URL and returned
+   the body — a read primitive aimed at whatever the panel host can reach. ADMIN-only, but ADMIN
+   being able to configure nodes is not the same as ADMIN being able to use the panel as a jump
+   host. `checkSafeUrl` already existed in `panel/` with **zero callers**; it is now wired in, plus
+   `maxRedirects: 0` so a publicly-resolving host cannot 302 to loopback and bypass the check.
+2. **`checkSafeUrl` existed twice and had drifted** — panel's had a protocol allow-list, daemon's
+   did not, so `file/download_from_url` accepted `ftp://`. Both copies are now identical and
+   pinned by `panel/test/security/safe_url.spec.ts`. The dead private-range block (unreachable
+   because the IPv4 check above it already returns) is gone.
+3. **`disk_limit_service` ran `du` through a shell.** `checkFilePath` blocked `"`, `$` and
+   `` ` `` — exactly what can break out of the surrounding double quotes — so it was not
+   exploitable. But that conclusion needed *both* the quotes and the blacklist to hold; the argv
+   form of `execFile` needs neither.
+
+**`file_manager_paths.spec.ts`** documents the largest piece of standing authority in the daemon:
+`isRootTopRath()` short-circuits `checkPath`, `isOutsideWorkspace` and the copy/move guard, and
+`system_instance.ts` gives the built-in global instance `cwd: "/"`. That is intentional — the
+global instance exists to give an operator a file browser on the host — but it is a lot resting on
+one boolean, so it is pinned. Also documents that an absolute path is re-interpreted as
+workspace-relative (`/etc/passwd` → `<workspace>/etc/passwd`) rather than rejected: containment
+holds, but the client gets no error.
+
+> **Two more of the same class, found in review.** Fix 1 had closed the panel half of the redirect
+> bypass while leaving the daemon half open, and fix 2 had validated `url` but not its sibling:
+> `fallbackUrl` reached `downloadFromUrl` unchecked (supply an unreachable `url` plus a
+> `fallbackUrl` pointing at the metadata service and the daemon fetches it into the workspace),
+> and `download_manager` still ran `maxRedirects: 10`. Both fixed here. daemon keeps redirects —
+> downloads legitimately go through CDNs — but validates **每一跳** via `beforeRedirect`; panel's
+> proxy has no legitimate redirect need, so it stays at 0.
+
+**Exit criteria met:** every fix reddens on revert — dropping the proxy guard 1 case, following
+redirects 1, re-introducing the daemon URL drift 2, loosening the API-key level check 3, removing
+the ban logout 1, and comparing paths lexically instead of by realpath 1.
 
 ### Phase 5 — router integration and pure-logic breadth (5–7 days, **cuttable**)
 
@@ -252,16 +283,19 @@ export and stay green. Renaming `RegisterRunnersResponse` now reports the spec b
    behaviour change) and add pure-logic specs
 4. Upload coverage as an artifact — **still no thresholds**
 
-**Stopping rule:** Phase 4 is the line. After it, a new spec is added only when a bug reaches
-master (failing test first, then the fix). The Phase 5 refactors are unlocked by a specific escaped
-bug, not scheduled.
+**Stopping rule: the line has been reached.** Phase 4 is done, so from here a new spec is added
+only when a bug reaches master — failing test first, then the fix. Phase 5 below is not scheduled;
+its refactors are unlocked by a specific escaped bug, not by a plan.
 
-## 6. New config files
+## 6. Config files
 
-Only **panel's** configs remain to be written; [TESTING_SETUP.md](TESTING_SETUP.md) holds them.
-frontend's, common's and daemon's are all in the tree, and that file was reduced to a pointer for
-each as it landed. Delete it entirely once panel's land; neither document should
-carry a second copy of a checked-in config.
+All four packages' vitest configs, setup files and `tsconfig.test.json` are now in the tree — read
+them there. `TESTING_SETUP.md`, which held their contents while they were still being written, was
+deleted when panel's landed, per its own rule: a checked-in config and a copy of it in prose will
+drift, and the copy is the one nobody updates.
+
+The non-obvious decisions each config encodes are recorded next to the phase that made them (§5).
+The one that applies to every package: **`threads: false`**, for the reasons in §9.
 
 ## 7. Minimum refactors
 
@@ -299,9 +333,8 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 ## 8. CI
 
 The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
-Phase 0. As of Phase 3 it runs `Build common`, `Test common`, `Test daemon`, `Test frontend`,
-`Type-check common (incl. tests)` and `Type-check daemon (incl. tests)`; the remaining steps below
-arrive with the phase that gives their package a suite. The existing `build:` job stays
+Phase 0. As of Phase 4 it runs the whole block below — every suite and every type-check. The
+existing `build:` job stays
 byte-identical: it is the current release gate and must not be slowed or destabilised by
 test-install variance.
 
@@ -441,13 +474,16 @@ Run each of these rather than assuming.
                                            #   suite is meaningless against a stale build
    timeout -k 10 120 npm run test --prefix common
    timeout -k 10 300 npm run test --prefix daemon
-   npm run test --prefix frontend          # panel has no suite until Phase 4
+   timeout -k 10 300 npm run test --prefix panel
+   npm run test --prefix frontend
 
-   npm run type-check --prefix daemon      # the only thing covering daemon/test/
+   npm run type-check --prefix common      # these three also cover their test/ dirs
+   npm run type-check --prefix daemon
+   npm run type-check --prefix panel
    npm run lint --prefix frontend          # only package with lint; rewrites files (--fix)
 
-   npm run build --prefix panel            # panel has no type-check; build is where its
-   npm run build --prefix daemon           #   type errors surface
+   npm run build --prefix panel
+   npm run build --prefix daemon
    npm run build --prefix frontend         # this is run-p type-check build-only
    ```
 
