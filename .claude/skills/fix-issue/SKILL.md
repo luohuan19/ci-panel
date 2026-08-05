@@ -128,9 +128,9 @@ every failure before committing.
 When the issue is a defect, add the failing spec **before** the fix and confirm
 it goes red against the unfixed code — see `.claude/rules/no-test-tampering.md`.
 
-**A defect living in `panel/` has no spec to turn red** (no suite until Phase 4 of
-#20). State the exact reproduction instead — the request or UI steps, the wrong
-response or render, and the same path re-run after the fix — and write the line
+**A defect living in `panel/` has no spec to turn red** (no suite until Phase 4
+of issue #20). State the exact reproduction instead — the request or UI steps,
+the wrong response or render, and the same path re-run after the fix — and the line
 **"panel has no suite, verified by reproduction"** so the gap reads as deliberate
 rather than forgotten. If the behaviour can be pinned in `common/` instead, prefer
 that: it is testable today. For a diff spanning `panel/` and another package, that
@@ -168,7 +168,7 @@ The PR must target **`pypto-tools/ci-panel` `master`** and reference the issue:
 
 | Type | Approach |
 | ---- | -------- |
-| Bug fix | Reproduce, find root cause, write the failing spec, fix, verify via suites/type-check/lint/build (or the `panel/` reproduction) |
+| Bug fix | Reproduce, find root cause, write the failing spec, fix, verify via suites/type-check/lint/build. For a panel-only defect the reproduction replaces **only** the missing regression spec — every other check still runs |
 | Feature request | Plan the API shape across packages, implement, update docs |
 | Refactoring | Plan changes, keep the public HTTP/type surface stable |
 | Documentation | Fix/improve docs, verify examples match the current code |
