@@ -185,14 +185,23 @@ expect(isCompressFile("a.part2.rar")).toBe(false); // red against the pre-#24 or
 
 ### Phase 1 — common, and the regression tests owed by 1.0.4 (1 day)
 
-0. In `common/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6`
-1. `common/package.json`: add `test` / `test:watch`; move `"typescript"` from `dependencies` to
-   `devDependencies` (it is a build tool every consumer currently inherits)
-2. Add `common/vitest.config.ts` ([TESTING_SETUP.md](TESTING_SETUP.md))
+0. In `common/`: `npm i -D vitest@^0.34.6 @vitest/coverage-v8@^0.34.6 vite@^4.5.14`. Constrain vite
+   explicitly — vitest 0.34's peer range admits vite 5, which then prints a CJS-deprecation warning
+   on every run. Noise in a CI log is not free; it trains people to skim past it. The range matches
+   `frontend/package.json`, so the repo stays on one vite major.
+1. `common/package.json`: add `test` / `test:watch`
+2. Add `common/vitest.config.ts`, **including `threads: false`** — see §9
 3. Write `common/test/security/pagination_dos.spec.ts` and `apikey_wildcard.spec.ts` (§2.1, §2.2)
-4. Add `Build common` + `Test common` to the CI test job
+4. Add `Build common` + `Test common` (with `timeout -k 10 120`, see §2.2) to the CI test job
 
-**Exit criteria:** `npm run test --prefix common` green; reverting either 1.0.4 fix makes a spec fail.
+**Exit criteria:** `npm run test --prefix common` green; reverting either 1.0.4 fix makes a spec
+fail; `npm run build --prefix panel` still green.
+
+> **Not in this phase:** moving `"typescript"` out of `common`'s `dependencies`. It is genuinely
+> misplaced — a build tool that all three consumers inherit through `file:../common` — but it is
+> unrelated to adding tests and it touches the release path (`build.sh` runs
+> `npm install --production` inside `production-code/`). Verifying it means running the full
+> `build.sh` → `pack.sh` → `smoke-test.sh` chain, so it belongs in its own PR.
 
 ### Phase 2 — daemon path boundary and secret redaction (3–4 days)
 
@@ -305,8 +314,10 @@ what `token_redaction.spec.ts` (Phase 2) pins. Specs use placeholder tokens and
 ## 8. CI
 
 The **second job** — `test:` in [.github/workflows/ci.yml](.github/workflows/ci.yml) — landed with
-Phase 0 and currently runs `Test frontend` only. The existing `build:` job stays byte-identical: it
-is the current release gate and must not be slowed or destabilised by test-install variance.
+Phase 0. As of Phase 1 it runs `Build common`, `Test common` and `Test frontend`; the remaining
+steps below arrive with the phase that gives their package a suite. The existing `build:` job stays
+byte-identical: it is the current release gate and must not be slowed or destabilised by
+test-install variance.
 
 Its first three steps (`actions/checkout@v4`, `actions/setup-node@v4` with its five-line
 `cache-dependency-path`, and `Install dependencies: npm install`) are **byte-identical to the
@@ -376,6 +387,24 @@ so its dependency surface should stay narrow.
 **Why no threshold at first:** a risk-first order puts ~130 cases in about 15 files across the first
 four phases, leaving `frontend/` (33.6K lines) almost untouched. Any threshold would either fail at
 once or be meaningless, and ratcheting early pushes effort toward easily-covered formatters.
+
+**Every package sets `threads: false`.** Not a preference — tinypool sizes its worker pool from the
+CPU count, and these suites are a handful of files whose assertions run in milliseconds, so the
+entire wall time is worker startup. Measured on a 320-core machine:
+
+| Package | default | `threads: false` |
+| --- | --- | --- |
+| `common` (2 files, 34 cases) | 106s | **1.1s** |
+| `frontend` (3 files, 41 cases) | 84s | **3.6s** |
+
+On GitHub's 4-core `ubuntu-latest` the default is survivable (frontend measured 56s), but this
+project provisions self-hosted runners — the day the `test` job moves onto a big one, `Test common`
+blows through its `timeout -k 10 120` and dies with **exit 124, the same code the infinite-loop
+regression produces**. A green suite failing indistinguishably from the defect the watchdog exists
+to catch is the worst possible failure mode, and one line prevents it.
+
+The cost is a shared process: module-level singletons persist across spec files. Nothing relies on
+per-file module isolation today; do not start.
 
 ## 10. Trade-offs, and what we deliberately skip
 

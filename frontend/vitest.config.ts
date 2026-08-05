@@ -21,6 +21,13 @@ export default mergeConfig(
       setupFiles: ["./vitest.setup.ts"],
       // 不设 passWithNoTests：本包已经有用例，一旦上面的 glob 被改坏（重命名 __tests__、
       // 移动 src/tools、把文件写成 .test.ts），CI 应该红，而不是零用例通过。
+      //
+      // tinypool 按 CPU 核数起 worker，而这里只有三个纯函数 spec —— 开销全花在启动上，
+      // 与测试内容无关。实测 320 核的机器：默认 84 秒，threads: false 只要 3.6 秒。
+      // 代价是所有 spec 共用一个进程，模块级单例（如 @/lang/i18n 里的 i18n）会跨文件留存 ——
+      // 将来加用例时不要指望「每个文件拿到干净的模块状态」。
+      // 注意 0.3x 只有 `threads`，`pool` / `poolOptions` 是 vitest 1.0+ 的字段。
+      threads: false,
       testTimeout: 5000
     }
   })
