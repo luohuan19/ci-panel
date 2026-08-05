@@ -1,6 +1,9 @@
 {
   "extends": "./tsconfig.app.json",
   "exclude": [],
+  // `files` merges with the inherited `include` instead of replacing it. Without this the setup
+  // file sits in no tsconfig at all and its type errors would only surface at test runtime.
+  "files": ["vitest.setup.ts"],
   "compilerOptions": {
     "composite": true,
     "types": ["node", "jsdom"]

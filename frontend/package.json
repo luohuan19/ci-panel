@@ -6,6 +6,8 @@
     "build": "run-p type-check build-only",
     "preview": "vite preview",
     "build-only": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "type-check": "vue-tsc --noEmit --skipLibCheck -p tsconfig.vitest.json --composite false",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
     "format": "prettier --write src/",
