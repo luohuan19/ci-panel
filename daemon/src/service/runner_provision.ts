@@ -347,6 +347,42 @@ export function errText(err: unknown): string {
   return String(err);
 }
 
+// 调用特权助手的等待上限。systemd 健康时一次 install 约 6 秒，60 秒是余量而不是预期耗时。
+export const HELPER_TIMEOUT_MS = 60000;
+
+// execFile 的 timeout 到期时，Node 把子进程 SIGTERM 掉，错误对象上留下的是 killed=true /
+// signal="SIGTERM"，而 stderr 基本是空的。于是它和「sudo 拒绝执行」在文本上无法区分——两者
+// 都只剩一句 `Command failed: sudo -n …`。按 stderr 正则分类的话，超时会被报成「免密没配」，
+// 把排查引向 sudoers（实际发生过：宿主机 D-Bus 卡死导致的超时被当成权限问题查了很久）。
+// 所以文本分类之前必须先按信号判一次：只有真跑起来并自己报错的助手，stderr 才有话说。
+export function isExecTimeout(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { killed?: unknown; signal?: unknown; code?: unknown };
+  return e.killed === true || e.signal === "SIGTERM" || e.code === "ETIMEDOUT";
+}
+
+// 助手调用失败时对外的统一说法。三类必须分开，因为处置完全不同：
+//   超时   —— systemd 可能还在处理，该去查状态、稍后重试，绝不是权限问题
+//   被拒   —— 免密没配好，该去跑 install-runner-privileges.sh
+//   其他   —— 助手自己报的错，原文透出
+// 收在这里是因为 install / uninstall / set-env / 启停 四处都要做同一件事，而它们此前各写
+// 一份正则，还写出了两种不同的宽严（`sudo:` 与 `^sudo:`）。这里统一取严的那版：`^sudo:` 只
+// 认行首，不会被别处出现的 "sudo:" 字样带偏。
+export function helperErrorMessage(what: string, err: unknown, timeoutMs: number): string {
+  if (isExecTimeout(err))
+    return (
+      `${what}超时（等了 ${Math.round(timeoutMs / 1000)} 秒）：systemd 未在期限内回应。` +
+      `操作可能仍在后台进行，请用 systemctl 确认实际状态后再重试——这不是权限问题。`
+    );
+  const detail = errText(err);
+  if (/password is required|not allowed to execute|^sudo:/im.test(detail))
+    return (
+      `${what}需要免密 sudo，但未配置。请先安装特权助手与 sudoers 规则` +
+      `（见 prod-scripts/ci-panel-runner-svc 与 ci-panel-runner-install.sudoers）。`
+    );
+  return `${what}失败: ${detail}`;
+}
+
 export interface HelperPreflight {
   version: string;
   allowedRoot: string; // 助手允许操作的根目录 —— root 侧真正的边界
@@ -385,26 +421,26 @@ export async function installSystemdService(dir: string): Promise<void> {
   try {
     const { stdout: out } = await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, "install", dir], {
       encoding: "utf8",
-      timeout: 60000
+      timeout: HELPER_TIMEOUT_MS
     });
     logger.info(`[runner-provision] systemd 安装: ${String(out).trim()}`);
-  } catch (err: any) {
-    const stderr = String(err?.stderr || err?.message || err || "");
-    if (/password is required|sudo:|not allowed|a password/i.test(stderr)) {
-      throw new ProvisionError(
-        "装 systemd 服务需要免密 sudo，但未配置。请先安装特权助手与 sudoers 规则" +
-          "（见 prod-scripts/ci-panel-runner-svc 与 ci-panel-runner-install.sudoers）。",
-        stderr
-      );
-    }
-    throw new ProvisionError(`装 systemd 服务失败: ${stderr}`, stderr);
+  } catch (err: unknown) {
+    // 分类收在 helperErrorMessage 里：超时和「免密没配」在这里长得一模一样，各写一份正则
+    // 迟早写歪（此前确实写歪过，见那个函数的注释）。
+    throw new ProvisionError(
+      helperErrorMessage("装 systemd 服务", err, HELPER_TIMEOUT_MS),
+      errText(err)
+    );
   }
 }
 
 // 卸载 runner 的 systemd 服务（停 + 删单元）。走特权助手；幂等——没装服务也不报错。
-// 异步调用，理由同 installSystemdService：助手里的 systemctl disable --now 要等单元真的停下，
-// 遇上停不掉的 runner(TimeoutStopSec=5min)能等很久，同步跑会把 daemon 整个冻住。
-// 这里刻意不给它 --no-block：调用方(deleteRunner)紧接着就删目录，必须等 runner 真停了才安全。
+// 异步调用，理由同 installSystemdService：同步跑会把 daemon 的单线程事件循环整个冻住。
+//
+// 助手里用的仍是阻塞的 disable --now，「必须等 runner 真停了才能删目录」这个要求不变。但等待
+// 已经由调用方(runDelete)在这之前用 --no-block + 轮询完成了：进到这里时服务通常已经 inactive，
+// 那条 disable --now 就是空操作、立即返回。留着它是兜底，不再是主要的等待点——单靠它等的话，
+// 单元的 TimeoutStopSec 是 5min 而这里只给 HELPER_TIMEOUT_MS，超时是必然而非意外。
 export async function uninstallSystemdService(
   dir: string
 ): Promise<{ ok: boolean; error?: string }> {
@@ -412,12 +448,12 @@ export async function uninstallSystemdService(
     const { stdout: out } = await execFileAsync(
       "sudo",
       ["-n", RUNNER_SVC_HELPER, "uninstall", dir],
-      { encoding: "utf8", timeout: 60000 }
+      { encoding: "utf8", timeout: HELPER_TIMEOUT_MS }
     );
     logger.info(`[runner] systemd 卸载: ${String(out).trim()}`);
     return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: String(err?.stderr || err?.message || err) };
+  } catch (err: unknown) {
+    return { ok: false, error: helperErrorMessage("卸载 systemd 服务", err, HELPER_TIMEOUT_MS) };
   }
 }
 

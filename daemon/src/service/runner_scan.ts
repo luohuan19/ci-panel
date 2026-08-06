@@ -29,6 +29,8 @@ import {
 import {
   ensureHandleInstance,
   errText,
+  HELPER_TIMEOUT_MS,
+  helperErrorMessage,
   queryHelperPreflight,
   removeGithubRegistration,
   RUNNER_SVC_HELPER,
@@ -758,6 +760,47 @@ export async function deleteRunner(
   return withRunnerLock(keys, "delete", () => runDelete(dir, opts));
 }
 
+// 卸载之前先把服务停稳，并且是由我们自己来等。
+//
+// 助手的 uninstall 用的是阻塞的 `disable --now`，而 runner 单元 TimeoutStopSec=5min：碰上不
+// 响应 SIGTERM 的 Runner.Listener，那条命令能坐满 5 分钟，而我们只给 HELPER_TIMEOUT_MS——超时
+// 是必然的，且 execFile 超时杀出来的错误 stderr 为空，和「免密没配」长得一模一样。改成走
+// runServiceAction（助手侧是 --no-block，这边自己轮询）之后，「等多久」由 DELETE_SETTLE_MS 说
+// 了算，等不到拿到的是明确的 settled:false。
+//
+// 必须是 runServiceAction 而不是 controlService：调用方已经持有这个单元的 svc: 锁，而
+// controlService 会再去占同一把——withRunnerLock 不可重入且快速失败，调它等于自己把自己挡死。
+async function stopBeforeUninstall(dir: string): Promise<{ ok: boolean; error?: string }> {
+  let service = "";
+  try {
+    service = readServiceName(dir);
+  } catch {
+    // 读不出来 deleteRunner 已经拦在前面了；真到这里就把判断权交给 uninstall，别抢它的错误
+    return { ok: true };
+  }
+  if (!service || !SERVICE_RE.test(service)) return { ok: true }; // 没装服务，无需停
+
+  // 查不到状态就不发 stop：对不存在的单元 `systemctl stop` 会非零退出，而删除一个没装服务的
+  // runner 是完全正常的操作，不该因此失败。这种情况留给幂等的 uninstall 收尾。
+  const before = (await querySystemd([service])).get(service) || null;
+  if (!before || !before.loaded) return { ok: true };
+  if (before.activeState === "inactive" || before.activeState === "failed") return { ok: true };
+
+  try {
+    const r = await runServiceAction(service, "stop", DELETE_SETTLE_MS);
+    if (r.settled) return { ok: true };
+    return {
+      ok: false,
+      error:
+        `服务未能在 ${Math.round(DELETE_SETTLE_MS / 1000)} 秒内停止` +
+        `（当前 ${r.status?.activeState || "状态未知"}）。停止请求已提交给 systemd，可能仍在进行——` +
+        `用 systemctl status ${service} 确认已停止后再重试删除。`
+    };
+  } catch (err: unknown) {
+    return { ok: false, error: errText(err) };
+  }
+}
+
 // 删除本体。进来时已在锁内、目录也已校验过。
 async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<DeleteResult> {
   const steps: DeleteStep[] = [];
@@ -767,8 +810,11 @@ async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<Delete
   if (busy.has(dir) && !opts.force)
     throw new Error("该 runner 正在跑 job，删除会中断 CI；确认后加 force 重试");
 
-  // 1) 停 + 卸 systemd
-  const uninstall = await uninstallSystemdService(dir);
+  // 1) 停 + 卸 systemd。先自己把服务停稳，再调 uninstall——理由见 stopBeforeUninstall。
+  //    停不下来就不进 uninstall：拿 stop 的失败原因直接走下面那条中止分支，语义一样（systemd
+  //    没停下来），但错误文案说得出是「等了多久还没停」，而不是一句和权限问题撞车的超时。
+  const stop = await stopBeforeUninstall(dir);
+  const uninstall = stop.ok ? await uninstallSystemdService(dir) : stop;
   steps.push(
     uninstall.ok
       ? { key: "systemd", label: "停止并卸载 systemd 服务", status: "ok" }
@@ -781,10 +827,10 @@ async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<Delete
         }
   );
 
-  // 停不掉就到此为止。uninstall 里的 disable --now 最多等 60 秒，而 runner 单元的
-  // TimeoutStopSec 是 5 分钟——超时返回时 Runner.Listener 很可能还活着，这时候接着往下删目录
-  // 等于把文件从一个运行中的进程底下抽走：job 当场崩、_diag 里什么都留不下，而单元还在，
-  // systemd 会带着一个空目录反复重启它。宁可原样留着让人处置，也不留下这种半删状态。
+  // 停不掉就到此为止。等待期限是 DELETE_SETTLE_MS，远短于单元自己的 TimeoutStopSec=5min——
+  // 也就是说到点了 Runner.Listener 很可能还活着，这时候接着往下删目录等于把文件从一个运行中的
+  // 进程底下抽走：job 当场崩、_diag 里什么都留不下，而单元还在，systemd 会带着一个空目录反复
+  // 重启它。宁可原样留着让人处置，也不留下这种半删状态。
   // 刻意不看 opts.force：那个标志的含义是「中断正在跑的 job」，批量删除时只要选中的 runner
   // 里有一个 busy 前端就会带上它，拿它给这里开口子等于在最该拦的场景下失效。
   if (!uninstall.ok) {
@@ -893,6 +939,11 @@ const ALLOWED_ACTIONS = { start: true, stop: true, restart: true } as const sati
 const SETTLE_TIMEOUT_MS = 8000;
 const SETTLE_POLL_MS = 500;
 
+// 删除前那次停止用更长的期限。8 秒是给「面板上点启停要立刻有反馈」选的，等不到就交给状态轮询
+// 慢慢收敛；而删除等不到就只能整个中止，让人回头再来一遍，所以这里值得多等。上限仍远小于单元
+// 的 TimeoutStopSec=5min —— 目的是拿到一个确定的结论，不是陪它耗到底。
+const DELETE_SETTLE_MS = 60000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 这一轮 systemctl 的效果是否已经体现出来了。
@@ -929,9 +980,11 @@ export async function controlService(
 }
 
 // 启停本体。进来时已在锁内、action 与单元名都已校验过。
+// settleMs 可覆盖：删除路径要的耐心比面板点按钮那条路长得多（见 DELETE_SETTLE_MS）。
 async function runServiceAction(
   service: string,
-  action: SystemdAction
+  action: SystemdAction,
+  settleMs: number = SETTLE_TIMEOUT_MS
 ): Promise<ServiceControlResult> {
   // 重启前的状态：下面判断「restart 是否真的发生了」要拿它的 since 做对比
   const before = (await querySystemd([service])).get(service) || null;
@@ -942,16 +995,12 @@ async function runServiceAction(
     // 批量重启时每个 runner 冻一次，整台机器会不可达好几分钟。同文件顶部的扫描热路径同理。
     await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, action, service], {
       encoding: "utf8",
-      timeout: 60000
+      timeout: HELPER_TIMEOUT_MS
     });
   } catch (err: unknown) {
-    const detail = errText(err);
-    if (/password is required|not allowed to execute|^sudo:/im.test(detail))
-      throw new Error(
-        `sudo 免密未配置，无法 ${action} ${service}。` +
-          `请跑 prod-scripts/install-runner-privileges.sh`
-      );
-    throw new Error(`${action} ${service} 失败: ${detail}`);
+    // 分类统一走 helperErrorMessage —— 这里原本自己写了一份正则，和 install/set-env 那两份
+    // 宽严还不一致，而三处要判的是同一件事。
+    throw new Error(helperErrorMessage(`${action} ${service}`, err, HELPER_TIMEOUT_MS));
   }
 
   // 助手用的是 systemctl --no-block：systemd 收下 job 就返回，不等它跑完。所以上面的成功
@@ -959,7 +1008,7 @@ async function runServiceAction(
   // KillMode=process + TimeoutStopSec=5min，遇上不响应 SIGTERM 的 Listener 一等就是 5 分钟，
   // 面板请求(90s)必然超时，批量重启更是逐个叠加。这里最多等 SETTLE_TIMEOUT_MS，超了就带
   // settled:false 返回，剩下的交给 10s 一轮的状态扫描收敛。
-  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  const deadline = Date.now() + settleMs;
   let status: SystemdState | null = null;
   for (;;) {
     await sleep(SETTLE_POLL_MS);
@@ -979,7 +1028,7 @@ async function runServiceAction(
     if (Date.now() >= deadline) break;
   }
   logger.warn(
-    `[runner-scan] ${action} ${service} 已提交，但 ${SETTLE_TIMEOUT_MS}ms 内未落定` +
+    `[runner-scan] ${action} ${service} 已提交，但 ${settleMs}ms 内未落定` +
       `（当前 ${status?.activeState || "未知"}/${status?.subState || "未知"}）`
   );
   return { service, action, settled: false, status };

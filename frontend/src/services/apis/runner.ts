@@ -355,7 +355,12 @@ export const deleteRunner = useDefineApi<
   DeleteRunnerResult
 >({
   url: "/api/runner/delete",
-  method: "POST"
+  method: "POST",
+  // apiService 的默认超时是 30 秒，比 daemon 自己的等待期限还短——客户端先放弃，浏览器弹
+  // "删除失败"，而服务端还在一步步往下做，用户看到的失败和实际结果对不上（重试才发现上一次
+  // 其实成功了）。删除最慢的一步是等 systemd 停下来（DELETE_SETTLE_MS，60 秒），叠上 GitHub
+  // 注销与 rm -rf 可以再多几十秒。10 分钟够用，同时保留一个终点。
+  timeout: 1000 * 600
 });
 
 // 批量删除一个仓库（在某节点上）的全部 runner。整批共用一个 GitHub 删除 token。
@@ -367,7 +372,10 @@ export const deleteRunnerBatch = useDefineApi<
   { results: Array<DeleteRunnerResult & { error?: string }> }
 >({
   url: "/api/runner/delete_batch",
-  method: "POST"
+  method: "POST",
+  // 理由同 deleteRunner，而且更紧迫：panel 侧并发扇出，单项耗时叠加，几个 runner 就能顶满
+  // 默认的 30 秒。
+  timeout: 1000 * 600
 });
 
 // ---- runner 的 _diag 运行日志（看控制台，只读，免 sudo）----
