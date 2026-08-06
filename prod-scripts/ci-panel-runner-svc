@@ -23,12 +23,42 @@ SERVICE_RE='^actions\.runner\.[A-Za-z0-9._@-]+\.service$'
 
 ALLOWED_ROOT="/data/ci-runner" # 只允许操作这个根下的 runner；由 install-runner-privileges.sh 按需改写
 
+# 托管标记：set-env 写出的 drop-in 首行。删除前据此确认「这个文件确实是本脚本写的」。
+# 为什么需要它：drop-in 的文件名 override.conf 正是 `systemctl edit <unit>` 生成的那个，
+# 运维手写的和面板写的同名同路径，光看文件名分不出归属——删错就是把别人的配置弄没了。
+DROPIN_MARKER='# Managed by ci-panel - do not edit, rewritten on every env save'
+
 action="${1:-}"
 dir_in="${2:-}"
 
 die() {
   echo "ci-panel-runner-svc: $*" >&2
   exit 1
+}
+
+# 这个 drop-in 是不是本脚本写的。是则返回 0，其余情况（不存在、手写的、读不了）一律非 0——
+# 拿不准就当成别人的，这个判断只用来决定「删不删」，误判成别人最多留下一个孤儿文件，
+# 误判成自己就是不可逆的数据丢失。
+#
+# 两种归属证据：
+#   1) 首行的托管标记 —— v4 起 set-env 每次都写；
+#   2) v≤3 写出的固定形状 —— 首行 `[Service]`、次行空 `Environment=` 重置行，其余只有
+#      Environment= 行或空行。老助手只会写成这样，手写的 drop-in 撞上这个形状近乎不可能。
+#      留这条是为了让升级前就存在的 runner 也能清干净，否则这个泄漏在存量机器上永远还在。
+is_ci_panel_dropin() {
+  conf="$1"
+  [ -f "$conf" ] || return 1
+  IFS= read -r first_line < "$conf" || return 1
+  [ "$first_line" = "$DROPIN_MARKER" ] && return 0
+  # NR<2 也要判掉：只有一行 `[Service]` 的文件不是老助手的产物，规则跑不到第二条就结束了。
+  awk '
+    NR == 1 { if ($0 != "[Service]") exit 1; next }
+    NR == 2 { if ($0 != "Environment=") exit 1; next }
+    /^Environment=/ { next }
+    /^[[:space:]]*$/ { next }
+    { exit 1 }
+    END { if (NR < 2) exit 1 }
+  ' "$conf"
 }
 
 arg3="${3:-}"
@@ -148,10 +178,15 @@ EOF
     # 单元没了，drop-in 也必须跟着走。单元名是按 <owner-repo>.<name> 拼出来的，日后在同一仓库
     # 下重建一个同名 runner 会拼回同一个单元，systemd 连着把这份遗留 drop-in 一起加载——新 runner
     # 静默继承上一任的代理、设备号等变量，而面板的环境变量页读的正是同一个文件，看不出它属于一个
-    # 已被删除的 runner。只删本脚本自己写的 override.conf(与 set-env 清空走同一条路径)，运维手放
-    # 进去的其它 .conf 不归本脚本处置：宁可留下并说一声，也不替人做删除决定。
+    # 已被删除的 runner。
+    # 但只删确属本脚本所写的那一份（is_ci_panel_dropin）：override.conf 与 `systemctl edit`
+    # 的产物同名，删不掉归属的就留下并说一声——宁可留个孤儿文件，也不替人做删除决定。
     dropin_dir="/etc/systemd/system/$svc.d"
-    rm -f "$dropin_dir/override.conf"
+    if is_ci_panel_dropin "$dropin_dir/override.conf"; then
+      rm -f "$dropin_dir/override.conf"
+    elif [ -f "$dropin_dir/override.conf" ]; then
+      echo "ci-panel-runner-svc: 保留 $dropin_dir/override.conf(非本工具写入)" >&2
+    fi
     rmdir "$dropin_dir" 2>/dev/null || true
     # 注意用 if 而不是 `[ -d ... ] && echo`：后者在目录不存在时整条命令非零，set -e 会让脚本
     # 在这里直接退出，把一次成功的卸载报成失败。
@@ -174,7 +209,12 @@ EOF
     dropin_dir="/etc/systemd/system/$svc.d"
     decoded="$(printf '%s' "$arg3" | base64 -d 2>/dev/null)" || die "env 载荷 base64 解码失败"
     if [ -z "$decoded" ]; then
-      # 空载荷 = 清空面板托管的所有环境变量：移除本 drop-in
+      # 空载荷 = 清空面板托管的所有环境变量：移除本 drop-in。
+      # 同样先验归属：这个文件若是运维手写的，"清空面板托管的变量"就不该把它删掉。这时候
+      # 报错而不是静默跳过——面板上明明列着变量却清不掉，不说清楚只会让人反复点。
+      if [ -f "$dropin_dir/override.conf" ] && ! is_ci_panel_dropin "$dropin_dir/override.conf"; then
+        die "$dropin_dir/override.conf 非本工具写入(可能来自 systemctl edit)，拒绝删除；请手动处理后重试"
+      fi
       rm -f "$dropin_dir/override.conf"
       rmdir "$dropin_dir" 2>/dev/null || true
       systemctl daemon-reload
@@ -183,7 +223,10 @@ EOF
     fi
     tmp="$(mktemp)" || die "mktemp 失败"
     trap 'rm -f "$tmp"' EXIT
-    printf '[Service]\n' > "$tmp"
+    # 托管标记必须是首行：uninstall 与上面的清空分支都只看第一行认归属。
+    # daemon 侧 parseOverrideConf 只取 Environment= 行，多这一行注释不影响读回。
+    printf '%s\n' "$DROPIN_MARKER" > "$tmp"
+    printf '[Service]\n' >> "$tmp"
     # 先用空 Environment= 重置，避免历史残留（整份覆盖本就干净，这是双保险）
     printf 'Environment=\n' >> "$tmp"
     while IFS= read -r line || [ -n "$line" ]; do

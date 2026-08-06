@@ -319,8 +319,16 @@ whitelisted (`^[A-Za-z_][A-Za-z0-9_]*$`) and values may not contain newlines.
 Uninstalling a runner takes the `override.conf` with it. The unit name is derived from
 `<owner-repo>` and the runner's name alone, so a later runner created under the same name
 resolves to the same unit and would otherwise silently inherit the previous tenant's
-variables. Only the file the helper itself wrote is removed; a drop-in directory still
-holding hand-placed config is left alone and reported on stderr.
+variables.
+
+That path is also what `systemctl edit <unit>` writes, so deletion is gated on ownership
+evidence rather than on the filename. `set-env` stamps `# Managed by ci-panel` as the
+first line, and the helper removes only a file carrying it — or one matching the exact
+shape it wrote before the marker existed (`[Service]`, an empty `Environment=` reset, then
+`Environment=` lines and blanks only), so runners predating the marker still get cleaned
+up. Anything else is preserved and reported on stderr; clearing the variables fails
+outright rather than deleting a file the panel does not own. The marker is a comment, so
+it changes neither how systemd parses the unit nor how the variables read back.
 
 ## Repo registry and CI board
 
