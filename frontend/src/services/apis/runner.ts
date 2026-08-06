@@ -55,9 +55,10 @@ export interface RunnerBatchAligned {
 export interface RepoLabelGroup {
   key: string; // 归一化标签 key（组身份）
   labels: string; // 展示用原始标签
-  prefix: string; // 命名前缀（累加锚点）
+  prefix: string; // 命名前缀（采番锚点）
   count: number; // 现有数量
   maxIndex: number; // 现有 `${prefix}-N` 的最大 N
+  freeIndexes: number[]; // 1..maxIndex 之间的空缺（升序），新建时优先填这些
 }
 
 // 只读：列出某仓库在基目录下已有的 label 组
