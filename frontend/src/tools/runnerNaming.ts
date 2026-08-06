@@ -18,3 +18,64 @@ export function labelKey(labels: string): string {
     .sort()
     .join(",");
 }
+
+// 一个待创建组的采番锚点。maxIndex / freeIndexes 由 daemon 的 listRepoGroups 算好后随
+// repo_groups 接口回传；新组（前端刚填的标签没命中任何既有组）两者分别是 0 与空数组。
+export interface NamePreviewGroup {
+  prefix: string;
+  count: number;
+  maxIndex: number;
+  freeIndexes: number[];
+}
+
+// 预览每组将创建的 runner 名字，下标与入参一一对应（数量为 0 或前缀为空的组给空数组）。
+//
+// ⚠️ 规则必须与 daemon `runner_provision.ts` 的 `allocateRunnerNames` 一致：先按升序填删除
+// 留下的空缺，填完再从 maxIndex 往后累加。这里算错的后果不是崩溃，而是用户在对话框里看到
+// 一串名字、点确定后建出来的却是另一串——比报错更难发现。
+//
+// 同前缀的多个组共享同一份空缺与游标：两组都从各自的 maxIndex 起算的话会预览出同一个名字，
+// 而 daemon 那边 used 是跨组累积的，不会。
+export function previewGroupNames(groups: NamePreviewGroup[]): string[][] {
+  const out: string[][] = [];
+  const freeOf = new Map<string, number[]>();
+  const nextOf = new Map<string, number>();
+  // 同一个前缀可能同时来自两种组：命中既有 label 组的（带真实的 maxIndex/freeIndexes），
+  // 和用户手填基础名、没命中任何组的（报 0 与空数组）。后者的 0 是「不知道」而不是「没有」，
+  // 按出现顺序播种的话，只要它排在前面，整份锚点就被清零、预览从 1 起，而 daemon 是照真实
+  // used 算的。所以先扫一遍，每个前缀取信息量最大的那一份（maxIndex 最大者连同它的空缺表）。
+  // 多个命中组共享前缀时它们的锚点本就相同（同一份 used 算出来的），取谁都一样。
+  const anchorOf = new Map<string, NamePreviewGroup>();
+  for (const g of groups) {
+    const prefix = (g.prefix || "").trim();
+    if (!prefix) continue;
+    const seen = anchorOf.get(prefix);
+    if (!seen || g.maxIndex > seen.maxIndex) anchorOf.set(prefix, g);
+  }
+  for (const g of groups) {
+    // 自己 trim，不指望调用方：daemon 那边 `base` 也是 trim 过再判空的，而全是空格的基础名
+    // 若当成有效前缀，预览会出现 "  -1" 这种名字，后端却根本不会建。
+    const prefix = (g.prefix || "").trim();
+    if (!prefix || g.count < 1) {
+      out.push([]);
+      continue;
+    }
+    const anchor = anchorOf.get(prefix) ?? g;
+    // 拷一份再消费：freeIndexes 直接来自 repo_groups 的响应对象，前端把它存在 ref 里、
+    // 每次输入都重算一遍预览——就地 shift 会让它在第一次渲染后变空。
+    if (!freeOf.has(prefix)) freeOf.set(prefix, [...anchor.freeIndexes]);
+    if (!nextOf.has(prefix)) nextOf.set(prefix, anchor.maxIndex);
+    const free = freeOf.get(prefix) as number[];
+    const names: string[] = [];
+    for (let k = 0; k < g.count; k++) {
+      let i = free.shift();
+      if (i === undefined) {
+        i = (nextOf.get(prefix) ?? 0) + 1;
+        nextOf.set(prefix, i);
+      }
+      names.push(`${prefix}-${i}`);
+    }
+    out.push(names);
+  }
+  return out;
+}

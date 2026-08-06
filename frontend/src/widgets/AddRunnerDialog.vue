@@ -7,7 +7,7 @@ import { message } from "ant-design-vue";
 import { PlusOutlined, DeleteOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
 import { onUnmounted } from "vue";
 import { t } from "@/lang/i18n";
-import { labelKey } from "@/tools/runnerNaming";
+import { labelKey, previewGroupNames } from "@/tools/runnerNaming";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import SelectDirDialog from "./SelectDirDialog.vue";
 import {
@@ -142,22 +142,38 @@ function reuseGroup(rg: RepoLabelGroup) {
   groups.value.push({ baseName: rg.prefix, labels: rg.labels, count: "1" });
 }
 
-// 预览：将创建的全部 runner 名。命中既有 label 组的，沿用其前缀并从 maxIndex+1 起累加，
-// 与后端对齐逻辑一致；同前缀在本批内也连续排号，避免预览自相矛盾。
-const allNames = computed(() => {
-  const names: string[] = [];
-  const nextIndex = new Map<string, number>(); // prefix → 下一个可用编号
-  for (const g of groups.value) {
-    const matched = matchOf(g);
-    const prefix = matched ? matched.prefix : g.baseName.trim();
-    const n = Number(g.count) || 0;
-    if (!prefix || n < 1) continue;
-    let i = nextIndex.get(prefix) ?? (matched ? matched.maxIndex : 0);
-    for (let k = 0; k < n; k++) names.push(`${prefix}-${++i}`);
-    nextIndex.set(prefix, i);
-  }
-  return names;
-});
+// 预览：将创建的全部 runner 名，按组分开（每组的首个名字还要单独显示在该组下方）。
+// 采番规则本体在 tools/runnerNaming.ts，与 daemon 的 allocateRunnerNames 配对——命中既有
+// label 组的沿用其前缀，先填删除留下的空缺、填完再往后累加。这里只负责把表单里的一组组
+// 映射成它要的锚点；下标与 groups 一一对应，模板按 index 取。
+const groupNames = computed<string[][]>(() =>
+  previewGroupNames(
+    groups.value.map((g) => {
+      const matched = matchOf(g);
+      return {
+        prefix: matched ? matched.prefix : g.baseName.trim(),
+        count: Number(g.count) || 0,
+        maxIndex: matched?.maxIndex ?? 0,
+        freeIndexes: matched?.freeIndexes ?? []
+      };
+    })
+  )
+);
+const allNames = computed(() => groupNames.value.flat());
+
+// 某组下方的命名提示：并入了哪个组、从哪个名字起、这一批是不是在补空缺。
+// 在 script 里拼成一整句而不是在模板里用 v-if 拼片段——模板里换行会被 Vue 的空白压缩留成
+// 多余空格，正好落在中文标点前面。
+function alignHint(g: Group, i: number): string {
+  const rg = matchOf(g);
+  if (!rg) return "";
+  const first = groupNames.value[i]?.[0];
+  return (
+    `该标签组已存在，将并入 ${rg.prefix} 组` +
+    (first ? `，命名从 ${first} 起` : "") +
+    (rg.freeIndexes.length ? "（先补已删除的空缺编号）" : "")
+  );
+}
 const previewText = computed(() => {
   const names = allNames.value;
   if (!names.length) return "（填写基础名与数量后预览）";
@@ -955,9 +971,7 @@ const statusColor = (s: string) =>
           v-if="matchOf(g)"
           style="font-size: 12px; color: #17b890; margin-top: 4px"
         >
-          该标签组已存在，将并入
-          <b>{{ matchOf(g)!.prefix }}</b>
-          组，命名从 <b>{{ matchOf(g)!.prefix }}-{{ matchOf(g)!.maxIndex + 1 }}</b> 起
+          {{ alignHint(g, i) }}
         </div>
       </div>
 

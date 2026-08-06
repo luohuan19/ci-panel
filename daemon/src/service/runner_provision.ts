@@ -612,18 +612,70 @@ function collectUsedNames(baseDir: string, repoUrl?: string): Set<string> {
   return used;
 }
 
-// 在已占用名字里找形如 `${base}-<N>` 的最大 N（无则 0）
-function maxIndexFor(base: string, used: Set<string>): number {
+// 在已占用名字里挑出形如 `${base}-<N>` 的全部 N。0 与负数不收：采番从 1 起，`cpu-0` 只可能
+// 是人手建的目录，把它当锚点会算出一个谁都不认识的空缺。
+function takenIndexesFor(base: string, used: Set<string>): Set<number> {
   const re = new RegExp(`^${escapeRegExp(base)}-(\\d+)$`);
-  let max = 0;
+  const taken = new Set<number>();
   for (const n of used) {
     const m = re.exec(n);
-    if (m) {
-      const v = Number(m[1]);
-      if (Number.isInteger(v) && v > max) max = v;
-    }
+    if (!m) continue;
+    const v = Number(m[1]);
+    if (Number.isInteger(v) && v > 0) taken.add(v);
   }
+  return taken;
+}
+
+// 在已占用名字里找形如 `${base}-<N>` 的最大 N（无则 0）
+function maxIndexFor(base: string, used: Set<string>): number {
+  let max = 0;
+  for (const v of takenIndexesFor(base, used)) if (v > max) max = v;
   return max;
+}
+
+// 1..max 之间没被占用的编号，升序。删除留下的空缺就是它——采番优先填这些，填完再往后接，
+// 免得删掉中间几个之后编号一路飙高、面板上看着全是洞。
+function freeIndexesFor(base: string, used: Set<string>): number[] {
+  const taken = takenIndexesFor(base, used);
+  const free: number[] = [];
+  let max = 0;
+  for (const v of taken) if (v > max) max = v;
+  for (let i = 1; i < max; i++) if (!taken.has(i)) free.push(i);
+  return free;
+}
+
+// 给一个前缀分配 count 个可用名字：先填删除留下的空缺（升序），填完再接在最大编号之后。
+// 会就地把分配出的名字加进 used —— 调用方靠这一点让同一批里的多个组不互相撞名。
+//
+// 为什么补空缺：删掉中间几个之后编号只会一路往上飙，面板上剩一串洞，而 GitHub 侧的名字
+// 已经随注销一起消失了，那些编号本来就是空的。前端预览走同一条规则（AddRunnerDialog 的
+// groupNames），两边必须一致，否则用户看到的名字不是最终建出来的名字。
+//
+// 导出仅为可测：这段没有任何 I/O 副作用，却是整套命名里最容易悄悄回归的一处。
+export function allocateRunnerNames(
+  prefix: string,
+  count: number,
+  used: Set<string>,
+  baseDir: string
+): string[] {
+  const free = freeIndexesFor(prefix, used);
+  let next = maxIndexFor(prefix, used);
+  const names: string[] = [];
+  for (let k = 0; k < count; k++) {
+    let name = "";
+    // used 是 collectUsedNames 的一次快照，之后可能有并发置备落地新目录。逐个验到空的为止，
+    // 而不是撞上就报错——补空缺天然要试多个候选，把「候选被占」当异常会让正常路径动不动就失败。
+    // next 单调递增，循环必然终止。
+    for (;;) {
+      const i = free.shift() ?? ++next;
+      name = `${prefix}-${i}`;
+      if (!used.has(name) && !fs.existsSync(path.join(baseDir, name))) break;
+      logger.warn(`[runner-provision] ${name} 已被占用，跳过该编号`);
+    }
+    used.add(name);
+    names.push(name);
+  }
+  return names;
 }
 
 // 标签集合归一化：拆分、去空、小写、去重、排序 → 规范 key。
@@ -642,9 +694,10 @@ export function labelKey(labels: string): string {
 export interface RepoLabelGroup {
   key: string; // labelKey，组身份
   labels: string; // 展示用原始标签（取组内首个 marker 的原样值）
-  prefix: string; // 命名前缀（marker.group），「往后累加」的锚点
+  prefix: string; // 命名前缀（marker.group），采番的锚点
   count: number; // 现有数量
   maxIndex: number; // 现有 `${prefix}-N` 的最大 N
+  freeIndexes: number[]; // 1..maxIndex 之间的空缺（升序），新建时优先填这些
 }
 
 // 按 repo 聚合出该仓库已有的 label 组（只读）。数据源是「所有 tag 命中该 repo 的句柄实例」，
@@ -672,7 +725,15 @@ export function listRepoGroups(baseDir: string, repoUrl: string): RepoLabelGroup
     if (!key) continue;
     const prefix = m.group || path.basename(dir).replace(/-\d+$/, "");
     const g =
-      byKey.get(key) ?? { key, labels: m.labels, prefix, count: 0, maxIndex: maxIndexFor(prefix, used) };
+      byKey.get(key) ??
+      {
+        key,
+        labels: m.labels,
+        prefix,
+        count: 0,
+        maxIndex: maxIndexFor(prefix, used),
+        freeIndexes: freeIndexesFor(prefix, used)
+      };
     g.count += 1;
     byKey.set(key, g);
   }
@@ -703,8 +764,8 @@ function assertBaseDirRepo(baseDir: string, repoUrl: string): void {
 }
 
 // 校验参数并把多组展开成完整 runner 列表（含名字去重与总数上限）。
-// 若某组标签命中该 repo 已有 label 组，强制对齐到既有命名前缀并从其 maxIndex 之后累加；
-// aligned 汇总被对齐的组，供上层提示「已并入既有组」。
+// 若某组标签命中该 repo 已有 label 组，强制对齐到既有命名前缀，编号交给 allocateRunnerNames
+// （先补空缺、再往后累加）；aligned 汇总被对齐的组，供上层提示「已并入既有组」。
 function expandBatchSpecs(p: ProvisionBatchParams): {
   repoUrl: string;
   token: string;
@@ -740,18 +801,8 @@ function expandBatchSpecs(p: ProvisionBatchParams): {
     const existing = labels ? repoGroups.find((rg) => rg.key === labelKey(labels)) : undefined;
     const prefix = existing ? existing.prefix : base;
     if (existing && existing.prefix !== base) aligned.push({ baseName: base, labels, prefix });
-    // 接在已占用的最大同名编号之后，保证跨批/跨组/跨基目录连续、不覆盖既有 runner
-    let i = maxIndexFor(prefix, used);
-    for (let k = 0; k < count; k++) {
-      i += 1;
-      const name = `${prefix}-${i}`;
-      const targetDir = path.join(baseDir, name);
-      // used 已含现存目录名，正常采番不会撞；此处兜底并发/归一化差异下的竞态，宁可报错也不覆盖
-      if (used.has(name) || fs.existsSync(targetDir))
-        throw new Error(`runner 目录或名字已存在，拒绝覆盖: ${name}`);
-      used.add(name);
-      specs.push({ name, labels, targetDir, group: prefix });
-    }
+    for (const name of allocateRunnerNames(prefix, count, used, baseDir))
+      specs.push({ name, labels, targetDir: path.join(baseDir, name), group: prefix });
   }
   if (specs.length > 99) throw new Error(`单批最多 99 个 runner，当前 ${specs.length} 个`);
   return { repoUrl, token, proxy, specs, aligned };
