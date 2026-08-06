@@ -1,44 +1,14 @@
-import { EventEmitter } from "events";
 import { Socket } from "socket.io";
 import RouterContext from "../entity/ctx";
 import { $t } from "../i18n";
-import { IPacket, responseError } from "../service/protocol";
+import { IPacket } from "../service/protocol";
 import logger from "./log";
-// Routing controller class (singleton class)
-class RouterApp extends EventEmitter {
-  public readonly middlewares: Array<Function>;
+import { routerApp } from "./router_app";
 
-  constructor() {
-    super();
-    this.middlewares = [];
-  }
-
-  emitRouter(event: string, ctx: RouterContext, data: any) {
-    try {
-      // service logic routing trigger point
-      super.emit(event, ctx, data);
-    } catch (error: any) {
-      responseError(ctx, error);
-    }
-    return this;
-  }
-
-  on(event: string, fn: (ctx: RouterContext, data: any) => void) {
-    // logger.info(` Register event: ${event} `);
-    return super.on(event, fn);
-  }
-
-  use(fn: (event: string, ctx: RouterContext, data: any, next: Function) => void) {
-    this.middlewares.push(fn);
-  }
-
-  getMiddlewares() {
-    return this.middlewares;
-  }
-}
-
-// routing controller singleton class
-export const routerApp = new RouterApp();
+// The controller itself lives in router_app.ts; re-exported here unchanged because every
+// router imports routerApp from "../service/router", and repointing ten files at a new path
+// would buy nothing.
+export { RouterApp, routerApp } from "./router_app";
 
 /**
  * Based on Socket.io for routing decentralization and secondary forwarding

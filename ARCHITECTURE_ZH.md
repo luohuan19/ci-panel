@@ -124,8 +124,10 @@ Koa 应用。入口 `panel/src/app.ts`，路由在 `panel/src/app/index.ts` 里�
 ## Daemon
 
 Socket.IO **服务端**（默认 `:24444`）。它不主动外连，是面板连过来。入口
-`daemon/src/app.ts`；各路由把事件处理器注册到共享的 `routerApp` 事件发射器上
-（`daemon/src/service/router.ts`）。
+`daemon/src/app.ts`；各路由把事件处理器注册到共享的 `routerApp` 事件发射器上 ——
+它定义在 `daemon/src/service/router_app.ts`，由 `daemon/src/service/router.ts` 再导出
+（各路由从后者引入）。处理器抛异常、或作为 `async` 函数 reject 时，都会在同一个事件上
+回一个 `STATUS_ERR` 包，而不是把调用方晾到超时。
 
 ### 事件分布
 

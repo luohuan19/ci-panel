@@ -80,7 +80,7 @@ sudo bash install.sh --scan-root /data/ci-runner
 | --- | --- | --- |
 | `--scan-root <path>` | `/data/ci-runner` | runner 根目录，写进特权助手的 `ALLOWED_ROOT` |
 | `--user <name>` | `ci-runner` | daemon 运行用户，也是 runner 目录属主；不存在会问你是否创建 |
-| `--root <path>` | `/opt/ci-panel` | 安装根目录 |
+| `--root <path>` | `/opt/ci-panel` | 安装根目录。**若 `/data` 是单独挂载的，它和 `--scan-root` 的默认值就不在同一块盘上** —— 见下方"装在哪块盘上" |
 | `--daemon-port <n>` | `24444` | 只在首次安装写入配置 |
 | `--runner-pkg <path>` | — | 预置 GitHub runner 安装包，省掉首次创建时现场下载约 130MB |
 | `--install-node` | — | 没有 node ≥ 20 时下载官方运行时 |
@@ -93,6 +93,42 @@ sudo bash install.sh --scan-root /data/ci-runner
 配好 sudo 白名单、装 systemd 单元、切 `current` 软链、启动并探活。
 
 **重复运行是安全的**：`shared/` 里的数据、daemon 的身份密钥、`.env` 里已有的值都不会被覆盖。
+
+### 装在哪块盘上
+
+daemon 的配置（含它的身份密钥）和日志都写在 `--root` 下的 `shared/`。**那块盘一旦被写满，
+节点就会失联** —— 面板发过去的请求写盘失败，而 runner 那侧可能一切正常。
+
+`--root` 和 `--scan-root` 的默认值只是两个目录路径，**是不是落在不同的盘上取决于这台机器怎么
+分区** —— `/data` 单独挂载时才是两块盘，单根文件系统的机器上两者同盘，下面说的问题不存在。
+先 `df -h /opt /data` 看一眼。真正要小心的是这种典型配置：系统盘几百 G 且被家目录、构建缓存
+共用，数据盘几 T 专供 runner —— 此时默认值会把管控面放在小的那块上。
+
+脚本会检查 `--root` 所在文件系统，不足 2GB 直接拒绝（装机和升级都做），解包用的临时目录另外
+检查。**跨盘提示只在装机时给** —— 升级路径读不到 `--scan-root`，它不写进 `.env`。提示的内容是
+改用 `--root <数据盘挂载点>/ci-panel`。
+
+已经装好的机器要迁移，把 `shared/` 挪过去再软链回来即可（`releases/*/daemon/{data,logs,tmp}`
+指的是 `$ROOT/shared/...`，会穿过这层软链）：
+
+```bash
+sudo systemctl stop ci-panel-daemon
+sudo mkdir -p /data/ci-panel
+# 目标不能已存在，否则 mv 会把 shared/ 塞进它里面变成 shared/shared。
+# 用 && 串起来而不是 exit：这段是给人整段贴进 root shell 的，此时 daemon 已经停了，
+# 一个 exit 会把这个 shell 一起带走。
+[ ! -e /data/ci-panel/shared ] \
+  && sudo mv /opt/ci-panel/shared /data/ci-panel/shared \
+  && sudo ln -s /data/ci-panel/shared /opt/ci-panel/shared \
+  && sudo systemctl start ci-panel-daemon
+```
+
+搬完确认一下软链和落盘位置：
+
+```bash
+ls -l /opt/ci-panel/shared
+df -h /opt/ci-panel/current/daemon/data
+```
 
 ### 3. 在面板里添加节点
 

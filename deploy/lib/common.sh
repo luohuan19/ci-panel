@@ -43,6 +43,65 @@ need_root() {
   if [ "$(id -u)" -ne 0 ]; then die "需要 root：sudo bash $(basename "$0") ..."; fi
 }
 
+# ---- 磁盘空间 ----
+# 装机时不看剩余空间，跑起来就只剩事故。生产上遇到过一次：别的用户把 /home 写满，而
+# ci-panel 装在同一块盘的 /opt 下，daemon 写 data/Config/global.json 时 ENOSPC。
+# 至少在装的时候把"这台机器的大盘未必是 /"说出来。
+MIN_FREE_MB=2048
+# 解包用的临时目录（默认 /tmp）另算：包本身就有一百多兆，而它未必和 --root 同盘。
+MIN_TMP_FREE_MB=512
+
+fs_stat() { # path → 打印 "设备 可用MB 挂载点"；取不到就什么都不打印
+  local probe="$1"
+  # 首次安装时目录还不存在，往上找第一个存在的祖先 —— 那才是它要落到的文件系统。
+  while [ ! -d "$probe" ] && [ "$probe" != "/" ]; do probe="$(dirname "$probe")"; done
+  df -Pm -- "$probe" 2>/dev/null | awk 'NR==2 {print $1, $4, $6}'
+}
+
+check_disk_space() { # install_root [scan_root]
+  local root="$1" scan="${2:-}"
+  local root_dev="" root_avail="" root_mnt="" scan_dev="" scan_avail="" scan_mnt=""
+
+  # `|| true`：fs_stat 什么都没打印时 read 以 1 退出，set -e 会把整个脚本带走。
+  read -r root_dev root_avail root_mnt <<<"$(fs_stat "$root")" || true
+  case "$root_avail" in
+    '' | *[!0-9]*)
+      warn "读不到 $root 所在文件系统的剩余空间，跳过空间检查"
+      return 0
+      ;;
+  esac
+  if [ "$root_avail" -lt "$MIN_FREE_MB" ]; then
+    die "$root 所在文件系统（$root_dev）只剩 ${root_avail}MB，至少要 ${MIN_FREE_MB}MB。先腾空间，或者用 --root 装到别的盘上"
+  fi
+  log "安装目标 $root 在 $root_dev（挂载于 $root_mnt）上，剩余 ${root_avail}MB"
+
+  # 最容易踩的坑：--scan-root 默认指着大数据盘，--root 却默认指着系统盘。两块盘不同时，
+  # 系统盘被别的东西（家目录、日志）写满，节点就会失联，而 runner 那侧看起来一切正常。
+  if [ -z "$scan" ]; then return 0; fi
+  read -r scan_dev scan_avail scan_mnt <<<"$(fs_stat "$scan")" || true
+  case "$scan_avail" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  if [ "$scan_dev" = "$root_dev" ]; then return 0; fi
+  # 要“明显更空”才提示：两块同规格盘差几百兆就喊一嗓子，只会训练出无视警告的习惯。
+  if [ "$scan_avail" -le $((root_avail * 2)) ]; then return 0; fi
+  warn "runner 数据盘 $scan_dev 剩 ${scan_avail}MB，比安装盘 $root_dev 的 ${root_avail}MB 宽裕得多。"
+  warn "  daemon 的配置和日志写在 $root 下：那块盘一旦被写满，节点会失联，哪怕 runner 侧还有空间。"
+  # 建议挂载点下的同级目录，而不是 scan-root 里面 —— 那个目录是 daemon 要扫 runner 的地方。
+  warn "  要让两者落在同一块盘：--root ${scan_mnt%/}/ci-panel"
+}
+
+check_tmp_space() { # tmpdir
+  local tmp="$1" dev="" avail="" mnt=""
+  read -r dev avail mnt <<<"$(fs_stat "$tmp")" || true
+  case "$avail" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  if [ "$avail" -lt "$MIN_TMP_FREE_MB" ]; then
+    die "临时目录 $tmp（$dev）只剩 ${avail}MB，解包至少要 ${MIN_TMP_FREE_MB}MB。设 TMPDIR 指到别的盘再重试"
+  fi
+}
+
 # ---- 取包 ----
 verify_checksum() { # tarball
   local f="$1"
