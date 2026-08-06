@@ -14,7 +14,7 @@ import fs from "fs-extra";
 import path from "path";
 import logger from "./log";
 import { assertUnderRoots, readServiceName as readUnitFile } from "./runner_scan";
-import { RUNNER_SVC_HELPER } from "./runner_provision";
+import { HELPER_TIMEOUT_MS, RUNNER_SVC_HELPER, helperErrorMessage } from "./runner_provision";
 import { dirKey, serviceKey, withRunnerLock } from "./runner_lock";
 
 // 单元名正则，与 daemon controlService / 助手脚本保持一致，防路径穿越
@@ -219,18 +219,13 @@ async function writeOverride(
   try {
     const r = await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, "set-env", dir, b64], {
       encoding: "utf8",
-      timeout: 60000
+      timeout: HELPER_TIMEOUT_MS
     });
     logger.info(`[runner-env] override: ${String(r.stdout).trim()}（${desired.length} 个变量）`);
-  } catch (err: any) {
-    const stderr = String(err?.stderr || err?.message || err || "");
-    if (/password is required|sudo:|not allowed|a password/i.test(stderr)) {
-      throw new Error(
-        "设置 systemd 环境变量需要免密 sudo，但未配置。请先安装/更新特权助手与 sudoers 规则" +
-          "（见 prod-scripts/ci-panel-runner-svc 与 ci-panel-runner-install.sudoers）。"
-      );
-    }
-    throw new Error(`设置 systemd 环境变量失败: ${stderr}`);
+  } catch (err: unknown) {
+    // 分类统一走 helperErrorMessage：超时与「免密没配」在错误对象上长得一样，各写一份正则
+    // 会让超时被报成权限问题（见该函数的注释）。
+    throw new Error(helperErrorMessage("设置 systemd 环境变量", err, HELPER_TIMEOUT_MS));
   }
 }
 

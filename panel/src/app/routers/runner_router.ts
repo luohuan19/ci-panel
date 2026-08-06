@@ -438,7 +438,11 @@ router.post(
       const result = await new RemoteRequest(remoteService).request(
         "runner/delete",
         { dir: body.dir, removeToken, force: Boolean(body.force) },
-        60000
+        // daemon 侧单次删除的预算是逐段叠加的：停 systemd 最长等 DELETE_SETTLE_MS(60s)，再
+        // config.sh 注销、rm -rf。60 秒在这里恰好卡在第一段的边界上——「等了 60 秒还没停」
+        // 这个结论本身就要 60 秒才得出，panel 先超时的话它永远送不到浏览器。取 600s 与
+        // runner/provision_batch 及前端的 deleteRunner 对齐：客户端不能比服务端先放弃。
+        600000
       );
       ctx.body = result;
     } catch (err) {
@@ -481,7 +485,8 @@ router.post(
             const r = await new RemoteRequest(remoteService).request(
               "runner/delete",
               { dir, removeToken, force: Boolean(body.force) },
-              60000
+              // 同上，且这里是每项各自的预算，不是整批的
+              600000
             );
             return { dir, ...r };
           } catch (err: any) {

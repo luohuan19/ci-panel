@@ -10,19 +10,21 @@
 #   bash dev.sh --rebuild   强制全量重新构建
 #   bash dev.sh --no-build  跳过构建，只把服务拉起来
 #   bash dev.sh --no-deps   跳过 npm install 与二进制依赖下载
+#   bash dev.sh --real-runners  关掉 runner 隔离，用特权助手操作真实 systemd 单元
 set -u
 
 # shellcheck source=scripts/dev-lib.sh
 source "$(cd "$(dirname "$0")" && pwd)/scripts/dev-lib.sh"
 
-DO_BUILD=1 FORCE_BUILD=0 DO_DEPS=1
+DO_BUILD=1 FORCE_BUILD=0 DO_DEPS=1 REAL_RUNNERS=0
 for arg in "$@"; do
   case "$arg" in
   --no-build) DO_BUILD=0 ;;
   --rebuild) FORCE_BUILD=1 ;;
   --no-deps) DO_DEPS=0 ;;
+  --real-runners) REAL_RUNNERS=1 ;;
   -h | --help)
-    sed -n '2,12p' "$0"
+    sed -n '2,13p' "$0"
     exit 0
     ;;
   *)
@@ -160,7 +162,13 @@ fi
 # ---- 4. 启动 ----
 
 step "启动"
-dev_isolate_env # 从这里开始的子进程才需要隔离（独立扫描根 + 断开特权助手 + 不走代理）
+# 从这里开始的子进程才需要隔离（独立扫描根 + 断开特权助手 + 不走代理）。
+# --real-runners 只关掉前两样，代理设置照旧。
+if [ "$REAL_RUNNERS" -eq 1 ]; then
+  dev_isolate_env real-runners
+else
+  dev_isolate_env
+fi
 
 # 配置压根不存在 = 首次启动，这时开发 daemon 必然没在跑，传空端口跳过"已在运行"检测直接起
 # （端口真被占的话 daemon 自己会退出并在日志里说明）。但"配置存在却读不出合法端口"是另一
@@ -183,7 +191,26 @@ await_release() { # name port
   done
   die "$name 停止后 :$port 仍被占用，新构建的产物无法生效。手动检查：ss -tlnp | grep ':$port '"
 }
-if [ -n "$DPORT" ] && [ "$REBUILT_DAEMON" = 1 ] && port_up "$DPORT"; then
+# 隔离模式与正在跑的 daemon 对不上，也必须重启 —— 否则 --real-runners 只会打一句
+# 「已在运行」就跳过，开关静默失效；反方向（用过开关后不带开关再起）还会让人误以为
+# 已经回到隔离。模式是从进程环境里读出来的，见 dev-lib.sh 的 daemon_isolated()。
+MODE_MISMATCH=0
+if [ -n "$DPORT" ] && port_up "$DPORT"; then
+  daemon_isolated "$(pid_on_port "$DPORT")"
+  case "$?$REAL_RUNNERS" in
+  01) MODE_MISMATCH=1; echo "正在跑的 daemon 是隔离模式，--real-runners 要求重启它" ;;
+  10) MODE_MISMATCH=1; echo "正在跑的 daemon 未隔离，本次没加 --real-runners，重启回隔离模式" ;;
+  2*)
+    # 刻意不置 MODE_MISMATCH：读不到 /proc/<pid>/environ 多半意味着那个 daemon 不是本脚本
+    # 起的（别人的、或 systemd 托管的）。而 stop_svc 本来就拒绝去杀没有 pid 记录的进程，
+    # 于是端口不会释放、await_release 15 秒后 die —— 一个「查不出模式」就把启动整个搞挂，
+    # 比原先的 [skip] 还糟。这里只说清楚，让人自己决定。
+    echo "[warn] 读不到 :$DPORT 上 daemon 的环境变量，无法确认隔离模式，按原样保留" >&2
+    ;;
+  esac
+fi
+
+if [ -n "$DPORT" ] && { [ "$REBUILT_DAEMON" = 1 ] || [ "$MODE_MISMATCH" = 1 ]; } && port_up "$DPORT"; then
   stop_svc daemon "$DPORT"
   await_release daemon "$DPORT"
 fi
@@ -267,8 +294,17 @@ $(for ip in $IPS; do echo "   http://$ip:5173/"; done)
 
  端口    frontend 5173 → panel 23333 → daemon ${DPORT:-未知（见 .run/daemon.log）}
  日志    .run/{frontend,panel,daemon}.log
+$(if [ "$REAL_RUNNERS" = 1 ]; then
+  cat <<'MODE'
+ 扫描根  由特权助手的 ALLOWED_ROOT 决定（启动日志里的「扫描根取自特权助手」那行）
+         隔离已关闭：装/卸/启停都会落到真实 systemd 单元上
+MODE
+else
+  cat <<'MODE'
  扫描根  .run/dev-runner-root
          已隔离：开发实例看不到本机任何真 runner，误操作也动不了生产
+MODE
+fi)
 
  后续操作
 EOF
@@ -284,6 +320,21 @@ cat <<'EOF'
   2. 改前端代码  → vite 热重载，直接刷新页面
   3. 改后端代码  → bash dev.sh（自动重新构建 panel/daemon 并只重启它们）
   4. 停止全部    → bash stop-cipanel.sh
+EOF
+
+if [ "$REAL_RUNNERS" = 1 ]; then
+  cat <<'EOF'
+  5. 隔离已关闭，面板上的操作会真的动 systemd。装服务前先确认助手认得这台机器：
+
+       sudo -n /usr/local/sbin/ci-panel-runner-svc preflight
+
+     它报 "sudo: a password is required" 就是免密没配好 —— 重跑
+     prod-scripts/install-runner-privileges.sh。装完服务用 systemctl status 复核：
+     助手是非阻塞提交（--no-block），退出码 0 只代表 systemd 收下了这个 job。
+
+EOF
+else
+  cat <<'EOF'
   5. 扫描根是空的，所以 runner 相关页面一开始没有数据。造一个假 runner 用来测：
 
        mkdir -p .run/dev-runner-root/my-runner
@@ -297,3 +348,4 @@ cat <<'EOF'
      否则 daemon 会留下一个指向已删目录的句柄实例）
 
 EOF
+fi
