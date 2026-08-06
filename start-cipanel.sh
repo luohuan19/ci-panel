@@ -21,6 +21,12 @@ source "$(cd "$(dirname "$0")" && pwd)/scripts/dev-lib.sh"
 # 参数只有一个，所以不铺开写：认出 --real-runners，其余一律拒绝 —— 敲错的开关被静默
 # 忽略的话，人会以为隔离关了、其实没关。
 REAL_RUNNERS=0
+# 参数至多一个。只看 $1 的话 `--real-runners --bogus` 会静默吞掉第二个参数，而本段存在的理由
+# 恰恰是不让敲错的开关被静默忽略。
+if [ "$#" -gt 1 ]; then
+  echo "参数过多：只支持一个可选参数 --real-runners" >&2
+  exit 2
+fi
 case "${1:-}" in
   --real-runners) REAL_RUNNERS=1; dev_isolate_env real-runners ;;
   "") dev_isolate_env ;;

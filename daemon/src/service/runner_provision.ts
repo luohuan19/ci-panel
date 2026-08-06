@@ -355,10 +355,13 @@ export const HELPER_TIMEOUT_MS = 60000;
 // 都只剩一句 `Command failed: sudo -n …`。按 stderr 正则分类的话，超时会被报成「免密没配」，
 // 把排查引向 sudoers（实际发生过：宿主机 D-Bus 卡死导致的超时被当成权限问题查了很久）。
 // 所以文本分类之前必须先按信号判一次：只有真跑起来并自己报错的助手，stderr 才有话说。
+// 只认 killed=true：那代表「Node 自己动手杀的」，在本模块的用法里只可能是 timeout 到期。
+// 不能顺带认 signal==="SIGTERM"——被外面 kill 掉的子进程也是 SIGTERM，但 killed 是 false，
+// 认了就会凭空报出一个「等了 60 秒」的超时。
 export function isExecTimeout(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const e = err as { killed?: unknown; signal?: unknown; code?: unknown };
-  return e.killed === true || e.signal === "SIGTERM" || e.code === "ETIMEDOUT";
+  const e = err as { killed?: unknown; code?: unknown };
+  return e.killed === true || e.code === "ETIMEDOUT";
 }
 
 // 助手调用失败时对外的统一说法。三类必须分开，因为处置完全不同：

@@ -36,6 +36,38 @@ describe("what a real execFile timeout actually looks like", () => {
     expect(isExecTimeout(err)).toBe(true);
   });
 
+  it("does not call an externally killed process a timeout", async () => {
+    // The trap this guards: an external SIGTERM lands with signal === "SIGTERM" too, but
+    // killed === false, because `killed` means *we* killed it. Matching on the signal alone
+    // invents a "waited 60 seconds" timeout for a process that was shot at 80ms.
+    const child = execFile(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], () => {});
+    // Cleared on the way out, and guarded: firing at a child that already exited throws from
+    // inside a timer callback, where nothing can catch it — vitest would report a crashed
+    // worker rather than a failing assertion.
+    const timer = setTimeout(() => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(child.pid, "SIGTERM");
+      } catch {
+        /* already gone */
+      }
+    }, 80);
+    try {
+      const err = await new Promise<unknown>((resolve) => {
+        child.on("error", resolve);
+        child.on("close", (_code, signal) =>
+          resolve(Object.assign(new Error("Command failed"), { killed: child.killed, signal }))
+        );
+      });
+
+      expect((err as { signal?: unknown }).signal).toBe("SIGTERM");
+      expect((err as { killed?: unknown }).killed).toBe(false);
+      expect(isExecTimeout(err)).toBe(false);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   it("does not confuse an ordinary non-zero exit for a timeout", async () => {
     const err = await execFileAsync(process.execPath, [
       "-e",
@@ -48,7 +80,16 @@ describe("what a real execFile timeout actually looks like", () => {
   });
 
   it("says no to values that are not errors at all", () => {
-    for (const v of [null, undefined, "", "SIGTERM", 0, { signal: "SIGINT" }, { killed: false }]) {
+    for (const v of [
+      null,
+      undefined,
+      "",
+      "SIGTERM",
+      0,
+      { signal: "SIGINT" },
+      { killed: false },
+      { killed: false, signal: "SIGTERM" } // the externally-killed shape, as a plain object
+    ]) {
       expect(isExecTimeout(v), JSON.stringify(v)).toBe(false);
     }
   });

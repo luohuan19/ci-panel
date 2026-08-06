@@ -61,10 +61,15 @@ wait_port() { # port timeout_seconds
 # 实际那个 daemon 还连着特权助手。两种都必须被认出来。
 # 返回：0=隔离模式 1=未隔离 2=读不到（进程不在、或不是本用户的）
 daemon_isolated() { # pid
-  local pid="$1"
-  [ -n "$pid" ] && [ -r "/proc/$pid/environ" ] || return 2
-  tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
-    grep -q '^CIP_RUNNER_SVC_HELPER=/nonexistent/'
+  local pid="$1" env_text
+  [ -n "$pid" ] || return 2
+  # 先整份读进来再判断，不把读取和匹配串在一条管道上：进程可能在 -r 检查之后、读取之前就退出，
+  # 那时 grep 拿到空输入会返回 1，也就是「确认未隔离」——而事实是我们什么都没读到。读空同理。
+  # 2>/dev/null 要罩住整个命令组：重定向失败是 shell 自己报的（"No such file or directory"），
+  # 只挂在 tr 上拦不住它，探测一个已退出的 pid 就会往 stderr 上吐一行噪音。
+  env_text="$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null)" || return 2
+  [ -n "$env_text" ] || return 2
+  printf '%s\n' "$env_text" | grep -q '^CIP_RUNNER_SVC_HELPER=/nonexistent/'
 }
 
 # ---- 启动 ----
@@ -155,6 +160,16 @@ dev_isolate_env() { # [real-runners]
   # 用于验证「创建 runner → 装 systemd 服务」这条链：不隔离，daemon 照常向助手要
   # ALLOWED_ROOT 并拿它当扫描根，能操作的范围因此由 root 侧的助手说了算，而不是这里。
   if [ "${1:-}" = "real-runners" ]; then
+    # 必须显式 unset，不能只是「不设置」：调用方的环境里若已经 export 过这两个变量（profile
+    # 里配过、或上一层脚本传下来），子进程会照单继承，于是 daemon 仍然是隔离的，而脚本却在
+    # 报告「隔离已关闭」——正是这个开关要防的那件事，方向反过来而已。
+    # 丢掉什么要说出来：本文件一贯的态度是隔离状态的任何变化都不许悄悄发生（daemon_isolated
+    # 存在的理由、start-cipanel.sh 拒绝敲错的参数，都是同一条）。
+    for _v in CIP_RUNNER_SVC_HELPER CIP_SCAN_ROOTS; do
+      [ -n "${!_v:-}" ] &&
+        echo "[warn] 已忽略环境里的 $_v=${!_v} —— --real-runners 下扫描根以 root 侧助手为准" >&2
+    done
+    unset _v CIP_RUNNER_SVC_HELPER CIP_SCAN_ROOTS
     echo "[warn] runner 隔离已关闭：本次开发实例会通过特权助手操作真实 systemd 单元" >&2
     return 0
   fi

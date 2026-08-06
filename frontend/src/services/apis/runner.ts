@@ -375,6 +375,11 @@ export const deleteRunnerBatch = useDefineApi<
   method: "POST",
   // 理由同 deleteRunner，而且更紧迫：panel 侧并发扇出，单项耗时叠加，几个 runner 就能顶满
   // 默认的 30 秒。
+  //
+  // 注意这里做不到 deleteRunner 那种「客户端一定比服务端后放弃」：panel 是并发 5 的工作池，
+  // 每项各有 600s 预算，所以 6 个目录在最坏情况下要 1200s，超过本次的 600s。真正的解法是照
+  // provision_batch 改成异步任务流（batch_start + batch_progress），不是继续加大这个数字。
+  // 在那之前，这里只是把「几个 runner 就必然超时」压回到「全都卡满才可能超时」。
   timeout: 1000 * 600
 });
 

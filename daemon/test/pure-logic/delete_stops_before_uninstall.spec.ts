@@ -67,8 +67,23 @@ describe("runDelete stops through the inside-the-lock path", () => {
   it("stopBeforeUninstall exists and is what runDelete gates the uninstall on", () => {
     expect(stopFn, "stopBeforeUninstall not found in runner_scan.ts").toBeTruthy();
     // Anchored loosely on purpose: what must hold is "the stop result decides whether uninstall
-    // runs at all", not the exact spelling of the ternary. A prettier reflow should not redden it.
-    expect(src).toMatch(/stopBeforeUninstall\(dir\)[\s\S]{0,160}uninstallSystemdService\(dir\)/);
+    // runs at all", not the exact spelling of the ternary. A reflow should not redden it.
+    expect(src).toMatch(
+      /stopBeforeUninstall\(service\)[\s\S]{0,160}uninstallSystemdService\(dir\)/
+    );
+  });
+
+  it("stops the unit deleteRunner locked, not whatever .service says by then", () => {
+    // .service is writable by the runner's own owner. Re-reading it here would let the file
+    // change between the read that chose the lock key and the read that chooses what to stop —
+    // we would stop an unlocked unit while the locked one keeps running, and then delete the
+    // directory out from under it. The validated name has to be handed down instead.
+    //
+    // The identifier `lockedService` is load-bearing here, not incidental: it is the validated
+    // copy, as opposed to the raw `service` that came straight off disk. Do not loosen this to
+    // `\w+` for symmetry with the case above — that would drop the very distinction under test.
+    expect(stopFn).not.toContain("readServiceName");
+    expect(src).toMatch(/runDelete\(dir, opts, lockedService\)/);
   });
 
   it("it calls runServiceAction, never controlService", () => {

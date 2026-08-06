@@ -754,10 +754,15 @@ export async function deleteRunner(
     throw new Error(`读取 .service 失败，无法确定 systemd 单元名，拒绝删除: ${errText(err)}`);
   }
   const keys = [dirKey(dir)];
-  if (SERVICE_RE.test(service)) keys.push(serviceKey(service));
+  const lockedService = SERVICE_RE.test(service) ? service : "";
+  if (lockedService) keys.push(serviceKey(lockedService));
   // 删除期间挡住同一个 runner 的置备与启停（原因见 runner_lock 顶部）。目录与单元名两个 key
   // 都占：provision 只按目录进来，service_control 只按单元名进来，各挡一条路。
-  return withRunnerLock(keys, "delete", () => runDelete(dir, opts));
+  //
+  // 单元名往下传，不让 runDelete 再读一次 .service：那个文件 runner 属主自己就能改写，两次读
+  // 之间被换掉的话，我们会去停一个「没锁住的」单元，而锁住的那个还活着，紧接着目录就被删了。
+  // 这里读到的这一份既是锁的依据，也必须是后续动作的依据。
+  return withRunnerLock(keys, "delete", () => runDelete(dir, opts, lockedService));
 }
 
 // 卸载之前先把服务停稳，并且是由我们自己来等。
@@ -770,15 +775,11 @@ export async function deleteRunner(
 //
 // 必须是 runServiceAction 而不是 controlService：调用方已经持有这个单元的 svc: 锁，而
 // controlService 会再去占同一把——withRunnerLock 不可重入且快速失败，调它等于自己把自己挡死。
-async function stopBeforeUninstall(dir: string): Promise<{ ok: boolean; error?: string }> {
-  let service = "";
-  try {
-    service = readServiceName(dir);
-  } catch {
-    // 读不出来 deleteRunner 已经拦在前面了；真到这里就把判断权交给 uninstall，别抢它的错误
-    return { ok: true };
-  }
-  if (!service || !SERVICE_RE.test(service)) return { ok: true }; // 没装服务，无需停
+// service 由 deleteRunner 传入 —— 就是它加锁时读到并校验过的那一份，本函数不再自己读 .service。
+async function stopBeforeUninstall(service: string): Promise<{ ok: boolean; error?: string }> {
+  // 空串 = 没装服务，或 .service 内容不合法（deleteRunner 因此没占那把锁）。两种都不发 stop：
+  // 后者留给助手去拒——它同样从 .service 派生单元名，会当场 die，删除随之中止，是 fail closed。
+  if (!service) return { ok: true };
 
   // 查不到状态就不发 stop：对不存在的单元 `systemctl stop` 会非零退出，而删除一个没装服务的
   // runner 是完全正常的操作，不该因此失败。这种情况留给幂等的 uninstall 收尾。
@@ -802,7 +803,12 @@ async function stopBeforeUninstall(dir: string): Promise<{ ok: boolean; error?: 
 }
 
 // 删除本体。进来时已在锁内、目录也已校验过。
-async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<DeleteResult> {
+// service 是 deleteRunner 加锁时读到并校验过的单元名（空串 = 没装服务/名字不合法）。
+async function runDelete(
+  dir: string,
+  opts: DeleteRunnerOptions,
+  service: string
+): Promise<DeleteResult> {
   const steps: DeleteStep[] = [];
 
   // busy 拦截：正在跑 job 的删除会当场中断 CI，必须显式 force
@@ -813,7 +819,7 @@ async function runDelete(dir: string, opts: DeleteRunnerOptions): Promise<Delete
   // 1) 停 + 卸 systemd。先自己把服务停稳，再调 uninstall——理由见 stopBeforeUninstall。
   //    停不下来就不进 uninstall：拿 stop 的失败原因直接走下面那条中止分支，语义一样（systemd
   //    没停下来），但错误文案说得出是「等了多久还没停」，而不是一句和权限问题撞车的超时。
-  const stop = await stopBeforeUninstall(dir);
+  const stop = await stopBeforeUninstall(service);
   const uninstall = stop.ok ? await uninstallSystemdService(dir) : stop;
   steps.push(
     uninstall.ok
