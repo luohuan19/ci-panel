@@ -69,6 +69,17 @@ describe("what counts as taken", () => {
     expect(allocateRunnerNames("cpu", 2, used, baseDir)).toEqual(["cpu-2", "cpu-4"]);
   });
 
+  it("mirrors the preview when two groups share a prefix", () => {
+    // The twin of "takes the real anchors …" in frontend/src/tools/__tests__/runnerNaming.spec.ts.
+    // There the second group's anchors are the informative ones; here there are no anchors at all,
+    // just the accumulating used set — which is exactly why the preview has to derive the same
+    // answer from what listRepoGroups reports rather than from group order.
+    const used = new Set(["cpu-2", "cpu-4"]);
+    const first = allocateRunnerNames("cpu", 1, used, baseDir);
+    const second = allocateRunnerNames("cpu", 1, used, baseDir);
+    expect([first, second]).toEqual([["cpu-1"], ["cpu-3"]]);
+  });
+
   it("ignores names belonging to a different prefix", () => {
     const used = new Set(["npu-1", "npu-2", "cpu-3"]);
     expect(allocateRunnerNames("cpu", 2, used, baseDir)).toEqual(["cpu-1", "cpu-2"]);

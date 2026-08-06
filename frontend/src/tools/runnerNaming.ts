@@ -40,6 +40,18 @@ export function previewGroupNames(groups: NamePreviewGroup[]): string[][] {
   const out: string[][] = [];
   const freeOf = new Map<string, number[]>();
   const nextOf = new Map<string, number>();
+  // 同一个前缀可能同时来自两种组：命中既有 label 组的（带真实的 maxIndex/freeIndexes），
+  // 和用户手填基础名、没命中任何组的（报 0 与空数组）。后者的 0 是「不知道」而不是「没有」，
+  // 按出现顺序播种的话，只要它排在前面，整份锚点就被清零、预览从 1 起，而 daemon 是照真实
+  // used 算的。所以先扫一遍，每个前缀取信息量最大的那一份（maxIndex 最大者连同它的空缺表）。
+  // 多个命中组共享前缀时它们的锚点本就相同（同一份 used 算出来的），取谁都一样。
+  const anchorOf = new Map<string, NamePreviewGroup>();
+  for (const g of groups) {
+    const prefix = (g.prefix || "").trim();
+    if (!prefix) continue;
+    const seen = anchorOf.get(prefix);
+    if (!seen || g.maxIndex > seen.maxIndex) anchorOf.set(prefix, g);
+  }
   for (const g of groups) {
     // 自己 trim，不指望调用方：daemon 那边 `base` 也是 trim 过再判空的，而全是空格的基础名
     // 若当成有效前缀，预览会出现 "  -1" 这种名字，后端却根本不会建。
@@ -48,10 +60,11 @@ export function previewGroupNames(groups: NamePreviewGroup[]): string[][] {
       out.push([]);
       continue;
     }
+    const anchor = anchorOf.get(prefix) ?? g;
     // 拷一份再消费：freeIndexes 直接来自 repo_groups 的响应对象，前端把它存在 ref 里、
     // 每次输入都重算一遍预览——就地 shift 会让它在第一次渲染后变空。
-    if (!freeOf.has(prefix)) freeOf.set(prefix, [...g.freeIndexes]);
-    if (!nextOf.has(prefix)) nextOf.set(prefix, g.maxIndex);
+    if (!freeOf.has(prefix)) freeOf.set(prefix, [...anchor.freeIndexes]);
+    if (!nextOf.has(prefix)) nextOf.set(prefix, anchor.maxIndex);
     const free = freeOf.get(prefix) as number[];
     const names: string[] = [];
     for (let k = 0; k < g.count; k++) {

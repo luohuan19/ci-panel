@@ -121,6 +121,31 @@ describe("previewGroupNames matches what the daemon will actually create", () =>
     expect(new Set([...first, ...second]).size).toBe(4);
   });
 
+  it("takes the real anchors when an unmatched group shares the prefix and comes first", () => {
+    // An unmatched group reports maxIndex 0 / freeIndexes [] — that is "unknown", not "nothing
+    // exists". Seeding from whichever group happens to be listed first would zero the anchors and
+    // preview cpu-1/cpu-2, while the daemon computes from the real used set and creates
+    // cpu-1/cpu-3. Reachable in the dialog: an existing `linux,arm64` group named cpu, plus a new
+    // group whose labels are `linux,arm64,gpu` and whose base name the user typed as cpu.
+    // The daemon-side twin of this case is in
+    // daemon/test/pure-logic/runner_name_allocation.spec.ts ("mirrors the preview when …").
+    expect(
+      previewGroupNames([
+        group({ count: 1, maxIndex: 0, freeIndexes: [] }),
+        group({ count: 1, maxIndex: 4, freeIndexes: [1, 3] })
+      ])
+    ).toEqual([["cpu-1"], ["cpu-3"]]);
+  });
+
+  it("is order-independent for that pair", () => {
+    expect(
+      previewGroupNames([
+        group({ count: 1, maxIndex: 4, freeIndexes: [1, 3] }),
+        group({ count: 1, maxIndex: 0, freeIndexes: [] })
+      ])
+    ).toEqual([["cpu-1"], ["cpu-3"]]);
+  });
+
   it("keeps distinct prefixes independent", () => {
     expect(
       previewGroupNames([
