@@ -508,10 +508,9 @@ main() {
   need_cmd systemctl
   need_cmd tar
   load_context
-  TMP="$(mktemp -d)"
-  trap cleanup EXIT
-  check_tmp_space "$TMP"
 
+  # --check 不落盘，--rollback 只切软链，两者都用不到 $TMP。整块推到早退之后，是因为盘满
+  # 恰恰是最需要回滚的时候：留在上面的话，连 mktemp -d 失败都会在 set -e 下带走回滚这条退路。
   if [ "$DO_CHECK" -eq 1 ]; then
     do_check
     return
@@ -520,9 +519,12 @@ main() {
     do_rollback
     return
   fi
-  # 只在真要升级时检查：--check 不落盘，--rollback 只切软链，都不需要额外空间。
-  # 升级会在 releases/ 下多解一份新版本出来，盘满时解到一半失败会留下半个 release。
+
+  TMP="$(mktemp -d)"
+  trap cleanup EXIT
+  # 升级要在 releases/ 下多解一份新版本出来，盘满时解到一半会留下半个 release。
   check_disk_space "$INSTALL_ROOT"
+  check_tmp_space "$TMP"
   do_update
 }
 

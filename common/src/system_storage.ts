@@ -24,6 +24,35 @@ export default class StorageSubsystem {
   }
 
   /**
+   * Persist a directory entry created or replaced by rename().
+   *
+   * fsync on the file only covers its contents; the link between name and inode lives in the
+   * parent directory and needs its own flush, or a power loss can undo the rename. Note what
+   * that costs and what it does not: an undone rename leaves the *old* target in place, which
+   * is still the guarantee atomicWriteFileSync makes. This buys durability of the new write,
+   * not protection from the empty-file bug. Best effort by design: opening a directory for
+   * fsync is POSIX behaviour Windows does not offer, and the rename has already succeeded by
+   * the time this runs — failing here would report a write that in fact went through.
+   */
+  private static fsyncDir(dirPath: string) {
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(dirPath, "r");
+      fs.fsyncSync(fd);
+    } catch {
+      // Unsupported on this platform, or the directory is gone. Neither is worth failing on.
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Nothing left to salvage.
+        }
+      }
+    }
+  }
+
+  /**
    * Write a file such that a reader never observes a truncated or empty result.
    *
    * fs.writeFileSync truncates the target before it writes, so a failure part-way through
@@ -39,9 +68,7 @@ export default class StorageSubsystem {
     // unique but is not across restarts: a leftover from a crash would collide once the OS
     // recycled that pid, and "wx" would then fail every write to that target — turning the
     // litter into exactly the unwritable-config outcome this method exists to prevent.
-    const tmpPath = `${targetPath}.${randomBytes(6).toString("hex")}${
-      StorageSubsystem.TMP_SUFFIX
-    }`;
+    const tmpPath = `${targetPath}.${randomBytes(6).toString("hex")}${StorageSubsystem.TMP_SUFFIX}`;
 
     // Reproduce writeFileSync's mode semantics exactly. An existing target keeps its own
     // permissions, so the temp file starts at 0o600 and is widened only after the content
@@ -64,13 +91,17 @@ export default class StorageSubsystem {
     try {
       fd = fs.openSync(tmpPath, "wx", existingMode === null ? 0o666 : 0o600);
       fs.writeFileSync(fd, data, { encoding: "utf-8" });
+      // Widen through the descriptor, and do it before the fsync so the mode is persisted
+      // along with the contents. Doing it after would leave a window where a crash produces
+      // a file whose data is durable but whose permissions are still the private 0o600.
+      if (existingMode !== null) fs.fchmodSync(fd, existingMode);
       // Flush before renaming. Without it the directory entry can reach the disk ahead of
       // the contents, so a power loss exposes precisely the empty file this avoids.
       fs.fsyncSync(fd);
       fs.closeSync(fd);
       fd = null;
-      if (existingMode !== null) fs.chmodSync(tmpPath, existingMode);
       fs.renameSync(tmpPath, targetPath);
+      StorageSubsystem.fsyncDir(path.dirname(targetPath));
     } catch (error) {
       if (fd !== null) {
         try {

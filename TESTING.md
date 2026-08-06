@@ -7,11 +7,11 @@ the reference: tool choices, full config files, and the reasoning behind them.
 
 - Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
-  **As of Phase 4 all four packages have a suite** — `daemon/` 132, `common/` 89, `frontend/` 55,
-  `panel/` 42; 318 in total. `common/`, `daemon/` and `panel/` keep their specs in `test/` and
-  type-check them via `tsconfig.test.json`, as their own CI steps. `frontend/` keeps its in
-  `src/tools/__tests__/`, type-checked via `tsconfig.vitest.json` through its `build` script
-  (`run-p type-check build-only`) — so all four are covered, but only three show in `test:`.
+  **As of Phase 4 all four packages have a suite** — `daemon/` 146, `common/` 89, `frontend/` 65,
+  `panel/` 42; 342 as of this writing, and drifting with every PR after it. All four run in CI's
+  `test:` job. `common/`, `daemon/` and `panel/` keep their specs in `test/` and type-check them
+  via `tsconfig.test.json`, each its own CI step; `frontend/` type-checks its own inside `build`
+  (`run-p type-check build-only`), so it is the one package with no separate type-check step.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns

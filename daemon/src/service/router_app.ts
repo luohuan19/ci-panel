@@ -1,6 +1,30 @@
 import { EventEmitter } from "events";
+import { inspect } from "util";
 import RouterContext from "../entity/ctx";
 import { responseError } from "./protocol";
+
+// A handler may hand back anything at all, so narrow before assuming it can reject.
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as PromiseLike<unknown>).then === "function"
+  );
+}
+
+// responseError takes Error | string, and a rejection value can be neither — `throw 42` and
+// `Promise.reject(undefined)` are both legal. Narrow here rather than widening the protocol
+// signature to any, so the packet the panel receives always carries something readable.
+function toReportableError(error: unknown): Error | string {
+  if (error instanceof Error) return error;
+  if (typeof error === "string") return error;
+  // inspect() rather than String(): `String(Object.create(null))` throws TypeError, and this
+  // function is called from inside a .catch — a throw there is a fresh unhandled rejection,
+  // which under Node's default --unhandled-rejections=throw takes the daemon down. That is a
+  // worse outcome than the silence this whole wrapper exists to fix. inspect also keeps the
+  // shape of a plain object ({ code: 'ENOSPC' }) instead of flattening it to [object Object].
+  return inspect(error);
+}
 
 // The class and its singleton live here rather than alongside navigation() in router.ts.
 // router.ts imports every router at its foot, and each router reads routerApp back out of
@@ -48,12 +72,18 @@ class RouterApp extends EventEmitter {
       let result: unknown;
       try {
         result = fn(ctx, data);
-      } catch (error: any) {
-        return responseError(ctx, error);
+      } catch (error: unknown) {
+        return responseError(ctx, toReportableError(error));
       }
-      // Every handler that can fail is an async function, so a native promise is what comes
-      // back and instanceof is enough.
-      if (result instanceof Promise) result.catch((error: any) => responseError(ctx, error));
+      // Duck-typed rather than `instanceof Promise`: that check is false for a thenable a
+      // library returned and for a native promise from another realm (a vm context, a worker
+      // bridge), and either would be a rejection nobody is watching — the exact failure this
+      // wrapper exists to close. Promise.resolve adopts any of them.
+      if (isThenable(result)) {
+        Promise.resolve(result).catch((error: unknown) =>
+          responseError(ctx, toReportableError(error))
+        );
+      }
     });
   }
 

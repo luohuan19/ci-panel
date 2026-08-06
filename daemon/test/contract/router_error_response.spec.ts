@@ -88,6 +88,52 @@ describe("a handler that fails must produce an error packet, not silence", () =>
     expect(String(sent[0].packet.data)).toContain("plain string rejection");
   });
 
+  it("answers a rejecting thenable that is not a native Promise", async () => {
+    // `instanceof Promise` is false for a library's thenable and for a native promise built in
+    // another realm, so a wrapper keyed on it would drop exactly the rejections it exists to
+    // catch. Nothing in daemon/src returns one today; this pins the guard rather than the
+    // current call sites, because the day one does the symptom is silence.
+    const routerApp = new RouterApp();
+    routerApp.on("spec/thenable_reject", () => ({
+      then(_resolve: (v: unknown) => void, reject: (e: unknown) => void) {
+        reject(new Error("thenable rejection"));
+      }
+    }));
+    const { socket, sent } = fakeSocket();
+
+    routerApp.emitRouter(
+      "spec/thenable_reject",
+      new RouterContext("req-thenable", socket, {}, "spec/thenable_reject"),
+      null
+    );
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].packet.status).toBe(STATUS_ERR);
+    expect(String(sent[0].packet.data)).toContain("thenable rejection");
+  });
+
+  it("answers a rejection value that is neither an Error nor a string", async () => {
+    // responseError takes Error | string, but `Promise.reject(undefined)` is legal. The packet
+    // must still carry something readable rather than the caller seeing nothing.
+    const routerApp = new RouterApp();
+    routerApp.on("spec/async_reject_undefined", async () => {
+      return Promise.reject(undefined);
+    });
+    const { socket, sent } = fakeSocket();
+
+    routerApp.emitRouter(
+      "spec/async_reject_undefined",
+      new RouterContext("req-undef", socket, {}, "spec/async_reject_undefined"),
+      null
+    );
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].packet.status).toBe(STATUS_ERR);
+    expect(sent[0].packet.data).toBe("undefined");
+  });
+
   it("still answers a synchronous throw", async () => {
     // emitRouter already handled this case; the wrapper must not have taken it away.
     const routerApp = new RouterApp();
