@@ -55,6 +55,18 @@ wait_port() { # port timeout_seconds
   return 1
 }
 
+# 正在跑的 daemon 处于哪种隔离模式 —— 读它自己的环境，不靠猜。
+# 存在的理由：dev.sh 只在产物被重建时才重启 daemon，于是「换了隔离模式但没重启」会让
+# --real-runners 静默失效；反过来（用过开关之后不带开关再起）更糟：人以为回到隔离了，
+# 实际那个 daemon 还连着特权助手。两种都必须被认出来。
+# 返回：0=隔离模式 1=未隔离 2=读不到（进程不在、或不是本用户的）
+daemon_isolated() { # pid
+  local pid="$1"
+  [ -n "$pid" ] && [ -r "/proc/$pid/environ" ] || return 2
+  tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
+    grep -q '^CIP_RUNNER_SVC_HELPER=/nonexistent/'
+}
+
 # ---- 启动 ----
 
 # 后台拉起一个服务。
@@ -125,7 +137,10 @@ stop_svc() { # name port
 # 刻意不写成 ${VAR:-default}：调用者环境里若恰好有这两个变量（为别的用途 export 过，
 # 或者从 profile 继承下来），就会把开发实例指回真 runner 根 —— 而这套隔离存在的意义
 # 正是防止那件事。要让开发实例去管真 runner，请显式地另起，不要靠环境变量掀翻隔离。
-dev_isolate_env() {
+#
+# 唯一的例外走参数（dev_isolate_env real-runners）而不是环境变量，理由同上：命令行开关
+# 必须在每次启动时敲出来，不会从 profile 或父进程悄悄继承进来。
+dev_isolate_env() { # [real-runners]
   # agent/后端连的是内网，别走代理
   unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 
@@ -136,6 +151,13 @@ dev_isolate_env() {
   # 拉取 runner 安装包 / config.sh 注册的默认代理（直连 GitHub CDN 常被重置）。
   # 前端表单没填代理时，daemon 用这个兜底。
   export CIP_RUNNER_PROXY="${CIP_RUNNER_PROXY:-http://127.0.0.1:7892}"
+
+  # 用于验证「创建 runner → 装 systemd 服务」这条链：不隔离，daemon 照常向助手要
+  # ALLOWED_ROOT 并拿它当扫描根，能操作的范围因此由 root 侧的助手说了算，而不是这里。
+  if [ "${1:-}" = "real-runners" ]; then
+    echo "[warn] runner 隔离已关闭：本次开发实例会通过特权助手操作真实 systemd 单元" >&2
+    return 0
+  fi
 
   export CIP_RUNNER_SVC_HELPER="/nonexistent/ci-panel-runner-svc"
   export CIP_SCAN_ROOTS="$CIP_ROOT/.run/dev-runner-root"

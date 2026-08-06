@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 只拉起 CI Panel 三件套：daemon + panel(23333) + frontend(vite 5173)。
-# 用法：bash start-cipanel.sh    （重复运行安全：已在跑的服务会跳过）
+# 用法：bash start-cipanel.sh                 （重复运行安全：已在跑的服务会跳过）
+#      bash start-cipanel.sh --real-runners  关掉 runner 隔离，见下
 #
 # 不做预检、不构建、不做健康检查 —— 要那些请用 `bash dev.sh`（推荐的开发入口）。
 # 本脚本保留下来是给"我知道产物是新的，只想把进程拉起来"的场合。
@@ -17,7 +18,17 @@ set -u
 # shellcheck source=scripts/dev-lib.sh
 source "$(cd "$(dirname "$0")" && pwd)/scripts/dev-lib.sh"
 
-dev_isolate_env
+# 参数只有一个，所以不铺开写：认出 --real-runners，其余一律拒绝 —— 敲错的开关被静默
+# 忽略的话，人会以为隔离关了、其实没关。
+REAL_RUNNERS=0
+case "${1:-}" in
+  --real-runners) REAL_RUNNERS=1; dev_isolate_env real-runners ;;
+  "") dev_isolate_env ;;
+  *)
+    echo "未知参数：$1（只支持 --real-runners）" >&2
+    exit 2
+    ;;
+esac
 
 # 1) daemon 与 panel（用已构建的 production/app.js；改了后端源码需先 npm run build）
 # 配置压根不存在 = 首次启动，这时开发 daemon 必然没在跑，传空端口跳过"已在运行"检测
@@ -37,6 +48,15 @@ fi
 
 if [ -n "$dport" ] && port_up "$dport"; then
   echo "[skip] daemon 已在运行 (:$dport)"
+  # 本脚本按约定从不重启已在跑的服务，但隔离模式是启动时定死在进程环境里的：跳过启动
+  # 就等于沿用上一次的模式。不出声的话，--real-runners 会被当成生效了（反方向则是
+  # 人以为回到隔离、实际没有）。这里只报警，重启请走 stop-cipanel.sh 或 dev.sh。
+  daemon_isolated "$(pid_on_port "$dport")"
+  case "$?$REAL_RUNNERS" in
+  01) echo "[warn] 但它是隔离模式起来的，--real-runners 本次不生效。先 bash stop-cipanel.sh 再重来" >&2 ;;
+  10) echo "[warn] 但它是未隔离模式起来的，仍会操作真实 systemd 单元。先 bash stop-cipanel.sh 再重来" >&2 ;;
+  2*) echo "[warn] 读不到它的环境变量，无法确认隔离模式" >&2 ;;
+  esac
 else
   start_svc daemon "$dport" "$CIP_ROOT/daemon" node --enable-source-maps production/app.js
 fi
