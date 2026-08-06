@@ -448,12 +448,16 @@ export async function uninstallSystemdService(
   dir: string
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const { stdout: out } = await execFileAsync(
+    const { stdout: out, stderr: errOut } = await execFileAsync(
       "sudo",
       ["-n", RUNNER_SVC_HELPER, "uninstall", dir],
       { encoding: "utf8", timeout: HELPER_TIMEOUT_MS }
     );
     logger.info(`[runner] systemd 卸载: ${String(out).trim()}`);
+    // 助手卸载成功也可能有话要说——比如 drop-in 目录里留着非它写入的配置，删不得。退出码是 0，
+    // 不在这里转达的话这条提示就丢了：调用方只看 ok，而 execFile 的 stderr 没有别的去处。
+    const warn = String(errOut || "").trim();
+    if (warn) logger.warn(`[runner] systemd 卸载提示: ${warn}`);
     return { ok: true };
   } catch (err: unknown) {
     return { ok: false, error: helperErrorMessage("卸载 systemd 服务", err, HELPER_TIMEOUT_MS) };

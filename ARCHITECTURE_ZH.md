@@ -299,6 +299,16 @@ daemon 以非 root 用户（`ci-runner`）运行，只通过一个脚本提权�
 两者都按「整表托管」处理：读回显 → 用户编辑 → 覆盖写回。变量名走白名单
 （`^[A-Za-z_][A-Za-z0-9_]*$`），值禁止含换行。
 
+删除 runner 时 `override.conf` 一并清掉。单元名只由 `<owner-repo>` 与 runner 名字拼成，
+日后同名重建会落到同一个单元，不清就会静默继承上一任的变量。
+
+但这个路径正是 `systemctl edit <unit>` 写的那一个，所以删不删看的是归属证据而非文件名：
+`set-env` 会把 `# Managed by ci-panel` 写成首行，助手只删带这行标记的文件，外加一种
+标记出现之前的固定形状（首行 `[Service]`、次行空 `Environment=` 重置行，其余只有
+`Environment=` 行或空行）——让升级前就有的 runner 也能清干净。其余一律保留并在 stderr 上
+说明；清空环境变量时则直接报错，不删不属于面板的文件。标记是注释行，既不影响 systemd
+解析单元，也不影响变量读回。
+
 ## 仓库注册表与 CI 看板
 
 `panel/data/RepoConfig/<owner@repo>.json` 记录哪些仓库被纳入管理，以及可选的 PAT 和备注。
