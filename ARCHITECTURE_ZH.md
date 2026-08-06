@@ -299,6 +299,10 @@ daemon 以非 root 用户（`ci-runner`）运行，只通过一个脚本提权�
 两者都按「整表托管」处理：读回显 → 用户编辑 → 覆盖写回。变量名走白名单
 （`^[A-Za-z_][A-Za-z0-9_]*$`），值禁止含换行。
 
+删除 runner 时 `override.conf` 一并清掉。单元名只由 `<owner-repo>` 与 runner 名字拼成，
+日后同名重建会落到同一个单元，不清就会静默继承上一任的变量。只删助手自己写的那个文件；
+drop-in 目录里若还留着手工放的配置，保留并在 stderr 上说明。
+
 ## 仓库注册表与 CI 看板
 
 `panel/data/RepoConfig/<owner@repo>.json` 记录哪些仓库被纳入管理，以及可选的 PAT 和备注。

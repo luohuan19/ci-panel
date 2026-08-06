@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # 改动本脚本的行为时同步 +1，好让部署自检认出机器上装的是旧版本。
-VERSION=3
+VERSION=4
 
 # 单元名的唯一合法形状。与 daemon 侧 controlService 的正则一致。
 SERVICE_RE='^actions\.runner\.[A-Za-z0-9._@-]+\.service$'
@@ -145,6 +145,19 @@ EOF
   uninstall)
     systemctl disable --now "$svc" 2>/dev/null || true
     rm -f "$unit"
+    # 单元没了，drop-in 也必须跟着走。单元名是按 <owner-repo>.<name> 拼出来的，日后在同一仓库
+    # 下重建一个同名 runner 会拼回同一个单元，systemd 连着把这份遗留 drop-in 一起加载——新 runner
+    # 静默继承上一任的代理、设备号等变量，而面板的环境变量页读的正是同一个文件，看不出它属于一个
+    # 已被删除的 runner。只删本脚本自己写的 override.conf(与 set-env 清空走同一条路径)，运维手放
+    # 进去的其它 .conf 不归本脚本处置：宁可留下并说一声，也不替人做删除决定。
+    dropin_dir="/etc/systemd/system/$svc.d"
+    rm -f "$dropin_dir/override.conf"
+    rmdir "$dropin_dir" 2>/dev/null || true
+    # 注意用 if 而不是 `[ -d ... ] && echo`：后者在目录不存在时整条命令非零，set -e 会让脚本
+    # 在这里直接退出，把一次成功的卸载报成失败。
+    if [ -d "$dropin_dir" ]; then
+      echo "ci-panel-runner-svc: 保留 $dropin_dir(含非本工具写入的配置)" >&2
+    fi
     systemctl daemon-reload
     rm -f "$dir/.service"
     echo "uninstalled $svc"
