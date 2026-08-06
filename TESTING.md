@@ -7,12 +7,11 @@ the reference: tool choices, full config files, and the reasoning behind them.
 
 - Four packages, ~54.9K lines (panel 8.2K / daemon 12.3K / frontend 33.6K / common 0.8K). At the
   time this was written: **zero test files**, no package defined a `test` script, CI only built.
-  **As of Phase 4 all four packages have a suite** — `daemon/` 92, `common/` 79, `frontend/` 55,
-  `panel/` 42; 268 in total. `common/`, `daemon/` and `panel/` keep their specs in `test/` and
+  **As of Phase 4 all four packages have a suite** — `daemon/` 132, `common/` 89, `frontend/` 55,
+  `panel/` 42; 318 in total. `common/`, `daemon/` and `panel/` keep their specs in `test/` and
   type-check them via `tsconfig.test.json`, as their own CI steps. `frontend/` keeps its in
-  `src/tools/__tests__/` and type-checks them via `tsconfig.vitest.json` — but through its
-  `build` script (`run-p type-check build-only`), so it has no separate CI step. All four are
-  covered; only three are visible in the `test:` job.
+  `src/tools/__tests__/`, type-checked via `tsconfig.vitest.json` through its `build` script
+  (`run-p type-check build-only`) — so all four are covered, but only three show in `test:`.
 - `frontend/` already has `vitest@0.33.0`, `@vue/test-utils@2.4.1` and `jsdom@22.1.0` installed,
   and `tsconfig.vitest.json` exists — **day one needs no install at all**.
 - ci-panel is not a CRUD app but a remote-execution control plane: it holds GitHub PATs, spawns
@@ -25,11 +24,11 @@ the reference: tool choices, full config files, and the reasoning behind them.
 security-regression → contract → boundary-validation → pure-logic → router-integration — roughly
 16–21 engineer-days to the stopping line.**
 
-## 2. Regression tests owed by v1.0.4 — **paid, Phases 1–2**
+## 2. Defect regressions pinned by spec — **paid, Phases 1–2**
 
-Three high-severity defects were fixed and released without a single test (advisories
-GHSA-9c3v-fg72-8wr9, GHSA-j2c6-2pg4-jqqw, GHSA-5c23-gcwf-wjpr). The specs now exist; read them
-rather than a description of them. What each is really guarding:
+§2.1–2.3 are the three high-severity defects v1.0.4 fixed and released without a single test
+(advisories GHSA-9c3v-fg72-8wr9, GHSA-j2c6-2pg4-jqqw, GHSA-5c23-gcwf-wjpr); §2.4 came later, from a
+production incident. Read the specs rather than a description of them. What each really guards:
 
 ### 2.1 Wildcard condition matching — `common/src/query_wrapper.ts`
 
@@ -73,6 +72,17 @@ Writing these turned up three further gaps in the same boundary; see Phase 2 bel
 **Deliberately not covered:** symlink-replacement races (TOCTOU) between check and read — closing
 that needs descriptor-relative no-follow operations across every file path in the daemon, or
 isolating the runner account's write permissions at the deployment layer.
+
+### 2.4 Truncated config and swallowed handler errors — `system_storage.ts`, `router_app.ts`
+
+A full disk truncated a node's `data/Config/global.json` to zero bytes (`writeFileSync` applies
+`O_TRUNC` before writing), nearly costing the daemon the key the panel authenticates with — and the
+`ENOSPC` vanished, because an `async` handler signals failure by rejecting and `emitRouter`'s
+`try/catch` only sees synchronous throws. No packet, no log line, an RPC timeout at the panel.
+`StorageSubsystem` now writes a sibling temp file, `fsync`s and renames; `RouterApp.on` wraps each
+handler so a rejection reaches `responseError`. Specs: `common/test/storage/atomic_write.spec.ts`
+(its full-disk stand-in truncates *before* throwing — a mock that only threw would let the old code
+pass) and `daemon/test/contract/router_error_response.spec.ts`.
 
 ## 3. Layers
 
@@ -132,10 +142,10 @@ every function, so the alternative is asserting against a version-dependent defa
 because `files` merges with the inherited `include` where a second `include` would replace it; and
 no `passWithNoTests`, which would turn a broken glob into a green job that ran nothing.
 
-The defect it was written to catch — `isCompressFile` offering "decompress" on volume 2 of a split
-archive — was fixed ahead of the suite in #24, along with the two `unref` calls (§7.1), the
-`redactTokenArgs` extraction (§7.2) and the `@types/mocha` removal. The spec is its regression
-guard: reverting the pre-#24 extension ordering reddens two cases.
+The defect it targets — `isCompressFile` offering "decompress" on volume 2 of a split archive —
+was fixed ahead of the suite in #24, with the two `unref` calls (§7.1), the `redactTokenArgs`
+extraction (§7.2) and the `@types/mocha` removal. Reverting the pre-#24 extension ordering reddens
+two cases.
 
 ### Phase 1 — common, and the regressions owed by 1.0.4 (1 day) — **done, #29**
 
@@ -146,21 +156,19 @@ stays on one vite major), plus the §2.1 and §2.2 specs — 35 cases, no produc
 **Exit criteria met:** suite green; reverting the wildcard fix reddens 4 cases and the pageSize
 guard 9; restoring the real pre-1.0.4 loop hangs until `timeout` kills it with exit 124.
 
-> **Not in this phase:** moving `"typescript"` out of `common`'s `dependencies`. It is genuinely
-> misplaced — a build tool all three consumers inherit through `file:../common` — but it is
-> unrelated to adding tests and touches the release path (`build.sh` runs
-> `npm install --production` inside `production-code/`). Verifying it means the full
-> `build.sh` → `pack.sh` → `smoke-test.sh` chain, so it belongs in its own PR.
+> **Not in this phase:** moving `"typescript"` out of `common`'s `dependencies`. Genuinely
+> misplaced — a build tool all three consumers inherit through `file:../common` — but unrelated to
+> tests and on the release path (`build.sh` runs `npm install --production` in `production-code/`).
+> Verifying it means the full `build.sh` → `pack.sh` → `smoke-test.sh` chain: its own PR.
 
 ### Phase 2 — daemon path boundary and secret redaction (3–4 days) — **done, #30**
 
 `daemon/` got vitest plus `test/setup.ts` (a `/tmp` sandbox it chdirs into before any daemon module
 loads) and `tsconfig.test.json` (the only thing covering `test/`; the build's tsconfig includes
-`src/` alone). Six specs, 64 cases at the time.
-
-`service_name_boundary` asserts **all three** copies of `SERVICE_RE` agree — `runner_scan.ts`,
-`runner_env.ts`, and `prod-scripts/ci-panel-runner-svc`. The bash one is the real boundary, being
-the copy that runs as root, and nothing in the build would notice if they drifted.
+`src/` alone). Six specs, 64 cases at the time. `service_name_boundary` asserts **all three** copies
+of `SERVICE_RE` agree — `runner_scan.ts`, `runner_env.ts`, and `prod-scripts/ci-panel-runner-svc`.
+The bash one is the real boundary, being the copy that runs as root, and nothing in the build would
+notice if they drifted.
 
 **Exit criteria met:** every §2.3 case passes including the symlink ones; `ProvisionError.fullLog`
 provably redacts the token; `type-check` clean.
@@ -185,9 +193,8 @@ provably redacts the token; `type-check` clean.
 > so a not-yet-created child of an escaping symlink was accepted. Not reachable (`makeDir` requires
 > its base to exist, and an existing base resolves through realpath), but the guard was leaning on a
 > caller's `existsSync` to cover its own blind spot. It now resolves the deepest existing ancestor.
->
-> Also: `collectFromRoots` **collects** the root rejection into `errors` rather than throwing, so the
-> `collectRunners("/etc") → throws` row is really "returns no runners and one error".
+> Also: `collectFromRoots` **collects** the root rejection into `errors` rather than throwing, so
+> `collectRunners("/etc") → throws` is really "returns no runners and one error".
 
 ### Phase 3 — contract layer (2–3 days) — **done**
 
@@ -232,8 +239,7 @@ export and stay green. Renaming `RegisterRunnersResponse` now reports the spec b
 `threads: false`: `common/src/system_storage.ts` computes `DATA_PATH` from `process.cwd()` at
 *class-definition* time, so the store can only be redirected by `process.chdir` in the setup file —
 and that throws inside a worker thread. `test.env` also blanks `CIP_GITHUB_REPOS` /
-`CIP_GITHUB_TOKEN`, since `repo_service.ts` calls `migrateFromEnv()` at module scope and would
-otherwise read the developer's shell.
+`CIP_GITHUB_TOKEN`: `repo_service.ts` calls `migrateFromEnv()` at module scope.
 
 **`permission_middleware.spec.ts`** covers all four ways a request can be admitted — API key,
 session, `token: false`, and a route that declares no `level` at all. Two behaviours worth knowing
@@ -248,10 +254,9 @@ private advisory, but they are not all the same shape and the summary should not
    on a caller-supplied URL and returned the body: a working read primitive aimed at whatever the
    panel host can reach. The mitigating factor is the privilege bar, not the absence of a bug.
    Public rather than an advisory because an ADMIN can already point node connections at arbitrary
-   hosts — but that is a reason about *marginal* gain, and being able to read the response is more
-   than that argument covers. `checkSafeUrl` already existed in `panel/` with **zero callers**; it
-   is now wired in, plus `maxRedirects: 0` so a publicly-resolving host cannot 302 to loopback and
-   bypass the check.
+   hosts — but that argues about *marginal* gain, and reading the response exceeds it. `checkSafeUrl`
+   already existed in `panel/` with **zero callers**; it is now wired in, plus `maxRedirects: 0` so
+   a publicly-resolving host cannot 302 to loopback and bypass the check.
 2. **`checkSafeUrl` existed twice and had drifted** — panel's had a protocol allow-list, daemon's
    did not, so `file/download_from_url` accepted `ftp://`. Both copies are now identical and
    pinned by `panel/test/security/safe_url.spec.ts`. The dead private-range block (unreachable
@@ -281,19 +286,16 @@ holds, but the client gets no error.
 redirects 1, re-introducing the daemon URL drift 2, loosening the API-key level check 3, removing
 the ban logout 1, and comparing paths lexically instead of by realpath 1.
 
-### Phase 5 — router integration and pure-logic breadth — **not scheduled**
+### Phase 5 — router integration and pure-logic breadth — **partly done**
 
-Unlocked by a specific escaped bug, not by a plan. What it would contain, in priority order:
+Unlocked by a specific escaped bug, not by a plan — and §2.4 is that escape, so its first two items
+landed with it: handler rejections now reach `responseError` instead of emitting nothing, and
+`RouterApp` moved to `daemon/src/service/router_app.ts` so handlers are testable without the whole
+daemon (`router.ts` re-exports it, leaving `app.ts` and every router untouched). What remains:
 
-1. Make `emitRouter` (`daemon/src/service/router.ts`) await-aware. It wraps `super.emit` in a
-   synchronous try/catch, so **an async handler that rejects emits nothing at all** and the panel's
-   request hangs until its own timeout. This is the daemon's worst known defect and the reason this
-   phase exists; the rest is breadth.
-2. Split `router.ts`'s composition root into `router_app.ts` so handlers are testable without the
-   whole daemon, keeping the re-exports and side-effect imports so `app.ts` is untouched.
-3. Export the private parsers in `runner_env.ts` / `runner_provision.ts` / `runner_scan.ts` (no
+1. Export the private parsers in `runner_env.ts` / `runner_provision.ts` / `runner_scan.ts` (no
    behaviour change) and add pure-logic specs.
-4. Upload coverage as an artifact — still no thresholds.
+2. Upload coverage as an artifact — still no thresholds.
 
 **Stopping rule: the line has been reached.** Phase 4 is done, so from here a new spec is added
 only when a bug reaches master — failing test first, then the fix.
@@ -395,8 +397,8 @@ exits 1). **Drop it in the same commit as the first spec** — kept afterwards, 
 `include` glob into a green job that ran nothing. frontend's config does not have it.
 
 **`release.yml` needs no change.** Its gate is `pack.sh` + `smoke-test.sh` + Playwright. Unit tests
-belong on the PR path; the tag path would only get slower, and `release.yml` holds `contents: write`,
-so its dependency surface should stay narrow.
+belong on the PR path; the tag path would only get slower, and `release.yml` holds
+`contents: write`, so its dependency surface should stay narrow.
 
 ## 9. Coverage and gating
 
@@ -407,9 +409,9 @@ so its dependency surface should stay narrow.
 | Blocks release (`release.yml`) | no | no |
 | Suite runtime budget | — | < 3 min on ubuntu-latest |
 
-**Why no threshold at first:** a risk-first order puts ~130 cases in about 15 files across the first
-four phases, leaving `frontend/` (33.6K lines) almost untouched. Any threshold would either fail at
-once or be meaningless, and ratcheting early pushes effort toward easily-covered formatters.
+**Why no threshold at first:** a risk-first order concentrates the cases in a handful of files and
+leaves `frontend/` (33.6K lines) almost untouched. Any threshold would either fail at once or be
+meaningless, and ratcheting early pushes effort toward easily-covered formatters.
 
 **Every package sets `threads: false`.** Not a preference — tinypool sizes its worker pool from the
 CPU count, and these suites are a handful of files whose assertions run in milliseconds, so the
@@ -420,16 +422,17 @@ entire wall time is worker startup. Measured on a 320-core machine:
 | `common` (2 files, 34 cases at the time) | 106s | **1.1s** |
 | `frontend` (3 files, 41 cases) | 84s | **3.6s** |
 
-(Measured during Phase 1; `common/` has 73 cases now. Left as taken — the ratio is the point.)
+(Measured during Phase 1; the case counts have grown since. Left as taken — the ratio is the point.)
 
 On GitHub's 4-core `ubuntu-latest` the default is survivable (frontend measured 56s), but this
 project provisions self-hosted runners — the day the `test` job moves onto a big one, `Test common`
 blows through its `timeout -k 10 120` and dies with **exit 124, the same code the infinite-loop
-regression produces**. A green suite failing indistinguishably from the defect the watchdog exists
-to catch is the worst possible failure mode, and one line prevents it.
+regression produces**. A green suite failing indistinguishably from the defect the watchdog catches
+is the worst failure mode, and one line prevents it.
 
 The cost is a shared process: module-level singletons persist across spec files. Nothing relies on
-per-file module isolation today; do not start.
+per-file module isolation today; do not start. (`common/test/storage/` is the one file that chdirs,
+and it restores the working directory in `afterAll` for exactly this reason.)
 
 ## 10. Trade-offs, and what we deliberately skip
 

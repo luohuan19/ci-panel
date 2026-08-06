@@ -510,6 +510,7 @@ main() {
   load_context
   TMP="$(mktemp -d)"
   trap cleanup EXIT
+  check_tmp_space "$TMP"
 
   if [ "$DO_CHECK" -eq 1 ]; then
     do_check
@@ -519,6 +520,9 @@ main() {
     do_rollback
     return
   fi
+  # 只在真要升级时检查：--check 不落盘，--rollback 只切软链，都不需要额外空间。
+  # 升级会在 releases/ 下多解一份新版本出来，盘满时解到一半失败会留下半个 release。
+  check_disk_space "$INSTALL_ROOT"
   do_update
 }
 

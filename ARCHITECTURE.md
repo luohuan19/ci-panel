@@ -131,7 +131,10 @@ limits, `middleware/validator.ts` validates query and body shapes at the boundar
 
 Socket.IO **server** (default `:24444`). It does not dial out; the panel connects to it.
 Entry `daemon/src/app.ts`; routers register event handlers on a shared `routerApp`
-emitter (`daemon/src/service/router.ts`).
+emitter, defined in `daemon/src/service/router_app.ts` and re-exported by
+`daemon/src/service/router.ts` (which the routers import). A handler that throws — or,
+being `async`, rejects — is answered with a `STATUS_ERR` packet on the same event rather
+than leaving the caller to time out.
 
 ### Event surface
 

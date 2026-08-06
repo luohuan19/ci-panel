@@ -177,8 +177,15 @@ preflight() {
   if [ ! -d /run/systemd/system ]; then
     die "这台机器不是 systemd 引导的，本脚本装的是 systemd 单元"
   fi
+  # --scan-root 只有装 daemon 时才有意义，不装就别拿它去比盘。
+  if wants_daemon; then
+    check_disk_space "$INSTALL_ROOT" "$SCAN_ROOT"
+  else
+    check_disk_space "$INSTALL_ROOT"
+  fi
   TMP="$(mktemp -d)"
   trap cleanup EXIT
+  check_tmp_space "$TMP"
 }
 
 resolve_source() {
