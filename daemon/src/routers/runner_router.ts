@@ -4,6 +4,7 @@ import * as protocol from "../service/protocol";
 import { routerApp } from "../service/router";
 import {
   checkProxyConnectivity,
+  previewDefaultDotEnv,
   checkRunnerPackage,
   collectRunners,
   listRepoGroups,
@@ -218,6 +219,20 @@ routerApp.on("runner/proxy_check", async (ctx, data) => {
   }
 });
 
+// 「不填也会进 .env 的东西」：面板按代理写的那几条 + runner 注册时从 daemon 进程环境快照的那几条。
+// 只读 process.env，无副作用。
+routerApp.on("runner/default_env", (ctx, data) => {
+  try {
+    const proxy = data?.proxy;
+    if (proxy !== undefined && typeof proxy !== "string") {
+      throw new Error("proxy must be a string");
+    }
+    protocol.msg(ctx, "runner/default_env", previewDefaultDotEnv(proxy));
+  } catch (err: any) {
+    protocol.error(ctx, "runner/default_env", { err: err?.message || String(err) });
+  }
+});
+
 routerApp.on("runner/provision", async (ctx, data) => {
   try {
     const result = await provisionRunner({
@@ -261,8 +276,13 @@ routerApp.on("runner/batch_start", (ctx, data) => {
       token: data?.token,
       proxy: data?.proxy,
       baseDir: data?.baseDir,
+      // groups 里带着每组的初始环境变量（env.override / env.dotenv），由 startRunnerBatch
+      // 在展开成 spec 时逐个校验并展开占位符
       groups: data?.groups,
-      packagePath: data?.packagePath
+      packagePath: data?.packagePath,
+      // 面板上「并发数」那个框此前一直没生效：这里漏了透传，clampConcurrency 拿到 undefined
+      // 就永远回落到默认 3。
+      concurrency: data?.concurrency
     });
     protocol.msg(ctx, "runner/batch_start", result);
   } catch (err: any) {

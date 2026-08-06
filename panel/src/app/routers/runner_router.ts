@@ -123,6 +123,37 @@ router.post(
 );
 
 // [Top-level Permission]
+// 创建 runner 时「不填也会进 .env 的东西」：面板按代理写的那几条，加上 runner 自己在注册末尾
+// （config.sh → env.sh）从 daemon 进程环境快照的那几条。只读，给添加对话框做创建前提示。
+router.post(
+  "/default_env",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      const body = (ctx.request.body ?? {}) as { proxy?: unknown };
+      if (body.proxy !== undefined && typeof body.proxy !== "string") {
+        ctx.status = 400;
+        ctx.body = { err: "proxy must be a string" };
+        return;
+      }
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/default_env",
+        { proxy: body.proxy },
+        15000
+      );
+      ctx.body = result;
+    } catch (err: any) {
+      // 不能把 Error 直接塞进 body：会序列化成 {} 且仍是 200，掩盖 daemon 失败
+      ctx.status = 500;
+      ctx.body = { err: err?.message || String(err) };
+    }
+  }
+);
+
+// [Top-level Permission]
 // 检测代理连通性：透传给 daemon，用当前代理探测 GitHub / Google 等
 router.post(
   "/proxy_check",

@@ -20,8 +20,16 @@ import { writeMarker, readMarker } from "./runner_marker";
 // runner_scan 也引本模块，这里构成一个环。安全：module 是 commonjs，命名导入编译成
 // 调用点属性访问（tsc 与 webpack 打包皆然），而两侧都只在函数体里运行时相互调用、
 // 不在模块作用域求值，所以不会踩到上面第 22 行说的那类初始化顺序问题。
-import { assertUnderRoots } from "./runner_scan";
+import { assertUnderRoots, controlService, readServiceName } from "./runner_scan";
 import { dirKey, withRunnerLock } from "./runner_lock";
+import {
+  formatEnvLines,
+  MAX_VALUE_LEN,
+  sanitizeEnvVars,
+  writeDotEnvFile,
+  type RunnerEnvVar
+} from "./runner_env_vars";
+import { envTemplateIndexOf, expandEnvTemplate } from "./runner_env_template";
 
 // 实例类型常量，等于 Instance.TYPE_UNIVERSAL。刻意用字面量而不 import Instance 类：
 // instance.ts 处在 instance↔system_instance 的循环里，本模块被 runner_scan 提前引入后，
@@ -40,6 +48,57 @@ const RUNNER_PKG_DIR = path.dirname(RUNNER_PKG);
 // 代理兜底：前端没传就用 daemon 环境变量 CIP_RUNNER_PROXY
 function resolveProxy(proxy?: string): string {
   return (proxy || "").trim() || (process.env.CIP_RUNNER_PROXY || "").trim();
+}
+
+// 代理在 <dir>/.env 里的那几条。作为默认值写在用户填的初始变量之前（同名以用户的为准）。
+function proxyDotEnvVars(proxy: string): RunnerEnvVar[] {
+  if (!proxy) return [];
+  return [
+    { key: "HTTP_PROXY", value: proxy },
+    { key: "HTTPS_PROXY", value: proxy },
+    { key: "ALL_PROXY", value: proxy },
+    { key: "NO_PROXY", value: "localhost,127.0.0.1,::1" }
+  ];
+}
+
+// actions-runner 自己会往 .env 里塞东西：config.sh 末尾 `source ./env.sh`，而 env.sh 把下面这份
+// 清单里「当前进程环境中非空」的变量追加进 <dir>/.env（已有同名的跳过，所以面板先写的那份不会
+// 被顶掉）。那个「当前进程」就是 daemon —— 于是 daemon 启动时继承的 LD_LIBRARY_PATH 这类会一路
+// 落到每个新建 runner 的 .env 里，用户没填却凭空出现。
+//
+// 清单抄自安装包 bin/env.sh 的 varCheckList，它属于 runner 版本的一部分：换安装包时回来核对。
+// 抄漏一个的后果只是预览少显示一条（写入照旧由 runner 自己做），不影响正确性。
+export const RUNNER_ENV_SH_KEYS = [
+  "LANG",
+  "JAVA_HOME",
+  "ANT_HOME",
+  "M2_HOME",
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
+  "GRADLE_HOME",
+  "NVM_BIN",
+  "NVM_PATH",
+  "LD_LIBRARY_PATH",
+  "PERL5LIB"
+];
+
+// 「不填也会进 .env 的东西」，供面板在创建前如实展示。两个来源分开报，因为它们的覆盖规则不同：
+//   panel  —— 面板按代理字段写的，用户在表单里填同名变量即可覆盖
+//   runner —— runner 注册时从 daemon 进程环境快照的，用户填了同名变量它就不会再写
+export interface DefaultDotEnvPreview {
+  proxy: string; // 实际生效的代理（前端没填时是 daemon 的 CIP_RUNNER_PROXY 兜底）
+  panel: RunnerEnvVar[];
+  runner: RunnerEnvVar[];
+}
+
+export function previewDefaultDotEnv(proxy?: string): DefaultDotEnvPreview {
+  const resolved = resolveProxy(proxy);
+  const panel = proxyDotEnvVars(resolved);
+  const taken = new Set(panel.map((v) => v.key));
+  const runner = RUNNER_ENV_SH_KEYS.filter((key) => !taken.has(key))
+    .map((key) => ({ key, value: String(process.env[key] ?? "") }))
+    .filter((v) => v.value !== "");
+  return { proxy: resolved, panel, runner };
 }
 
 // 把 http://host:port 代理写进 axios 配置
@@ -98,6 +157,13 @@ export interface ProvisionRunnerParams {
   proxy?: string; // 可选 http://host:port
   packagePath?: string; // 可选，指定 tar.gz 安装包（导入模式）；不填用内置包
   group?: string; // 可选，所属组（批量时为基础名），写进 .cipanel marker
+  // 初始环境变量。两个目标、两套语义，与面板上「环境变量」页写的是同两个文件：
+  //   envOverride —— systemd drop-in 的 Environment=，进监听进程（代理这类必须放这里）
+  //   envDotenv   —— <dir>/.env，只注入 job/step 执行环境（设备号、库路径这类）
+  // 进来时应已展开占位符并经 sanitizeEnvVars 校验（批量入口在 expandBatchSpecs 里做，
+  // 好让非法值在整批开跑之前就失败）；这里仍会再 sanitize 一次，因为本函数也被单个置备调用。
+  envOverride?: RunnerEnvVar[];
+  envDotenv?: RunnerEnvVar[];
   onStep?: (step: string) => void; // 可选，进度回调：每进入一个阶段回报一次
 }
 
@@ -241,14 +307,13 @@ async function runProvision(
     step("安装包已就绪");
   }
 
-  // ---- 2) 代理写入 <dir>/.env（actions-runner 运行时读取；供 run.sh 上线用）----
+  // ---- 2) 代理 + 用户填的初始变量写入 <dir>/.env（actions-runner 运行时读取；供 run.sh 上线用）----
+  // 在 config.sh 之前写完，所以第一个 job 就带着这些变量跑，不需要先建好再改一遍。
+  // 同名以用户填的为准（sanitizeEnvVars 里后者覆盖前者）：代理那四条只是默认值。
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  const dotenvVars = sanitizeEnvVars([...proxyDotEnvVars(proxy), ...(params.envDotenv || [])]);
+  if (dotenvVars.length) writeDotEnvFile(targetDir, dotenvVars);
   if (proxy) {
-    const envContent =
-      [`HTTP_PROXY=${proxy}`, `HTTPS_PROXY=${proxy}`, `ALL_PROXY=${proxy}`, `NO_PROXY=localhost,127.0.0.1,::1`].join(
-        "\n"
-      ) + "\n";
-    await fs.writeFile(path.join(targetDir, ".env"), envContent);
     childEnv.HTTP_PROXY = childEnv.HTTPS_PROXY = childEnv.ALL_PROXY = proxy;
     childEnv.NO_PROXY = "localhost,127.0.0.1,::1";
   }
@@ -309,6 +374,22 @@ async function runProvision(
   // 取代旧的「面板当子进程跑 run.sh」。面板这边只留一个句柄实例，给文件管理/配置/详情页用，不托管。
   step("安装 systemd 服务");
   await installSystemdService(targetDir);
+
+  // ---- 4.5) 初始的 systemd 环境变量（drop-in）----
+  // 必须排在装服务之后：单元名要等助手写下 <dir>/.service 才定得下来。而助手的 install 用的是
+  // `enable --now`，监听进程在 drop-in 落盘前就已经起来了，所以写完要重启一次才真正生效。
+  // 位置刻意压在写 .cipanel 标记之前：此刻这个 runner 还没进面板的扫描结果，不会有并发的启停
+  // 来抢同一个单元。失败按整项失败处理——一个装好却连不上 GitHub（代理没进监听进程）的 runner，
+  // 比一个明确失败、可以点「重试失败项」重跑的更难收拾。
+  const overrideVars = sanitizeEnvVars(params.envOverride || []);
+  if (overrideVars.length) {
+    step("写入 systemd 环境变量");
+    await setServiceEnv(targetDir, overrideVars);
+    step("重启单元使环境变量生效");
+    const service = readServiceName(targetDir);
+    if (!service) throw new Error("装完服务却读不到 .service，无法重启使环境变量生效");
+    await controlService(service, "restart");
+  }
 
   // 写 .cipanel 标记：面板创建的 runner，来源 provision，纳入日常展示
   const marker = writeMarker(targetDir, {
@@ -437,6 +518,28 @@ export async function installSystemdService(dir: string): Promise<void> {
   }
 }
 
+// 写 runner 的 systemd drop-in（override.conf 的 Environment=）+ daemon-reload，不重启。
+// 两个调用方：面板改已有 runner 的环境变量（runner_env.writeRunnerEnv），与置备时写初始变量。
+// 住在本模块而不是 runner_env，是因为 runner_env 已经引本模块拿助手常量，反向再引就成环。
+//
+// 异步执行：daemon 是单线程的，而批量接口会连续扇出 N 次，同步跑会在每次 sudo +
+// daemon-reload 期间冻结整个事件循环（日志推流、扫描、心跳全停）。
+export async function setServiceEnv(dir: string, desired: RunnerEnvVar[]): Promise<void> {
+  // 载荷：每行 KEY=VALUE，base64 走 argv（sudo 可审计、无 shell 元字符问题）
+  const b64 = Buffer.from(formatEnvLines(desired), "utf8").toString("base64");
+  try {
+    const r = await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, "set-env", dir, b64], {
+      encoding: "utf8",
+      timeout: HELPER_TIMEOUT_MS
+    });
+    logger.info(`[runner-env] override: ${String(r.stdout).trim()}（${desired.length} 个变量）`);
+  } catch (err: unknown) {
+    // 分类统一走 helperErrorMessage：超时与「免密没配」在错误对象上长得一样，各写一份正则
+    // 会让超时被报成权限问题（见该函数的注释）。
+    throw new Error(helperErrorMessage("设置 systemd 环境变量", err, HELPER_TIMEOUT_MS));
+  }
+}
+
 // 卸载 runner 的 systemd 服务（停 + 删单元）。走特权助手；幂等——没装服务也不报错。
 // 异步调用，理由同 installSystemdService：同步跑会把 daemon 的单线程事件循环整个冻住。
 //
@@ -539,10 +642,18 @@ export function ensureHandleInstance(dir: string, repo: string, agentName: strin
 }
 
 // ---- 批量：多组标签，每组 <基础名>-1..-N ----
+// 一组的初始环境变量。值里可写 {{index}} 这类占位符，按每个 runner 各展开一次
+// （见 runner_env_template）。
+export interface RunnerGroupEnv {
+  override?: RunnerEnvVar[]; // systemd drop-in，进监听进程
+  dotenv?: RunnerEnvVar[]; // <dir>/.env，只进 job/step
+}
+
 export interface RunnerGroup {
   baseName: string; // 基础名，实际名会拼上 -1 -2 ...
   labels?: string; // 该组标签（逗号分隔）
   count: number; // 数量
+  env?: RunnerGroupEnv; // 可选，该组每个 runner 的初始环境变量
 }
 
 export interface ProvisionBatchParams {
@@ -576,6 +687,10 @@ interface BatchSpec {
   labels: string;
   targetDir: string;
   group: string; // 基础名，作为 .cipanel marker 的组
+  // 该 runner 的初始环境变量：占位符已按它自己的名字/编号展开、已校验。存在 spec 上而不是组上，
+  // 是为了让「重试失败项」原样复用同一份值（重试走的就是 st.specs）。
+  envOverride: RunnerEnvVar[];
+  envDotenv: RunnerEnvVar[];
 }
 
 // 转义正则特殊字符，供按 baseName 前缀匹配用
@@ -763,6 +878,34 @@ function assertBaseDirRepo(baseDir: string, repoUrl: string): void {
     );
 }
 
+// 把一组的初始环境变量展开成某个 runner 的那一份：值里的 {{...}} 按它的名字/编号求值，
+// 再走统一的校验。出错时把变量名与 runner 名带上——一整批里只有一条写错时，不点名等于没报错。
+// 导出是为了能直接对它断言：批量的成功路径要真跑起来才看得到，而这一步的产物（每台各不相同
+// 的那份变量）正是最需要盯住的地方。
+export function expandGroupEnv(
+  vars: RunnerEnvVar[] | undefined,
+  name: string,
+  seq: number
+): RunnerEnvVar[] {
+  if (!Array.isArray(vars) || vars.length === 0) return [];
+  const ctx = { name, index: envTemplateIndexOf(name, seq), seq };
+  return sanitizeEnvVars(
+    vars.map((v) => {
+      const key = String(v?.key ?? "");
+      const raw = String(v?.value ?? "");
+      // 长度在展开之前就查一次。sanitizeEnvVars 也查，但那是展开之后——而展开器是递归下降的，
+      // 递归深度随输入长度走，先让它去嚼一个几 MB 的值没有任何意义。
+      if (raw.length > MAX_VALUE_LEN)
+        throw new Error(`${name} 的环境变量 ${key} 的值过长(上限 ${MAX_VALUE_LEN})`);
+      try {
+        return { key, value: expandEnvTemplate(raw, ctx) };
+      } catch (err: unknown) {
+        throw new Error(`${name} 的环境变量 ${key}: ${errText(err)}`);
+      }
+    })
+  );
+}
+
 // 校验参数并把多组展开成完整 runner 列表（含名字去重与总数上限）。
 // 若某组标签命中该 repo 已有 label 组，强制对齐到既有命名前缀，编号交给 allocateRunnerNames
 // （先补空缺、再往后累加）；aligned 汇总被对齐的组，供上层提示「已并入既有组」。
@@ -801,8 +944,20 @@ function expandBatchSpecs(p: ProvisionBatchParams): {
     const existing = labels ? repoGroups.find((rg) => rg.key === labelKey(labels)) : undefined;
     const prefix = existing ? existing.prefix : base;
     if (existing && existing.prefix !== base) aligned.push({ baseName: base, labels, prefix });
-    for (const name of allocateRunnerNames(prefix, count, used, baseDir))
-      specs.push({ name, labels, targetDir: path.join(baseDir, name), group: prefix });
+    let seq = 0;
+    for (const name of allocateRunnerNames(prefix, count, used, baseDir)) {
+      seq++;
+      specs.push({
+        name,
+        labels,
+        targetDir: path.join(baseDir, name),
+        group: prefix,
+        // 占位符在这里展开、变量在这里校验：整批还没起就能因为一个写错的表达式失败，
+        // 而不是跑到第 7 个 runner 才炸（前 6 个已经注册到 GitHub 了）。
+        envOverride: expandGroupEnv(g.env?.override, name, seq),
+        envDotenv: expandGroupEnv(g.env?.dotenv, name, seq)
+      });
+    }
   }
   if (specs.length > 99) throw new Error(`单批最多 99 个 runner，当前 ${specs.length} 个`);
   return { repoUrl, token, proxy, specs, aligned };
@@ -825,7 +980,9 @@ export async function provisionRunnerBatch(
         targetDir: s.targetDir,
         proxy,
         packagePath: p.packagePath,
-        group: s.group
+        group: s.group,
+        envOverride: s.envOverride,
+        envDotenv: s.envDotenv
       });
       results.push({ name: s.name, ok: true, instanceUuid: r.instanceUuid });
     } catch (err: any) {
@@ -886,6 +1043,8 @@ async function runBatchItems(id: string, token: string, indices: number[]) {
         proxy: st.proxy,
         packagePath: st.packagePath,
         group: s.group,
+        envOverride: s.envOverride,
+        envDotenv: s.envDotenv,
         onStep: (step) => {
           item.step = step;
         }

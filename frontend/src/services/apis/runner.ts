@@ -35,6 +35,13 @@ export interface RunnerBatchGroup {
   baseName: string;
   labels?: string;
   count: number;
+  // 该组每个 runner 的初始环境变量。两个目标与「环境变量」页写的是同两个文件：
+  // override → systemd drop-in（进监听进程，代理放这里）；dotenv → <dir>/.env（只进 job/step）。
+  // 值里可写 {{index}} 这类占位符，由 daemon 按每个 runner 展开（见 tools/envTemplate.ts）。
+  env?: {
+    override?: RunnerEnvVar[];
+    dotenv?: RunnerEnvVar[];
+  };
 }
 
 export interface RunnerBatchItemResult {
@@ -143,6 +150,24 @@ export const checkRunnerProxy = useDefineApi<
   ProxyCheckResult
 >({
   url: "/api/runner/proxy_check",
+  method: "POST"
+});
+
+// 创建时「不填也会进 .env」的两批变量，分开报是因为覆盖规则不同：
+//   panel  —— 面板按代理字段写的，表单里填同名变量即可覆盖
+//   runner —— runner 注册末尾（config.sh → env.sh）从 daemon 进程环境快照的；
+//             表单里填了同名变量它就不会再写（env.sh 只补 .env 里还没有的键）
+export interface DefaultDotEnvPreview {
+  proxy: string; // 实际生效的代理（前端没填时为 daemon 侧 CIP_RUNNER_PROXY 的兜底值）
+  panel: RunnerEnvVar[];
+  runner: RunnerEnvVar[];
+}
+
+export const runnerDefaultEnv = useDefineApi<
+  { params: { daemonId: string }; data: { proxy?: string } },
+  DefaultDotEnvPreview
+>({
+  url: "/api/runner/default_env",
   method: "POST"
 });
 

@@ -8,32 +8,27 @@
 //               运行用户(ci-runner)，故读写都直接走 fs，无需 sudo、无需 daemon-reload。
 //
 // 两个目标都是「面板整表托管」：读回显 → 用户编辑 → 覆盖写回。变量名白名单、值禁换行，防注入。
-import { execFile } from "child_process";
-import { promisify } from "util";
 import fs from "fs-extra";
 import path from "path";
 import logger from "./log";
 import { assertUnderRoots, readServiceName as readUnitFile } from "./runner_scan";
-import { HELPER_TIMEOUT_MS, RUNNER_SVC_HELPER, helperErrorMessage } from "./runner_provision";
+import { setServiceEnv } from "./runner_provision";
 import { dirKey, serviceKey, withRunnerLock } from "./runner_lock";
+import {
+  dotenvPath,
+  sanitizeEnvVars,
+  writeDotEnvFile,
+  type RunnerEnvVar
+} from "./runner_env_vars";
 
-// 单元名正则，与 daemon controlService / 助手脚本保持一致，防路径穿越
+// 单元名正则，与 daemon controlService / 助手脚本保持一致，防路径穿越。
+// 三处各写一份是刻意的边界冗余，一致性由 daemon/test/security/service_name_boundary.spec.ts 盯住。
 const SERVICE_RE = /^actions\.runner\.[A-Za-z0-9._@-]+\.service$/;
-// 环境变量名白名单，与助手脚本一致（允许小写，如既有 .env 里的 http_proxy/no_proxy）
-const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-const MAX_VARS = 100;
-const MAX_VALUE_LEN = 4096;
-
-const execFileAsync = promisify(execFile);
 
 // 写入目标：systemd drop-in 或 runner 目录的 .env
 export type EnvTarget = "override" | "dotenv";
 
-export interface RunnerEnvVar {
-  key: string;
-  value: string;
-}
+export type { RunnerEnvVar };
 
 // 单个目标文件的一节：是否存在 + 其中的变量
 export interface RunnerEnvSection {
@@ -78,10 +73,6 @@ function readServiceName(dir: string): string {
 
 function overrideConfPath(service: string): string {
   return path.join("/etc/systemd/system", `${service}.d`, "override.conf");
-}
-
-function dotenvPath(dir: string): string {
-  return path.join(dir, ".env");
 }
 
 // 解析一行 Environment= 后半段：支持 "K=V" 双引号(含 \" \\ 转义)与裸 token，空白分隔多条。
@@ -174,97 +165,29 @@ export function readRunnerEnv(dirRaw: string): RunnerEnvResult {
   };
 }
 
-// 校验并去重环境变量清单（同名后者覆盖前者），返回规范化后的数组
-function sanitizeVars(vars: RunnerEnvVar[]): RunnerEnvVar[] {
-  const map = new Map<string, string>();
-  for (const v of vars) {
-    const key = String(v?.key ?? "").trim();
-    const value = String(v?.value ?? "");
-    if (!key) continue;
-    if (!ENV_KEY_RE.test(key)) throw new Error(`非法环境变量名: ${key}`);
-    if (/[\r\n]/.test(value)) throw new Error(`环境变量 ${key} 的值不能含换行`);
-    if (value.length > MAX_VALUE_LEN)
-      throw new Error(`环境变量 ${key} 的值过长(上限 ${MAX_VALUE_LEN})`);
-    map.set(key, value);
-  }
-  if (map.size > MAX_VARS) throw new Error(`环境变量条数过多(上限 ${MAX_VARS})`);
-  return Array.from(map, ([key, value]) => ({ key, value }));
-}
-
 // 计算「目标全量」：replace 直接用 upsert；merge 用 current 打底、应用 upsert/remove。
 // merge 保留各 runner 自己已有的变量（如每台不同的 DEVICE_ID），只增改指定项、删除 remove。
 function resolveDesired(current: RunnerEnvVar[], patch: RunnerEnvPatch): RunnerEnvVar[] {
-  const upsert = sanitizeVars(Array.isArray(patch.upsert) ? patch.upsert : []);
+  const upsert = sanitizeEnvVars(Array.isArray(patch.upsert) ? patch.upsert : []);
   if (patch.replace) return upsert;
   const removeSet = new Set((Array.isArray(patch.remove) ? patch.remove : []).map(String));
   const map = new Map<string, string>();
   for (const v of current) map.set(v.key, v.value); // 当前值打底
   for (const v of upsert) map.set(v.key, v.value); // upsert 覆盖
   for (const k of removeSet) map.delete(k); // remove 删除
-  return sanitizeVars(Array.from(map, ([key, value]) => ({ key, value })));
+  return sanitizeEnvVars(Array.from(map, ([key, value]) => ({ key, value })));
 }
 
-// 写 override.conf：算出目标全量 → base64 → 特权助手写 drop-in + daemon-reload（不重启）。
-// 异步执行：daemon 是单线程的，而批量接口会连续扇出 N 次，同步跑会在每次 sudo +
-// daemon-reload 期间冻结整个事件循环（日志推流、扫描、心跳全停）。
+// 写 override.conf：算出目标全量 → 特权助手写 drop-in + daemon-reload（不重启）。
+// 助手调用本身在 runner_provision（置备时写初始变量走的是同一条路），这里只加一道
+// 「没装服务就别写」的前置判断。
 async function writeOverride(
   dir: string,
   service: string,
   desired: RunnerEnvVar[]
 ): Promise<void> {
   if (!service) throw new Error("该 runner 未装 systemd 服务，无法设置 systemd 环境变量");
-  // 载荷：每行 KEY=VALUE，base64 走 argv（sudo 可审计、无 shell 元字符问题）
-  const payload = desired.map((v) => `${v.key}=${v.value}`).join("\n");
-  const b64 = Buffer.from(payload, "utf8").toString("base64");
-  try {
-    const r = await execFileAsync("sudo", ["-n", RUNNER_SVC_HELPER, "set-env", dir, b64], {
-      encoding: "utf8",
-      timeout: HELPER_TIMEOUT_MS
-    });
-    logger.info(`[runner-env] override: ${String(r.stdout).trim()}（${desired.length} 个变量）`);
-  } catch (err: unknown) {
-    // 分类统一走 helperErrorMessage：超时与「免密没配」在错误对象上长得一样，各写一份正则
-    // 会让超时被报成权限问题（见该函数的注释）。
-    throw new Error(helperErrorMessage("设置 systemd 环境变量", err, HELPER_TIMEOUT_MS));
-  }
-}
-
-// 写 .env：整表覆盖，原子替换(temp→rename)。空清单则删除文件。属主即 daemon 用户，直接 fs。
-function writeDotEnv(dir: string, desired: RunnerEnvVar[]): void {
-  const file = dotenvPath(dir);
-  if (desired.length === 0) {
-    try {
-      fs.removeSync(file);
-    } catch (err: any) {
-      throw new Error(`清空 .env 失败: ${err?.message || err}`);
-    }
-    logger.info(`[runner-env] dotenv: 已清空 ${file}`);
-    return;
-  }
-  const content = desired.map((v) => `${v.key}=${v.value}`).join("\n") + "\n";
-  const tmp = `${file}.cip-tmp`;
-  // 保留原文件权限位（不擅自放宽/收紧用户已有设置）；新建时用 0600——.env 可能装
-  // 代理凭据这类敏感值，默认不给同组/其他用户可读。
-  let mode = 0o600;
-  try {
-    if (fs.existsSync(file)) mode = fs.statSync(file).mode & 0o777;
-  } catch {
-    /* 拿不到就用默认 0600 */
-  }
-  try {
-    // 上次崩溃可能残留临时文件；mode 只在创建时生效，先清掉免得沿用旧权限
-    fs.removeSync(tmp);
-    fs.writeFileSync(tmp, content, { mode });
-    fs.renameSync(tmp, file);
-  } catch (err: any) {
-    try {
-      fs.removeSync(tmp);
-    } catch {
-      /* 忽略临时文件清理失败 */
-    }
-    throw new Error(`写 .env 失败: ${err?.message || err}`);
-  }
-  logger.info(`[runner-env] dotenv: 写 ${file}（${desired.length} 个变量）`);
+  await setServiceEnv(dir, desired);
 }
 
 // 设置某 runner 某目标的环境变量。override 需 systemd；dotenv 直接写文件。
@@ -291,7 +214,7 @@ export async function writeRunnerEnv(
       throw new Error(`读取现有环境变量失败，已中止写入以免误删：${section.error}`);
     const desired = resolveDesired(section.vars, patch || {});
     if (target === "override") await writeOverride(dir, current.service, desired);
-    else writeDotEnv(dir, desired);
+    else writeDotEnvFile(dir, desired);
     return readRunnerEnv(dir);
   });
 }
