@@ -113,6 +113,32 @@ describe("a handler that fails must produce an error packet, not silence", () =>
     expect(String(sent[0].packet.data)).toContain("thenable rejection");
   });
 
+  it("answers a handler whose `then` getter throws", async () => {
+    // The pathological end of the same family. Any guard that decides whether to watch the
+    // result by reading `.then` runs the getter, so a throwing one escapes the try above and
+    // lands in emitRouter's catch — which hands responseError the raw value, bypassing the
+    // narrowing and emitting an undefined payload. Promise.resolve turns it into a rejection
+    // instead, so it goes back the same way every other failure does.
+    const routerApp = new RouterApp();
+    routerApp.on("spec/throwing_then_getter", () => ({
+      get then(): never {
+        throw undefined;
+      }
+    }));
+    const { socket, sent } = fakeSocket();
+
+    routerApp.emitRouter(
+      "spec/throwing_then_getter",
+      new RouterContext("req-getter", socket, {}, "spec/throwing_then_getter"),
+      null
+    );
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].packet.status).toBe(STATUS_ERR);
+    expect(sent[0].packet.data).toBe("undefined");
+  });
+
   it("answers a rejection value that is neither an Error nor a string", async () => {
     // responseError takes Error | string, but `Promise.reject(undefined)` is legal. The packet
     // must still carry something readable rather than the caller seeing nothing.

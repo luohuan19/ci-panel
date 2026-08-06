@@ -3,15 +3,6 @@ import { inspect } from "util";
 import RouterContext from "../entity/ctx";
 import { responseError } from "./protocol";
 
-// A handler may hand back anything at all, so narrow before assuming it can reject.
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    (typeof value === "object" || typeof value === "function") &&
-    value !== null &&
-    typeof (value as PromiseLike<unknown>).then === "function"
-  );
-}
-
 // responseError takes Error | string, and a rejection value can be neither — `throw 42` and
 // `Promise.reject(undefined)` are both legal. Narrow here rather than widening the protocol
 // signature to any, so the packet the panel receives always carries something readable.
@@ -75,15 +66,17 @@ class RouterApp extends EventEmitter {
       } catch (error: unknown) {
         return responseError(ctx, toReportableError(error));
       }
-      // Duck-typed rather than `instanceof Promise`: that check is false for a thenable a
-      // library returned and for a native promise from another realm (a vm context, a worker
-      // bridge), and either would be a rejection nobody is watching — the exact failure this
-      // wrapper exists to close. Promise.resolve adopts any of them.
-      if (isThenable(result)) {
-        Promise.resolve(result).catch((error: unknown) =>
-          responseError(ctx, toReportableError(error))
-        );
-      }
+      // Adopt unconditionally rather than testing the result first. `instanceof Promise` is
+      // false for a library's thenable and for a native promise from another realm, and even a
+      // duck-typed `typeof result.then === "function"` has to read the property — a `then`
+      // getter that throws would then throw right here, outside the try above, escaping this
+      // narrowing entirely. Promise.resolve covers every one of those: it reads `then` exactly
+      // once, turns a throwing getter into a rejection instead of a synchronous throw, and
+      // passes non-thenables straight through. The cost is a promise pair per event, which is
+      // nothing against a socket router that handles commands rather than a data plane.
+      void Promise.resolve(result).catch((error: unknown) =>
+        responseError(ctx, toReportableError(error))
+      );
     });
   }
 
