@@ -231,8 +231,12 @@ const envStates = computed<GroupEnvState[]>(() =>
     if (state.error) return state;
     const names = groupNames.value[i] || [];
     if (!names.length || !vars.length) return state;
-    // 占位符的求值错误也要报出来：解析过关不代表 {{(index-}} 这种表达式过关
-    for (const [seq, name] of [[1, names[0]] as const, [names.length, names[names.length - 1]] as const]) {
+    // 占位符的求值错误也要报出来：解析过关不代表 {{(index-}} 这种表达式过关。
+    // 逐个 runner 校验，不能只查首尾：index 取自名字里的编号，所以 {{100/(index-2)}} 这种
+    // 首尾都算得出、偏偏中间那台除零——那样就要等 daemon 拒了才知道，而拦在提交前正是这段的
+    // 全部意义。单批上限 99 个，展开又是纯字符串运算，全查一遍不值一提。
+    for (const [at, name] of names.entries()) {
+      const seq = at + 1;
       const { error } = expandEnvVars(vars, { name, index: envTemplateIndexOf(name, seq), seq });
       if (error) {
         state.error = error;

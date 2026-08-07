@@ -11,6 +11,7 @@ import { parseRepoSlug } from "../entity/repo";
 import { logger } from "../service/log";
 import { $t } from "../i18n";
 import { errMessage } from "../utils/error";
+import { validateProxyArg } from "../utils/proxy";
 import { collectRegisteredRepoSlugs } from "mcsmanager-common";
 
 // 创建/导入 runner 时自动把其仓库纳管进注册表（若还没有）。不带 PAT——回退全局 token，用户之后可补填。
@@ -132,16 +133,18 @@ router.post(
   async (ctx) => {
     try {
       const daemonId = String(ctx.query.daemonId);
-      const body = (ctx.request.body ?? {}) as { proxy?: unknown };
-      if (body.proxy !== undefined && typeof body.proxy !== "string") {
+      // 类型、长度、空白三样都在边界上查掉：这个值会被原样转发过 daemon socket，
+      // 再作为环境变量预览的一部分回到页面上（校验规则与理由见 utils/proxy）。
+      const checked = validateProxyArg((ctx.request.body as { proxy?: unknown })?.proxy);
+      if (!checked.ok) {
         ctx.status = 400;
-        ctx.body = { err: "proxy must be a string" };
+        ctx.body = { err: checked.err };
         return;
       }
       const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
       const result = await new RemoteRequest(remoteService).request(
         "runner/default_env",
-        { proxy: body.proxy },
+        { proxy: checked.proxy },
         15000
       );
       ctx.body = result;

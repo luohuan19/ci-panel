@@ -271,6 +271,12 @@ routerApp.on("runner/provision_batch", async (ctx, data) => {
 // 批量（异步）：启动后台任务，立刻返回 batchId + 初始清单
 routerApp.on("runner/batch_start", (ctx, data) => {
   try {
+    // concurrency 在这里就得挡住非数字：clampConcurrency 用的是 Number(n) || 0，会把 "4" 收成 4、
+    // 把 true 收成 1，于是一个明显传错的类型会被悄悄当成一个合法并发度跑起来。panel↔daemon 同样
+    // 是不可信边界（与本文件 proxy_check 的处理一致）。
+    if (data?.concurrency !== undefined && !Number.isFinite(data.concurrency)) {
+      throw new Error("concurrency must be a finite number");
+    }
     const result = startRunnerBatch({
       repoUrl: data?.repoUrl,
       token: data?.token,
