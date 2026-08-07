@@ -11,6 +11,7 @@ import { parseRepoSlug } from "../entity/repo";
 import { logger } from "../service/log";
 import { $t } from "../i18n";
 import { errMessage } from "../utils/error";
+import { validateProxyArg } from "../utils/proxy";
 import { collectRegisteredRepoSlugs } from "mcsmanager-common";
 
 // 创建/导入 runner 时自动把其仓库纳管进注册表（若还没有）。不带 PAT——回退全局 token，用户之后可补填。
@@ -118,6 +119,39 @@ router.post(
       ctx.body = result;
     } catch (err) {
       ctx.body = err;
+    }
+  }
+);
+
+// [Top-level Permission]
+// 创建 runner 时「不填也会进 .env 的东西」：面板按代理写的那几条，加上 runner 自己在注册末尾
+// （config.sh → env.sh）从 daemon 进程环境快照的那几条。只读，给添加对话框做创建前提示。
+router.post(
+  "/default_env",
+  permission({ level: ROLE.ADMIN }),
+  validator({ query: { daemonId: String } }),
+  async (ctx) => {
+    try {
+      const daemonId = String(ctx.query.daemonId);
+      // 类型、长度、空白三样都在边界上查掉：这个值会被原样转发过 daemon socket，
+      // 再作为环境变量预览的一部分回到页面上（校验规则与理由见 utils/proxy）。
+      const checked = validateProxyArg((ctx.request.body as { proxy?: unknown })?.proxy);
+      if (!checked.ok) {
+        ctx.status = 400;
+        ctx.body = { err: checked.err };
+        return;
+      }
+      const remoteService = RemoteServiceSubsystem.getInstance(daemonId);
+      const result = await new RemoteRequest(remoteService).request(
+        "runner/default_env",
+        { proxy: checked.proxy },
+        15000
+      );
+      ctx.body = result;
+    } catch (err: any) {
+      // 不能把 Error 直接塞进 body：会序列化成 {} 且仍是 200，掩盖 daemon 失败
+      ctx.status = 500;
+      ctx.body = { err: err?.message || String(err) };
     }
   }
 );

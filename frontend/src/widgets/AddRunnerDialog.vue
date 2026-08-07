@@ -4,10 +4,17 @@
 // 每个 runner 目录 = 基目录/<name>。无自带按钮，外部通过 ref 调 open() 触发。
 import { ref, reactive, computed, watch } from "vue";
 import { message } from "ant-design-vue";
-import { PlusOutlined, DeleteOutlined, FolderOpenOutlined } from "@ant-design/icons-vue";
+import {
+  PlusOutlined,
+  DeleteOutlined,
+  FolderOpenOutlined,
+  SettingOutlined
+} from "@ant-design/icons-vue";
 import { onUnmounted } from "vue";
 import { t } from "@/lang/i18n";
 import { labelKey, previewGroupNames } from "@/tools/runnerNaming";
+import { expandEnvVars, formatEnvPreview, parseEnvText, type EnvVar } from "@/tools/envText";
+import { envTemplateIndexOf, hasEnvTemplate } from "@/tools/envTemplate";
 import { openNodeSelectDialog } from "@/components/fc/index";
 import SelectDirDialog from "./SelectDirDialog.vue";
 import {
@@ -20,10 +27,12 @@ import {
   retryRunnerBatch,
   collectRunners,
   runnerRepoGroups,
+  runnerDefaultEnv,
   listRunnerDirs,
   type RunnerBatchProgressItem,
   type RepoLabelGroup,
-  type ProxyCheckTargetResult
+  type ProxyCheckTargetResult,
+  type DefaultDotEnvPreview
 } from "@/services/apis/runner";
 
 const emit = defineEmits<{ (e: "created"): void }>();
@@ -75,10 +84,23 @@ interface Group {
   baseName: string;
   labels: string;
   count: string; // 绑 a-input（同款控件保证高度一致）；用到时 Number(g.count)
+  // 该组每个 runner 的初始环境变量，两个目标各一个文本框（每行 KEY=VALUE）。
+  // 提交时解析成 {key,value}[]；值里的 {{index}} 这类占位符由 daemon 按每个 runner 展开。
+  envOverride: string;
+  envDotenv: string;
+  envOpen: boolean; // 折叠面板是否展开，纯界面态、不提交
 }
-const groups = ref<Group[]>([{ baseName: "", labels: "linux,arm64", count: "1" }]);
+const newGroup = (baseName = "", labels = "linux,arm64"): Group => ({
+  baseName,
+  labels,
+  count: "1",
+  envOverride: "",
+  envDotenv: "",
+  envOpen: false
+});
+const groups = ref<Group[]>([newGroup()]);
 
-const addGroup = () => groups.value.push({ baseName: "", labels: "linux,arm64", count: "1" });
+const addGroup = () => groups.value.push(newGroup());
 const removeGroup = (i: number) => groups.value.length > 1 && groups.value.splice(i, 1);
 
 // 该仓库在当前基目录下已有的 label 组（来自后端扫描 .cipanel）。用于复用标签与锁定命名。
@@ -139,7 +161,7 @@ function matchOf(g: Group): RepoLabelGroup | null {
 
 // 点击已有标签组 chip：新增一组、预填其标签，命名交给后端对齐（基础名留空）。
 function reuseGroup(rg: RepoLabelGroup) {
-  groups.value.push({ baseName: rg.prefix, labels: rg.labels, count: "1" });
+  groups.value.push(newGroup(rg.prefix, rg.labels));
 }
 
 // 预览：将创建的全部 runner 名，按组分开（每组的首个名字还要单独显示在该组下方）。
@@ -160,6 +182,151 @@ const groupNames = computed<string[][]>(() =>
   )
 );
 const allNames = computed(() => groupNames.value.flat());
+
+// ---- 每组的初始环境变量：解析文本框 + 按该组首/末个 runner 展开占位符做预览 ----
+// 两件事必须在提交前做完：把写坏的行/表达式挡下来（否则要等一批 runner 建到一半才失败），
+// 以及把 {{index}} 展开给用户看一眼——占位符的意义全在「每台不一样」，看不到展开结果就等于
+// 让人闭着眼睛建 20 个。
+interface GroupEnvState {
+  override: EnvVar[];
+  dotenv: EnvVar[];
+  count: number; // 两个目标合计条数，显示在按钮角标上
+  error: string; // 第一个错误（解析或占位符求值），非空则拦住提交
+  preview: string[]; // 展开预览，最多两行（首个 / 末个 runner）
+}
+
+// 占位符的示例与说明文本。必须从脚本里传进模板：`{{` 正是 Vue 的插值起始符，直接写在模板
+// 里会被当成表达式解析（vue/no-parsing-error 会报「Unexpected end of expression」）。
+const PH = {
+  name: "{{name}}",
+  index: "{{index}}",
+  seq: "{{seq}}",
+  overrideExample: "每行一个 KEY=VALUE，如\nHTTPS_PROXY=http://127.0.0.1:7892",
+  dotenvExample:
+    "每行一个 KEY=VALUE，如\nASCEND_RT_VISIBLE_DEVICES={{(index-1)*4}}-{{(index-1)*4+3}}"
+};
+
+// 某组某个目标的一份预览行；names 为空（数量还没填）时不预览。
+function previewLine(vars: EnvVar[], name: string, seq: number): string {
+  const { vars: expanded, error } = expandEnvVars(vars, {
+    name,
+    index: envTemplateIndexOf(name, seq),
+    seq
+  });
+  return error ? "" : `${name}：${formatEnvPreview(expanded)}`;
+}
+
+const envStates = computed<GroupEnvState[]>(() =>
+  groups.value.map((g, i) => {
+    const ov = parseEnvText(g.envOverride);
+    const de = parseEnvText(g.envDotenv);
+    const vars = [...ov.vars, ...de.vars];
+    const state: GroupEnvState = {
+      override: ov.vars,
+      dotenv: de.vars,
+      count: vars.length,
+      error: ov.error || de.error,
+      preview: []
+    };
+    if (state.error) return state;
+    const names = groupNames.value[i] || [];
+    if (!names.length || !vars.length) return state;
+    // 占位符的求值错误也要报出来：解析过关不代表 {{(index-}} 这种表达式过关。
+    // 逐个 runner 校验，不能只查首尾：index 取自名字里的编号，所以 {{100/(index-2)}} 这种
+    // 首尾都算得出、偏偏中间那台除零——那样就要等 daemon 拒了才知道，而拦在提交前正是这段的
+    // 全部意义。单批上限 99 个，展开又是纯字符串运算，全查一遍不值一提。
+    for (const [at, name] of names.entries()) {
+      const seq = at + 1;
+      const { error } = expandEnvVars(vars, { name, index: envTemplateIndexOf(name, seq), seq });
+      if (error) {
+        state.error = error;
+        state.preview = [];
+        return state;
+      }
+    }
+    // 没有占位符时每台都一样，预览一行就够；有占位符才把末个也列出来
+    const templated = vars.some((v) => hasEnvTemplate(v.value));
+    state.preview = [previewLine(vars, names[0], 1)];
+    if (templated && names.length > 1)
+      state.preview.push(previewLine(vars, names[names.length - 1], names.length));
+    return state;
+  })
+);
+
+// ---- 「不填也会进 .env」的两批变量 ----
+// 一批是面板按代理字段写的，另一批是 runner 自己在注册末尾（config.sh → env.sh）从 daemon 的
+// 进程环境里快照的 —— LANG / LD_LIBRARY_PATH 这些用户没填却会凭空出现在 .env 里的，就是它。
+// 只有 daemon 知道自己的进程环境，所以得问一次；打开对话框与代理失焦时各拉一次。
+const defaultEnv = ref<DefaultDotEnvPreview | null>(null);
+const defaultEnvOpen = ref(false); // 展开明细（值可能很长，如 LD_LIBRARY_PATH）
+const defaultEnvLoading = ref(false);
+
+async function fetchDefaultEnv() {
+  if (!daemonId.value) return;
+  defaultEnvLoading.value = true;
+  try {
+    const { execute, state } = runnerDefaultEnv();
+    await execute({
+      params: { daemonId: daemonId.value },
+      data: { proxy: shared.proxy.trim() }
+    });
+    defaultEnv.value = state.value ?? null;
+  } catch {
+    defaultEnv.value = null; // 节点不可达等：这只是提示，静默降级，不打扰创建流程
+  } finally {
+    defaultEnvLoading.value = false;
+  }
+}
+
+// 展示用清单：标出每条的来源，以及它会不会被用户已填的同名变量顶掉。
+// 两批的覆盖规则不同，写在一起会说错，所以逐条带上 note。
+interface DefaultEnvRow {
+  key: string;
+  value: string;
+  from: string;
+  overridden: boolean;
+}
+const defaultEnvRows = computed<DefaultEnvRow[]>(() => {
+  const d = defaultEnv.value;
+  if (!d) return [];
+  // 任一组填了同名变量就算被覆盖：这里只是提示，宁可说得保守些
+  const filled = new Set(envStates.value.flatMap((s) => s.dotenv.map((v) => v.key)));
+  return [
+    ...d.panel.map((v) => ({ ...v, from: "面板（代理）", overridden: filled.has(v.key) })),
+    ...d.runner.map((v) => ({ ...v, from: "runner 注册时快照", overridden: filled.has(v.key) }))
+  ];
+});
+
+// 把当前填的代理补进某组的 systemd 变量框：这是这个框最常见的用途（监听进程不读 .env，
+// 代理不写进 drop-in，runner 装完就连不上 GitHub）。已有同名行则不重复追加。
+function fillProxyEnv(g: Group) {
+  const proxy = shared.proxy.trim();
+  if (!proxy) return message.error("请先在上面填写代理地址");
+  const existing = parseEnvText(g.envOverride).vars;
+  const has = new Set(existing.map((v) => v.key));
+  const wanted: EnvVar[] = [
+    { key: "HTTP_PROXY", value: proxy },
+    { key: "HTTPS_PROXY", value: proxy },
+    { key: "NO_PROXY", value: "localhost,127.0.0.1,::1" }
+  ].filter((v) => !has.has(v.key));
+  if (!wanted.length) return message.info("这三个代理变量都已填过了");
+  const lines = wanted.map((v) => `${v.key}=${v.value}`).join("\n");
+  g.envOverride = g.envOverride.trim() ? `${g.envOverride.replace(/\n+$/, "")}\n${lines}` : lines;
+}
+
+// 把某组的两个文本框原样复制到其它组：多组共用同一套变量时省得逐个粘贴。
+function copyEnvToAll(i: number) {
+  const src = groups.value[i];
+  let n = 0;
+  groups.value.forEach((g, j) => {
+    if (j === i) return;
+    g.envOverride = src.envOverride;
+    g.envDotenv = src.envDotenv;
+    g.envOpen = Boolean(src.envOverride.trim() || src.envDotenv.trim());
+    n++;
+  });
+  message[n ? "success" : "info"](n ? `已复制到其它 ${n} 组` : "只有这一组，无需复制");
+}
 
 // 某组下方的命名提示：并入了哪个组、从哪个名字起、这一批是不是在补空缺。
 // 在 script 里拼成一整句而不是在模板里用 v-if 拼片段——模板里换行会被 Vue 的空白压缩留成
@@ -399,11 +566,14 @@ const openDialog = async (m: "direct" | "import" = "direct") => {
     downloadedPath.value = "";
     repoGroups.value = []; // 清掉上次会话的已有组，换节点/仓库后重新拉取
     baseDirExists.value = null;
+    defaultEnv.value = null; // 换节点即作废：这批变量取自 daemon 自己的进程环境
+    defaultEnvOpen.value = false;
     resetBatch();
     open.value = true;
     // 若已预填仓库地址与基目录，进来即拉一次已有 label 组 + 目录存在性
     fetchRepoGroups();
     checkBaseDir();
+    fetchDefaultEnv();
   } catch {
     // 用户取消
   }
@@ -558,6 +728,12 @@ const submit = async () => {
   if (allNames.value.length > 99) {
     return message.error(`单批最多 99 个 runner，当前 ${allNames.value.length} 个，请减少数量`);
   }
+  // 环境变量写坏了就别开工：一批跑起来就是几十次注册，错在第几组这时候还能直接指出来
+  const badEnv = envStates.value.findIndex((s) => s.error);
+  if (badEnv >= 0) {
+    groups.value[badEnv].envOpen = true;
+    return message.error(`第 ${badEnv + 1} 组的环境变量有误：${envStates.value[badEnv].error}`);
+  }
   submitting.value = true;
   resetBatch();
   try {
@@ -572,10 +748,16 @@ const submit = async () => {
         baseDir: shared.baseDir.trim(),
         packagePath: mode.value === "import" ? shared.packagePath.trim() : downloadedPath.value,
         // 命中既有组时用其前缀作基础名，既通过后端非空校验，也让命名对齐既有组
-        groups: groups.value.map((g) => ({
+        groups: groups.value.map((g, i) => ({
           baseName: (matchOf(g)?.prefix || g.baseName).trim(),
           labels: g.labels.trim(),
-          count: Number(g.count) || 0
+          count: Number(g.count) || 0,
+          // 文本框在前端解析成 {key,value}[]（与 env_set 同一形状）；占位符原样送过去，
+          // 由 daemon 按每个 runner 的名字展开——预览用的是同一份实现（tools/envTemplate.ts）
+          env: {
+            override: envStates.value[i].override,
+            dotenv: envStates.value[i].dotenv
+          }
         })),
         concurrency: Number(shared.concurrency) || 3
       }
@@ -834,6 +1016,7 @@ const statusColor = (s: string) =>
                 v-model:value="shared.proxy"
                 placeholder="http://127.0.0.1:7890"
                 style="width: calc(100% - 96px)"
+                @blur="fetchDefaultEnv"
               />
               <a-button style="width: 96px" :loading="proxyChecking" @click="doProxyCheck">
                 检测代理
@@ -937,7 +1120,7 @@ const statusColor = (s: string) =>
       </div>
 
       <div v-for="(g, i) in groups" :key="i" style="margin-bottom: 10px">
-        <div style="display: flex; gap: 10px; align-items: flex-end">
+        <div class="group-row">
           <a-form-item label="基础名" style="flex: 1; margin: 0">
             <a-input
               v-model:value="g.baseName"
@@ -957,21 +1140,118 @@ const statusColor = (s: string) =>
               @blur="g.count = clampStr(g.count, 1, 99)"
             />
           </a-form-item>
-          <a-button
-            danger
-            type="text"
-            :disabled="groups.length <= 1"
-            style="margin-bottom: 2px"
-            @click="removeGroup(i)"
-          >
-            <template #icon><DeleteOutlined /></template>
-          </a-button>
+          <!-- 两个按钮共用一个 a-form-item：label 用一个不换行空格占位，让它和前面三列共用
+               同一套「label 行 + 控件行」盒模型 —— 表单项的盒子比输入框本身高（底下还留着
+               校验信息的位置），拿一个裸 div 去按底边对齐会整个沉下去。行内再套一层定高
+               32px 的 flex 容器，把两个按钮在控件行里居中并排。 -->
+          <a-form-item :label="' '" style="flex: none; margin: 0">
+            <div class="group-actions">
+              <a-tooltip title="该组的初始环境变量（systemd 与 .env）">
+                <a-badge :count="envStates[i].count" :offset="[-4, 2]">
+                  <a-button
+                    class="group-env"
+                    :type="g.envOpen ? 'primary' : 'default'"
+                    :danger="!!envStates[i].error"
+                    @click="g.envOpen = !g.envOpen"
+                  >
+                    <template #icon><SettingOutlined /></template>
+                  </a-button>
+                </a-badge>
+              </a-tooltip>
+              <a-button
+                class="group-del"
+                danger
+                type="text"
+                :disabled="groups.length <= 1"
+                @click="removeGroup(i)"
+              >
+                <template #icon><DeleteOutlined /></template>
+              </a-button>
+            </div>
+          </a-form-item>
         </div>
         <div
           v-if="matchOf(g)"
           style="font-size: 12px; color: #17b890; margin-top: 4px"
         >
           {{ alignHint(g, i) }}
+        </div>
+
+        <!-- 该组的初始环境变量：两个目标各一个文本框，每行 KEY=VALUE -->
+        <div v-if="g.envOpen" class="env-panel">
+          <div class="env-block">
+            <div class="env-head">
+              <span class="env-title">systemd（override.conf）</span>
+              <a-button type="link" size="small" @click="fillProxyEnv(g)">
+                用上面的代理填充
+              </a-button>
+            </div>
+            <div class="env-tip">
+              写入 systemd 单元的 Environment=，进「监听进程」。代理这类要让 runner 连上 GitHub
+              的变量必须放这里。创建时写入，并重启单元使其生效。
+            </div>
+            <a-textarea
+              v-model:value="g.envOverride"
+              :auto-size="{ minRows: 2, maxRows: 8 }"
+              :placeholder="PH.overrideExample"
+            />
+          </div>
+          <div class="env-block">
+            <div class="env-head">
+              <span class="env-title">运行时 .env</span>
+            </div>
+            <div class="env-tip">
+              写入 runner 目录的 .env，只注入到 job/step 执行环境（不进监听进程）。设备号、库路径
+              这类放这里。创建时随注册一起写入，首个 job 即生效。
+            </div>
+            <a-textarea
+              v-model:value="g.envDotenv"
+              :auto-size="{ minRows: 2, maxRows: 8 }"
+              :placeholder="PH.dotenvExample"
+            />
+          </div>
+          <!-- 不填也会进 .env 的东西。runner 自己那批（config.sh 末尾 source ./env.sh）取自 daemon
+               的进程环境，用户没填却会凭空出现在 .env 里——不摆出来，谁也想不到该去哪儿找它。 -->
+          <div v-if="defaultEnvRows.length" class="env-auto">
+            <a-button type="link" size="small" @click="defaultEnvOpen = !defaultEnvOpen">
+              {{ defaultEnvOpen ? "收起" : "展开" }}：创建时还会自动写入
+              {{ defaultEnvRows.length }} 项（{{ defaultEnvRows.map((r) => r.key).join("、") }}）
+            </a-button>
+            <div v-if="defaultEnvOpen" class="env-auto-list">
+              <div v-for="r in defaultEnvRows" :key="r.key" :class="{ dim: r.overridden }">
+                <span class="k">{{ r.key }}</span>=<span class="v">{{ r.value }}</span>
+                <span class="from">
+                  — {{ r.from }}{{ r.overridden ? "，已被你填的同名变量覆盖" : "" }}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="defaultEnvLoading" class="env-tip">正在读取会被自动写入的变量…</div>
+
+          <div class="env-foot">
+            <span class="env-tip">
+              值里可用占位符按每个 runner 展开：<code>{{ PH.name }}</code> 全名、<code>{{
+                PH.index
+              }}</code>
+              名字里的编号、<code>{{ PH.seq }}</code> 本批序号（1 起）；支持
+              <code>+ - * / %</code> 与括号。
+            </span>
+            <a-button
+              v-if="groups.length > 1"
+              type="link"
+              size="small"
+              style="margin-left: auto; flex: none"
+              @click="copyEnvToAll(i)"
+            >
+              复制到其它组
+            </a-button>
+          </div>
+          <div v-if="envStates[i].error" class="env-err">✗ {{ envStates[i].error }}</div>
+          <template v-else>
+            <div v-for="line in envStates[i].preview" :key="line" class="env-preview">
+              {{ line }}
+            </div>
+          </template>
         </div>
       </div>
 
@@ -1013,6 +1293,140 @@ const statusColor = (s: string) =>
 :deep(input[type="number"]::-webkit-inner-spin-button) {
   -webkit-appearance: none;
   margin: 0;
+}
+
+// 标签组一行：三个 a-form-item（标题在上、输入框在下）+ 一个装着两个按钮的 a-form-item。
+// 对齐靠的是「大家都是 a-form-item」这件事：表单项的盒子比输入框本身高（底下留着校验信息的
+// 位置），所以按底边对齐的必须是同款盒子，裸 div 会整个沉下去。按钮锁成 a-input 的 32px 高，
+// 在控件行里居中，中线便与输入框一致。
+.group-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+
+  .group-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  // 两个按钮都只有图标，ant 会给它们 .ant-btn-icon-only —— 宽高都取 controlHeight，
+  // 与 a-input 同源，天然同高。所以这里不写死 32px：写死的那份和主题的 controlHeight
+  // 是两个独立的数，一旦不等就是「底边对齐了、高度却不一样」。
+  .group-del,
+  .group-env {
+    flex: none;
+    padding: 0;
+  }
+
+  // a-badge 默认是 inline-block，按文字基线摆放，底下会多出一截行高，把里面的按钮顶得
+  // 比旁边的删除按钮高几像素。inline-flex 让它正好裹住按钮，不再引入行高。
+  :deep(.ant-badge) {
+    display: inline-flex;
+    line-height: 1;
+  }
+}
+
+// 某组展开的初始环境变量面板：缩进一格挂在该组行下面，视觉上从属于这一组而不是下一组。
+.env-panel {
+  margin: 6px 0 2px 12px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--color-gray-5);
+  background: var(--color-gray-1, transparent);
+  border-radius: 4px;
+
+  .env-block + .env-block {
+    margin-top: 10px;
+  }
+
+  .env-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+  }
+
+  .env-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .env-tip {
+    font-size: 12px;
+    color: var(--cip-text-sub, #8a91a3);
+    margin-bottom: 6px;
+    line-height: 1.6;
+  }
+
+  .env-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+
+    .env-tip {
+      margin-bottom: 0;
+    }
+
+    code {
+      font-family: var(--font-code, monospace);
+    }
+  }
+
+  .env-err {
+    font-size: 12px;
+    color: #ef5350;
+    margin-top: 6px;
+    word-break: break-all;
+  }
+
+  // 「不填也会写进去」的那批：默认只留一行按钮，展开才铺开值——LD_LIBRARY_PATH 这种一条能
+  // 顶十行，默认铺开会把整个表单挤没。
+  .env-auto {
+    margin-top: 2px;
+
+    :deep(.ant-btn) {
+      padding: 0;
+      height: auto;
+      white-space: normal;
+      text-align: left;
+    }
+  }
+
+  .env-auto-list {
+    margin-top: 4px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-family: var(--font-code, monospace);
+    font-size: 12px;
+    line-height: 1.7;
+    word-break: break-all;
+
+    .k {
+      color: var(--cip-text-sub, #8a91a3);
+    }
+    .from {
+      margin-left: 8px;
+      font-family: inherit;
+      color: var(--cip-text-sub, #8a91a3);
+    }
+    // 被用户填的同名变量顶掉的那条：留着但压暗，好过直接不显示——「我填的到底生不生效」
+    // 正是这时候最想知道的事。
+    .dim {
+      opacity: 0.55;
+      text-decoration: line-through;
+    }
+  }
+
+  // 展开预览：占位符的意义就是每台不一样，这里如实显示首个（有占位符时再加末个）runner
+  // 实际会拿到的值。
+  .env-preview {
+    font-family: var(--font-code, monospace);
+    font-size: 12px;
+    color: #17b890;
+    margin-top: 4px;
+    word-break: break-all;
+  }
 }
 
 .batch-progress {
