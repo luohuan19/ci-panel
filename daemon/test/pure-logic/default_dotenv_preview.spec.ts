@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { previewDefaultDotEnv, RUNNER_ENV_SH_KEYS } from "../../src/service/runner_provision";
+import {
+  MAX_PROXY_ARG_LEN,
+  previewDefaultDotEnv,
+  RUNNER_ENV_SH_KEYS
+} from "../../src/service/runner_provision";
 
 // A freshly created runner's .env contains lines nobody typed. Two different mechanisms put them
 // there, and the add-runner dialog shows this preview so that is no longer a surprise:
@@ -78,6 +82,21 @@ describe("the panel-written half", () => {
     const { proxy, panel } = previewDefaultDotEnv("");
     expect(proxy).toBe("http://10.0.0.1:3128");
     expect(panel[1]).toEqual({ key: "HTTPS_PROXY", value: "http://10.0.0.1:3128" });
+  });
+
+  it("rejects an oversized or whitespace-bearing proxy before echoing it back", () => {
+    // panel 也查一遍，但直连 daemon 的客户端根本不经过 panel —— 边界在这里。
+    // 这个值会被回显进环境变量预览，超长的顺着 socket 走一圈，带换行的在环境变量语境里
+    // 根本不是「一个值」。
+    expect(() => previewDefaultDotEnv("h".repeat(MAX_PROXY_ARG_LEN + 1))).toThrow("过长");
+    expect(() => previewDefaultDotEnv("h".repeat(MAX_PROXY_ARG_LEN))).not.toThrow();
+    expect(() => previewDefaultDotEnv("http://a b:3128")).toThrow("空白");
+    expect(() => previewDefaultDotEnv("http://a\nb")).toThrow("空白");
+  });
+
+  it("measures the cap after trimming, and still accepts a padded value", () => {
+    expect(() => previewDefaultDotEnv(` ${"h".repeat(MAX_PROXY_ARG_LEN)} `)).not.toThrow();
+    expect(previewDefaultDotEnv("  http://127.0.0.1:7892  ").proxy).toBe("http://127.0.0.1:7892");
   });
 
   it("writes no proxy block when there is no proxy at all", () => {

@@ -91,8 +91,18 @@ export interface DefaultDotEnvPreview {
   runner: RunnerEnvVar[];
 }
 
+// 代理参数的长度上限。与 panel 的 utils/proxy 同值、同规则，但两边各查一次是有意的：
+// 直连 daemon 的客户端根本不经过 panel，daemon 才是这条链路上真正的边界。
+export const MAX_PROXY_ARG_LEN = 512;
+
 export function previewDefaultDotEnv(proxy?: string): DefaultDotEnvPreview {
-  const resolved = resolveProxy(proxy);
+  // 这个值会被回显进环境变量预览，所以长度和空白都要在用它之前查掉：几 MB 的字符串会顺着
+  // socket 走一圈，而带换行的值在环境变量语境里从来就不是「一个值」。
+  const raw = String(proxy ?? "").trim();
+  if (raw.length > MAX_PROXY_ARG_LEN)
+    throw new Error(`代理地址过长(上限 ${MAX_PROXY_ARG_LEN})`);
+  if (/\s/.test(raw)) throw new Error("代理地址不能包含空白字符");
+  const resolved = resolveProxy(raw);
   const panel = proxyDotEnvVars(resolved);
   const taken = new Set(panel.map((v) => v.key));
   const runner = RUNNER_ENV_SH_KEYS.filter((key) => !taken.has(key))
